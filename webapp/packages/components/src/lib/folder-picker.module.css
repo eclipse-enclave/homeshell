@@ -1,0 +1,159 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.dialog {
+  background: var(--hs-panel-raised, #1b242f);
+  border: 1px solid var(--hs-border, #27313d);
+  border-radius: 0.5rem;
+  width: min(480px, 90vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--hs-border, #27313d);
+}
+
+.title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--hs-text, #dbe4ee);
+}
+
+.pathBar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.75rem;
+  border-bottom: 1px solid var(--hs-border, #27313d);
+}
+
+.showHidden {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.72rem;
+  color: var(--hs-text-muted, #8494a7);
+  cursor: pointer;
+  border-bottom: 1px solid var(--hs-border, #27313d);
+}
+
+.upButton {
+  border: 1px solid var(--hs-border, #27313d);
+  background: transparent;
+  color: var(--hs-text, #dbe4ee);
+  border-radius: 0.25rem;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.upButton:hover {
+  border-color: var(--hs-accent, #2dd4bf);
+  color: var(--hs-accent, #2dd4bf);
+}
+
+.currentPath {
+  font-size: 0.72rem;
+  color: var(--hs-text-muted, #8494a7);
+  word-break: break-all;
+  min-width: 0;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  height: 320px;
+}
+
+.entry {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+  color: var(--hs-text, #dbe4ee);
+}
+
+.entry:hover {
+  background: var(--hs-hover, #232e3c);
+}
+
+/* Focus, not just :focus-visible: opening by mouse still focuses an entry, and
+   that entry has to look like the one Enter opens. */
+.entry:focus {
+  background: var(--hs-accent-soft, rgba(45, 212, 191, 0.12));
+}
+
+/* The ring the cards and rows wear, not the browser's own. */
+.entry:focus-visible {
+  outline: 2px solid var(--hs-accent, #2dd4bf);
+  outline-offset: -2px;
+}
+
+.folderIcon {
+  flex-shrink: 0;
+}
+
+.entryName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty {
+  padding: 1rem 0.75rem;
+  font-size: 0.78rem;
+  color: var(--hs-text-muted, #8494a7);
+  text-align: center;
+}
+
+.loading {
+  padding: 1rem 0.75rem;
+  font-size: 0.78rem;
+  color: var(--hs-text-muted, #8494a7);
+  text-align: center;
+}
+
+.error {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.78rem;
+  color: var(--hs-error-text, #f87171);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  border-top: 1px solid var(--hs-border, #27313d);
+}
+
+.hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0 auto 0 0;
+  font-size: 0.72rem;
+  color: var(--hs-text-muted, #8494a7);
+}

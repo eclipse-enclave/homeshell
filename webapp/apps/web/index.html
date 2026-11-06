@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>HomeShell</title>
+    <base href="/" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script>
+      // Set theme before first paint to avoid a flash of the wrong theme.
+      // 'system' (and anything unrecognized) follows the OS preference.
+      (function () {
+        var choice = localStorage.getItem('hs-theme');
+        var light =
+          choice === 'light' ||
+          (choice !== 'dark' &&
+            window.matchMedia('(prefers-color-scheme: light)').matches);
+        if (light) document.documentElement.setAttribute('data-theme', 'light');
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

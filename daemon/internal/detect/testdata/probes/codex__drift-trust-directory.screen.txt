@@ -1,0 +1,8 @@
+> You are in /tmp/repo
+
+  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk.
+
+› 1. Yes, continue
+  2. No, quit
+
+  Press enter to continue

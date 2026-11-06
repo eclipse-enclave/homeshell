@@ -1,0 +1,6 @@
+/* Only on a button the letter reaches, and only while Alt is held: the
+   attribute is set and cleared by useMnemonics. */
+:global([data-mnemonic-shown]) .mnemonic {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}

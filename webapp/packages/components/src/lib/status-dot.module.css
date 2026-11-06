@@ -1,0 +1,71 @@
+.wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.label {
+  font-size: 0.8rem;
+  line-height: 1;
+  color: var(--hs-text-muted, #8494a7);
+  white-space: nowrap;
+}
+
+.idle {
+  background: var(--hs-state-idle, #64748b);
+}
+
+.running {
+  background: var(--hs-state-running, #34d399);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.waiting {
+  background: var(--hs-state-waiting, #fbbf24);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.done {
+  background: var(--hs-state-done, #60a5fa);
+}
+
+.stopped {
+  background: var(--hs-state-stopped, #94a3b8);
+}
+
+.stopping {
+  background: var(--hs-state-stopping, #94a3b8);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.starting {
+  background: var(--hs-state-starting, #34d399);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.creating {
+  background: var(--hs-state-creating, #a78bfa);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.error {
+  background: var(--hs-state-error, #f87171);
+}
+
+.unknown {
+  background: var(--hs-state-unknown, #64748b);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.4;
+  }
+}

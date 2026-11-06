@@ -1,0 +1,92 @@
+.wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.caret {
+  font-size: 0.6rem;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+/* Split mode: the two halves overlap on one shared edge, with only the outer
+   corners rounded, and are padded tight so the caret sits by the word. The
+   hovered or focused half is raised, so its whole border (or focus ring)
+   shows over the other's. */
+.splitPrimary {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  padding-right: 0.4rem;
+}
+
+.splitCaret {
+  display: inline-flex;
+  align-items: center;
+  margin-left: -1px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  padding-left: 0.3rem;
+  padding-right: 0.4rem;
+}
+
+.splitPrimary:hover,
+.splitCaret:hover,
+.splitPrimary:focus-visible,
+.splitCaret:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+
+/* Portalled onto document.body so no `overflow: hidden` ancestor clips it;
+   `fixed` is what makes the trigger's viewport coordinates correct. */
+.menu {
+  position: fixed;
+  z-index: 200;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  border: 1px solid var(--hs-border, #27313d);
+  border-radius: 0.375rem;
+  background: var(--hs-panel-raised, #1b242f);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 35%);
+}
+
+.item {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.5rem;
+  width: 100%;
+  padding: 0.3rem 0.75rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--hs-text, #dbe4ee);
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.shortcut {
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.separator {
+  margin: 0.25rem 0.5rem;
+  border-top: 1px solid var(--hs-border, #27313d);
+}
+
+/* Focus, not just :focus-visible: opening by mouse still focuses an item, and
+   that item has to look like the one the keyboard will act on. */
+.item:hover,
+.item:focus {
+  background: var(--hs-hover, #232e3c);
+  outline: none;
+}

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>HomeShell</string>
+  <key>CFBundleDisplayName</key><string>HomeShell</string>
+  <key>CFBundleIdentifier</key><string>org.eclipse.homeshell</string>
+  <key>CFBundleExecutable</key><string>homeshell-desktop</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+  <!-- macOS expects CFBundleVersion alongside the short string; tooling that
+       reads only this key treats a bundle without it as version 0. -->
+  <key>CFBundleVersion</key><string>__VERSION__</string>
+  <key>CFBundleIconFile</key><string>homeshell.icns</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <!-- The shell loads the daemon over plain http on a loopback port. App
+       Transport Security governs WKWebView loads, and without this the window
+       can come up blank with the refusal reported nowhere. NSAllowsLocalNetworking
+       permits local-network loads without relaxing ATS for anything else — it is
+       narrower than NSAllowsArbitraryLoads, which is why it is the one used.
+       Unverified: nobody has launched the .dmg on a real Mac yet. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key><true/>
+  </dict>
+</dict>
+</plist>

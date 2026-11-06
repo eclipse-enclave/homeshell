@@ -1,0 +1,42 @@
+/* The list drops over what follows the input rather than pushing it down. */
+.suggest {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.list {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  margin: 0;
+  padding: 0.2rem 0;
+  list-style: none;
+  max-height: 14rem;
+  overflow-y: auto;
+  background: var(--hs-panel-raised, #1b242f);
+  border: 1px solid var(--hs-border, #27313d);
+  border-radius: 0.375rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.option {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.82rem;
+  color: var(--hs-text, #dbe4ee);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.option:hover {
+  background: var(--hs-hover, #232e3c);
+}
+
+.option[aria-selected='true'] {
+  background: var(--hs-accent-soft, rgba(45, 212, 191, 0.12));
+  box-shadow: inset 2px 0 0 var(--hs-accent, #2dd4bf);
+}

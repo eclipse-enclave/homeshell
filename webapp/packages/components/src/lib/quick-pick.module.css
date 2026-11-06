@@ -1,0 +1,113 @@
+/* Anchored near the top like VS Code's, so the list grows down into the page. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.panel {
+  width: min(600px, 90vw);
+  background: var(--hs-panel-raised, #1b242f);
+  border: 1px solid var(--hs-border, #27313d);
+  border-radius: 0.5rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.input {
+  width: 100%;
+  font: inherit;
+  font-size: 0.88rem;
+  color: var(--hs-text, #dbe4ee);
+  background: var(--hs-bg, #10151b);
+  border: none;
+  border-bottom: 1px solid var(--hs-border, #27313d);
+  padding: 0.6rem 0.75rem;
+}
+
+.input:focus {
+  outline: 1px solid var(--hs-accent, #2dd4bf);
+  outline-offset: -1px;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 0;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.list:empty {
+  display: none;
+}
+
+.option {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.84rem;
+  color: var(--hs-text, #dbe4ee);
+  cursor: pointer;
+}
+
+/* Fainter than the highlight, so the row Enter picks is the one that stands out. */
+.option:hover {
+  background: color-mix(in srgb, var(--hs-hover, #232e3c) 45%, transparent);
+}
+
+.option[aria-selected='true'] {
+  background: var(--hs-accent-soft, rgba(45, 212, 191, 0.12));
+  box-shadow: inset 2px 0 0 var(--hs-accent, #2dd4bf);
+}
+
+.label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Only the elided part gives way; the text either side of it keeps its spaces. */
+.split {
+  display: flex;
+  white-space: pre;
+}
+
+.elided {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.76rem;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.shortcut {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.empty:empty {
+  display: none;
+}
+
+.empty {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.82rem;
+  color: var(--hs-text-muted, #8494a7);
+}

@@ -1,0 +1,10 @@
+node_modules
+dist
+out-tsc
+*.tsbuildinfo
+.nx/cache
+.nx/workspace-data
+test-output
+coverage
+vite.config.*.timestamp*
+vitest.config.*.timestamp*

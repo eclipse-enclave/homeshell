@@ -1,0 +1,302 @@
+/* The list item wraps the top row plus an optional expanded panel below. */
+.item {
+  border-top: 1px solid var(--hs-border, #27313d);
+}
+
+/* The list's selection and its focus, as one mark: a bar, not a tint, which
+   would swallow the borders of the row's buttons. */
+.item[aria-current='true'],
+.item:focus-visible {
+  box-shadow: inset 3px 0 0 var(--hs-accent, #2dd4bf);
+  outline: none;
+}
+
+/* Wraps: when the window is too narrow for the info and the actions side by
+   side, the actions drop to a line of their own below rather than squeezing the
+   info until its pills spill out underneath them. */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
+}
+
+/* The clickable info area (marks the session seen). Also rendered as a plain
+   <div> when no attention tracking applies; both stretch to fill the row so the
+   state badge stays right-aligned. Button-reset so it reads as a row, not a
+   control. A single horizontal line: status dot, title, agent pill, state
+   badge. The basis is what it needs to show all of them with some of the title;
+   narrower than that and `.row` wraps the actions below instead. */
+.info {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1 1 18rem;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+}
+
+button.info {
+  cursor: pointer;
+}
+
+button.info:focus-visible {
+  outline: 2px solid var(--hs-accent, #2dd4bf);
+  outline-offset: 2px;
+  border-radius: 0.3rem;
+}
+
+/* Inline tail teaser: the last preview line, on its own row below the top line,
+   single-line. Indented to sit under the title (past the status dot), so it
+   reads as belonging to the session without disturbing the top row's alignment.
+
+   It is painted on the **terminal surface** (below) rather than set as loose
+   muted text. Bare text at card level reads as the card talking: a tail line
+   like "Press enter to continue" was indistinguishable from HomeShell asking the
+   user to press enter. The well plus the left rule say "this is quoted from
+   somewhere else" before a word of it is read. */
+.preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0 0.75rem 0.5rem 2.1rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.76rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--hs-terminal-text, #ccd8e6);
+  background: var(--hs-terminal-bg, #0a0e14);
+  border-left: 3px solid var(--hs-terminal-rule, #3d4c5e);
+  border-radius: 0 4px 4px 0;
+}
+
+/*
+ * Indented to the same 2.1rem as the tail, so it reads as this session speaking
+ * rather than as a note about the list.
+ */
+.rowWarning,
+.rowNote {
+  margin: 0;
+  padding: 0 0.75rem 0.5rem 2.1rem;
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * A refusal that belongs to this row — a rename the daemon would not take. Amber
+ * rather than the error red below it: nothing is broken and nothing was lost, the
+ * value in the box just cannot be used.
+ */
+.rowWarning {
+  color: var(--hs-state-waiting-text, #fbbf24);
+}
+
+.rowNote {
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88rem;
+  color: var(--hs-text, #dbe4ee);
+}
+
+.nameInput {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.88rem;
+  --rename-fill: var(--hs-panel, #161d26);
+}
+
+.stateBadge {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+
+.actions {
+  display: inline-flex;
+  margin-left: auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* Disclosure caret: a bare chevron that rotates when open, lighter weight than
+   the bordered action buttons so it reads as a twisty, not a command. */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  font: inherit;
+  color: var(--hs-text-muted, #8494a7);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.toggle:hover {
+  color: var(--hs-text, #dbe4ee);
+  background: var(--hs-hover, #232e3c);
+}
+
+.caret {
+  display: inline-block;
+  font-size: 1rem;
+  line-height: 1;
+  transition: transform 0.12s ease;
+}
+
+.caretOpen {
+  transform: rotate(90deg);
+}
+
+/* Expanded disclosure panel: full tail + optional prompt input. */
+.expanded {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0 0.75rem 0.65rem 2.1rem;
+}
+
+.previewEmpty {
+  margin: 0;
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+/*
+ * The startup/terminal tail. Its height is stated in lines rather than in rems:
+ * the daemon retains more than this on purpose, and "there is scrollback" is
+ * only true if the box cuts the log off at a known number of them. The padding
+ * added back is the 0.5rem above and below.
+ */
+.previewFull {
+  --preview-lines: 10;
+  --preview-line-height: 1.45;
+
+  margin: 0;
+  max-height: calc(
+    var(--preview-lines) * var(--preview-line-height) * 1em + 1rem
+  );
+  overflow: auto;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.78rem;
+  line-height: var(--preview-line-height);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--hs-terminal-text, #ccd8e6);
+  background: var(--hs-terminal-bg, #0a0e14);
+  border: 1px solid var(--hs-border, #27313d);
+  /* The same left rule the teaser carries, so collapsed and expanded are
+     recognizably one surface — and so the box cannot be confused with the
+     send-text input directly beneath it, which keeps the --hs-panel/--hs-border
+     look every other control in the app has. Before this they were the same
+     rectangle, and the output read as somewhere to type. */
+  border-left: 3px solid var(--hs-terminal-rule, #3d4c5e);
+  border-radius: 0 6px 6px 0;
+}
+
+/* Names the well for what it is, once there is room to say it. The teaser has no
+   room and relies on the surface alone; here the label removes the last of the
+   ambiguity for the reader who opened the row to read the text in full. */
+.outputLabel {
+  margin: 0 0 -0.25rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.promptForm {
+  display: flex;
+  gap: 0.35rem;
+}
+
+/* Discoverability caption for the empty-box key navigation. */
+.promptHint {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.promptInput {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--hs-text, #dbe4ee);
+  background: var(--hs-panel, #161d26);
+  border: 1px solid var(--hs-border, #27313d);
+  border-radius: 6px;
+  padding: 0.35rem 0.6rem;
+}
+
+.promptInput[aria-disabled='true'] {
+  opacity: 0.45;
+}
+
+/* State colors, shared with StatusDot's CSS variables. */
+.idle {
+  color: var(--hs-state-idle-text, #8494a7);
+}
+.running {
+  color: var(--hs-state-running-text, #34d399);
+}
+.waiting {
+  color: var(--hs-state-waiting-text, #fbbf24);
+}
+.starting {
+  color: var(--hs-state-starting-text, #34d399);
+}
+.unknown {
+  color: var(--hs-state-unknown-text, #8494a7);
+}
+.stopped {
+  color: var(--hs-state-stopped-text, #94a3b8);
+}
+.done {
+  color: var(--hs-state-done-text, #60a5fa);
+}
+.error {
+  color: var(--hs-error-text, #f87171);
+}
+
+/*
+ * The provider's reason a session never started, on the row itself. Indented to
+ * the row's text column and in the error colour, so it reads as that row's
+ * account of itself rather than a banner about the workstream.
+ */
+.errorMessage {
+  margin: 0;
+  padding: 0 0.75rem 0.5rem 2.1rem;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--hs-error-text, #f87171);
+  overflow-wrap: anywhere;
+}

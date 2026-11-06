@@ -1,0 +1,170 @@
+name: Release
+
+# Publish cross-platform daemon binaries + checksums.txt to a GitHub Release
+# whenever a semver tag is pushed. These are the artifacts the self-update flow
+# downloads (docs/ARCHITECTURE.md, "Self-update").
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  # Required for GoReleaser to create the release and upload assets.
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # GoReleaser needs full history + tags for the changelog.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: daemon/go.mod
+          cache-dependency-path: daemon/go.sum
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          package_json_file: webapp/package.json
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: webapp/pnpm-lock.yaml
+
+      - name: Install desktop build toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          # The default token can create releases and upload assets in this
+          # repository; no extra secret is required to publish.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The desktop build needs the webkit2gtk-4.0 → 4.1 shim, and only an
+          # absolute path works (see .goreleaser.yaml). GoReleaser inherits this;
+          # the build's post hook fails the release if it did not take effect.
+          PKG_CONFIG_PATH: ${{ github.workspace }}/packaging/linux/pkgconfig
+
+  macos:
+    name: Build & publish macOS app bundle
+    # homeshell-desktop needs CGO + the WKWebView headers, so it (unlike the
+    # Linux builds above) must be compiled natively rather than
+    # cross-compiled by GoReleaser. This job runs after `release` so the draft
+    # GitHub release it creates already exists by the time attach-desktop-assets
+    # uploads what this job builds.
+    needs: release
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: daemon/go.mod
+          cache-dependency-path: daemon/go.sum
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          package_json_file: webapp/package.json
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: webapp/pnpm-lock.yaml
+
+      - name: Build web UI
+        run: make build-webapp
+
+      - name: Build daemon + desktop shell for arm64 and amd64
+        # CGO_ENABLED=1 (via `make build-desktop`) cross-arch-compiles fine on
+        # a macOS runner: Xcode's clang ships universal arm64/x86_64 support,
+        # unlike cross-OS CGO builds.
+        env:
+          # The daemon stays pure Go; only homeshell-desktop needs CGO
+          # (build-desktop sets CGO_ENABLED=1 itself, inline in the Makefile).
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          for arch in arm64 amd64; do
+            GOARCH="$arch" make build-daemon
+            GOARCH="$arch" make build-desktop
+            mkdir -p "artifacts/$arch"
+            cp bin/homeshell "artifacts/$arch/homeshell"
+            cp bin/homeshell-desktop "artifacts/$arch/homeshell-desktop"
+          done
+
+      - name: Generate homeshell.icns from the shared PNG icon
+        # No binary .icns is committed to the repo (it can't be produced on
+        # Linux dev machines); this native-tool conversion runs only here, on
+        # the macOS runner.
+        run: |
+          set -euo pipefail
+          iconset="$RUNNER_TEMP/homeshell.iconset"
+          mkdir -p "$iconset"
+          for size in 16 32 128 256 512; do
+            sips -z "$size" "$size" packaging/linux/homeshell.png \
+              --out "$iconset/icon_${size}x${size}.png"
+            double=$((size * 2))
+            sips -z "$double" "$double" packaging/linux/homeshell.png \
+              --out "$iconset/icon_${size}x${size}@2x.png"
+          done
+          iconutil -c icns "$iconset" -o packaging/macos/homeshell.icns
+
+      - name: Assemble HomeShell.app and wrap it as a .dmg
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          for arch in arm64 amd64; do
+            packaging/macos/build-app.sh "$version" "$arch" \
+              "artifacts/$arch/homeshell" "artifacts/$arch/homeshell-desktop" \
+              packaging/macos/homeshell.icns dist
+          done
+
+      - name: Hand the .dmg files to the attach job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  attach-desktop-assets:
+    name: Attach desktop installers to the release
+    # One job owns every write to the release object, so a future second desktop
+    # job cannot race on the draft release by attaching to it concurrently.
+    needs: [macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Collect the per-OS artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Attach them to the release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          # GoReleaser creates the release as a draft (.goreleaser.yaml) so a
+          # maintainer can review before publishing; without this, attaching
+          # assets here would flip it to published as soon as this job runs.
+          draft: true
+          files: |
+            dist/*.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

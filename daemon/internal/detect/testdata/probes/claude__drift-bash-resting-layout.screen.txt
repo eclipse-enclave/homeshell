@@ -1,0 +1,10 @@
+● I'll run the tests.
+
+────────────────────────────────────────────────────────────
+  Bash command
+    cargo test --all
+
+  Do you want to proceed?
+  ❯ 1. Yes
+    2. Yes, and don't ask again for: cargo test
+    3. No

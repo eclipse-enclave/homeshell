@@ -1,0 +1,31 @@
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table + .table {
+  margin-top: 0.75rem;
+}
+
+.caption {
+  text-align: left;
+  padding-bottom: 0.3rem;
+  font-weight: 600;
+  color: var(--hs-text);
+}
+
+.label {
+  padding: 0.2rem 0.75rem 0.2rem 0;
+  font-weight: normal;
+  text-align: left;
+}
+
+.keys {
+  padding: 0.2rem 0;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.keys > * + * {
+  margin-left: 0.3rem;
+}

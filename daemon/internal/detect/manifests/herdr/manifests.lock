@@ -1,0 +1,97 @@
+{
+  "source": "https://github.com/herdrdev/herdr",
+  "tag": "v0.9.5",
+  "commit": "2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01",
+  "engine_version": 3,
+  "notice": false,
+  "files": {
+    "amp.toml": {
+      "version": "2026.07.09.1",
+      "sha256": "b5806b0dd21e2f5e752d0eac7f084d5ce2e3f275638cfd1234c42cc88152dc8c"
+    },
+    "antigravity.toml": {
+      "version": "2026.10.05.1",
+      "sha256": "c25fc6bae935b7582d707120915287b52d39bf81b5ab3f368cd688739c6e0325"
+    },
+    "claude.toml": {
+      "version": "2026.10.11.1",
+      "sha256": "e8b816a70edc1b5f91479acc9977f1f132a55b0c93845682611e91bdf8aa1920"
+    },
+    "cline.toml": {
+      "version": "2026.09.11.1",
+      "sha256": "75fe33ec735c59638da8d62e16bddd257d9959e692edb83b1f11b7f28057866a"
+    },
+    "codex.toml": {
+      "version": "2026.10.11.1",
+      "sha256": "d25cfddb5434259303fb0ac27b5b0e6d0558408e6901ee112bcd53de02bcda13"
+    },
+    "cursor.toml": {
+      "version": "2026.08.03.1",
+      "sha256": "753b1f7f632d42fa21139c2767ecbb5e1078748aba2e59407ac4932d3ce36ad7"
+    },
+    "devin.toml": {
+      "version": "2026.06.15.1",
+      "sha256": "250c9cea1d60bdb965dc6056f3066b785e941d60242756fbaca73b57ca6b0f85"
+    },
+    "droid.toml": {
+      "version": "2026.06.10.1",
+      "sha256": "d37e7c464177c0e8f3edce8d4fabc4bcc7a1874edf2c4c87a2f927888cf69ce9"
+    },
+    "gemini.toml": {
+      "version": "2026.06.10.1",
+      "sha256": "d7013b5e772852ecc595febf964f00b4f9edcbc6047a2a5421613a154d92520d"
+    },
+    "github-copilot.toml": {
+      "version": "2026.08.29.1",
+      "sha256": "b70c652584326a1a98475a5fcef16207dee9f23b65f8e78300f4fc2bb578cb11"
+    },
+    "grok.toml": {
+      "version": "2026.10.05.1",
+      "sha256": "8db7a8de4cd782fce26600859d78db7167399feb4c76f303104bc1bb83ab602b"
+    },
+    "hermes.toml": {
+      "version": "2026.07.24.1",
+      "sha256": "533d21b65dea3a0c60c25d0475c9c900d28a5712b6392669a7788f75de2b6e85"
+    },
+    "kilo.toml": {
+      "version": "2026.06.10.1",
+      "sha256": "70f0ba4e58bc141fe69d7024013f973cd16e8616393079318914d70afeefef3b"
+    },
+    "kimi.toml": {
+      "version": "2026.06.10.1",
+      "sha256": "ede08c0d2d5024f7606dc0a1b2f7a9c6a0ebb99f3b6c58ca6757049856d06e05"
+    },
+    "kiro.toml": {
+      "version": "2026.09.19.1",
+      "sha256": "c8990f3c9d4810995be97e8df29836411e37d90f6ac9d9303f505787b504806b"
+    },
+    "letta.toml": {
+      "version": "2026.08.24.1",
+      "sha256": "205b8c135584c86f9f529aa2d061109b5129085cc5c3124c6dbfe0e78fcdba43"
+    },
+    "maki.toml": {
+      "version": "2026.07.09.2",
+      "sha256": "3b392170ee3082051266509f575a4640bde8d693b2f37ecf52157a641bc75b28"
+    },
+    "muse.toml": {
+      "version": "2026.08.26.1",
+      "sha256": "b69c4d87fa9c19e3e6453b706fbe39c98a8b33ffbaa48e8cd5ae6751e9615074"
+    },
+    "opencode.toml": {
+      "version": "2026.06.10.1",
+      "sha256": "faa82aed2d76ad856528caae04232894594b74cc903aed3e522b3e725c5f2c95"
+    },
+    "pi.toml": {
+      "version": "2026.10.01.1",
+      "sha256": "949f5f3bcfeb6db1261432697dd94a9ed625a733d70c00e6fc0910372fad7c66"
+    },
+    "qodercli.toml": {
+      "version": "2026.06.10.1",
+      "sha256": "2089f70fc78c6576fd7128a00f4e7eedb85be81bde9ed73301b3b88000048961"
+    },
+    "qwen.toml": {
+      "version": "2026.08.14.1",
+      "sha256": "b27aa456af228e8a4ceac74f0dd431c33b21473b69314fc672a7fba474e2a7fe"
+    }
+  }
+}

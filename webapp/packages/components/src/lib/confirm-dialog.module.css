@@ -1,0 +1,57 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.dialog {
+  background: var(--hs-panel-raised, #1b242f);
+  border: 1px solid var(--hs-border, #27313d);
+  border-radius: 0.5rem;
+  width: min(420px, 90vw);
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--hs-border, #27313d);
+}
+
+.title {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--hs-text, #dbe4ee);
+}
+
+.body {
+  padding: 0.75rem;
+  font-size: 0.82rem;
+  color: var(--hs-text-muted, #8494a7);
+  line-height: 1.5;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  border-top: 1px solid var(--hs-border, #27313d);
+}
+
+/* Holding a form: room for its fields, and a body that scrolls rather than a
+   dialog taller than the window. */
+.wide {
+  width: min(640px, 92vw);
+  max-height: 88vh;
+}
+
+.wide .body {
+  overflow-y: auto;
+  min-height: 0;
+}

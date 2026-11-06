@@ -1,0 +1,12 @@
+# HomeShell's own rules, appended to herdr's codex manifest at load. Not from
+# herdr; written in herdr's format so they can be offered upstream.
+id = "codex"
+
+[[rules]]
+id = "homeshell_hooks_review"
+state = "blocked"
+priority = 950
+region = "top_non_empty_lines(20)"
+visible_blocker = true
+regex = ['(?m)^\s*Hooks need review\s*$']
+contains = ["Trust all and continue", "Continue without trusting"]

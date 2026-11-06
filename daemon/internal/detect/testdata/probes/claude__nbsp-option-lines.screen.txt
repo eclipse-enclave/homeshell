@@ -1,0 +1,6 @@
+  Bash command
+    ls
+
+  Do you want to proceed?
+  ❯ 1. Yes
+    2. No

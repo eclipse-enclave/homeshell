@@ -1,0 +1,107 @@
+html {
+    box-sizing: border-box;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: inherit;
+}
+
+/* HomeShell theme. Components (packages/components) consume these custom
+   properties and carry matching fallbacks, so they also render standalone. */
+:root {
+    color-scheme: dark;
+    --hs-bg: #10151b;
+    --hs-panel: #161d26;
+    --hs-panel-raised: #1b242f;
+    --hs-border: #27313d;
+    --hs-text: #dbe4ee;
+    --hs-text-muted: #8494a7;
+    --hs-accent: #2dd4bf;
+    --hs-accent-soft: rgba(45, 212, 191, 0.12);
+    --hs-accent-contrast: #08221d;
+    /* Accent and error as text, which light mode darkens to stay readable. */
+    --hs-accent-text: #2dd4bf;
+    --hs-error-text: #f87171;
+    --hs-danger: #f87171;
+    --hs-danger-contrast: #2a0a0a;
+    --hs-hover: #232e3c;
+    --hs-state-idle: #64748b;
+    --hs-state-running: #34d399;
+    --hs-state-waiting: #fbbf24;
+    --hs-state-done: #60a5fa;
+    --hs-state-error: #f87171;
+    --hs-state-stopped: #94a3b8;
+    --hs-state-stopping: #94a3b8;
+    --hs-state-starting: #34d399;
+    --hs-state-creating: #a78bfa;
+    --hs-state-unknown: #64748b;
+    /* The states as text, apart from the dots: light mode darkens them to stay
+       readable, and the idle slate is lifted here for the same reason. */
+    --hs-state-idle-text: #8494a7;
+    --hs-state-running-text: #34d399;
+    --hs-state-waiting-text: #fbbf24;
+    --hs-state-done-text: #60a5fa;
+    --hs-state-stopped-text: #94a3b8;
+    --hs-state-starting-text: #34d399;
+    --hs-state-creating-text: #a78bfa;
+    --hs-state-unknown-text: #8494a7;
+
+    /* The terminal surface: what a session's own output is painted on, kept
+       deliberately unlike --hs-panel (which the card and its text inputs use) so
+       text coming from the agent cannot be mistaken for HomeShell's own words.
+       Darker than --hs-bg here, so the well reads as recessed. */
+    --hs-terminal-bg: #0a0e14;
+    --hs-terminal-text: #ccd8e6;
+    --hs-terminal-rule: #3d4c5e;
+}
+
+[data-theme='light'] {
+    color-scheme: light;
+    --hs-bg: #f4f6f8;
+    --hs-panel: #ffffff;
+    --hs-panel-raised: #edf0f4;
+    --hs-border: #d4dae3;
+    --hs-text: #1a2332;
+    --hs-text-muted: #5a6a7e;
+    --hs-accent: #0d9488;
+    --hs-accent-soft: rgba(13, 148, 136, 0.1);
+    --hs-accent-contrast: #f0fdfa;
+    --hs-accent-text: #115e59;
+    --hs-error-text: #b91c1c;
+    --hs-danger: #b91c1c;
+    --hs-danger-contrast: #ffffff;
+    --hs-hover: #dfe4eb;
+    --hs-state-idle: #94a3b8;
+    --hs-state-running: #10b981;
+    --hs-state-waiting: #d97706;
+    --hs-state-done: #3b82f6;
+    --hs-state-error: #ef4444;
+    --hs-state-stopped: #64748b;
+    --hs-state-stopping: #64748b;
+    --hs-state-starting: #10b981;
+    --hs-state-creating: #7c3aed;
+    --hs-state-unknown: #94a3b8;
+    --hs-state-idle-text: #475569;
+    --hs-state-running-text: #065f46;
+    --hs-state-waiting-text: #92400e;
+    --hs-state-done-text: #1d4ed8;
+    --hs-state-stopped-text: #475569;
+    --hs-state-starting-text: #065f46;
+    --hs-state-creating-text: #6d28d9;
+    --hs-state-unknown-text: #475569;
+    /* Light mode keeps the well light rather than inverting to a dark terminal:
+       a black block in a white card is heavier than the distinction needs. The
+       separation comes from the tint against the card's white, plus the rule. */
+    --hs-terminal-bg: #eceff4;
+    --hs-terminal-text: #24303f;
+    --hs-terminal-rule: #9fadbf;
+}
+
+body {
+    margin: 0;
+    background: var(--hs-bg);
+    color: var(--hs-text);
+    font-family: system-ui, sans-serif;
+}

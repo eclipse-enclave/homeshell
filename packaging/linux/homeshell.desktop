@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=HomeShell
+Comment=Control plane for AI-assisted development
+Exec=homeshell-desktop
+Icon=homeshell
+Terminal=false
+Categories=Development;
+# The WM class the webview window reports. Without it GNOME/KDE cannot match the
+# window to this launcher, so the running app shows up as a separate unnamed
+# entry in the dock instead of grouping under the HomeShell icon.
+StartupWMClass=homeshell-desktop

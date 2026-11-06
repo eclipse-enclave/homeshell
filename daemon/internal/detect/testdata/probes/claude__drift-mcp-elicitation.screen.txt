@@ -1,0 +1,7 @@
+● Calling the tool.
+────────────────────────────────────────────────────────────
+  MCP server "tracker" requests your input
+  Project name: ____
+  ❯ Accept
+    Decline
+  Esc to cancel

@@ -1,0 +1,6 @@
+● Pick a plan
+────────────────────────────────────────────────────────────
+  Which approach?
+  ❯ 1. Small
+    2. Large
+  Enter to confirm · Esc to cancel

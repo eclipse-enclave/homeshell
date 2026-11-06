@@ -1,0 +1,8 @@
+● Reading the test files.
+
+✻ Brewing… (12s · ↓ 300 tokens · esc to interrupt)
+
+────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────
+  ⏵⏵ accept edits on (shift+tab to cycle)

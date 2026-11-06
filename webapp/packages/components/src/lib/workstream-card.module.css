@@ -1,0 +1,146 @@
+.card {
+  border: 1px solid var(--hs-border, #27313d);
+  border-radius: 0.6rem;
+  background: var(--hs-panel, #161d26);
+  overflow: hidden;
+}
+
+/* The list's selection, which commands and Alt's letters act on, and its
+   focus, as one mark: the border thickened in the accent, by a shadow so
+   nothing moves. Drawn while focus is elsewhere too, or after a click. */
+.card[aria-current='true'],
+.card:focus-visible {
+  border-color: var(--hs-accent, #2dd4bf);
+  box-shadow: 0 0 0 1px var(--hs-accent, #2dd4bf);
+  outline: none;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.75rem;
+}
+
+/* The name and its pills take what the actions leave, and never push them out:
+   short of room for a readable name, the actions wrap to a line of their own. */
+.identity {
+  flex: 1 1 16rem;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* No wider than its text, so a short name keeps the actions on its line. The
+   rename box instead grows into all the room there is. */
+.identity:not(:has(input)) {
+  max-width: max-content;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.name {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--hs-text, #dbe4ee);
+  /* From a few characters' basis, growing to its text: the pills are cut only
+     once the name is down to that. */
+  flex: 1 0 5rem;
+  max-width: max-content;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pills {
+  display: flex;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+/* Filled with the page's background (renameInputClass's default), not
+   --hs-panel: that is the card's own, which would leave the field
+   indistinguishable from the header it sits in. */
+.nameInput {
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+
+.renameError {
+  margin: 0;
+  padding: 0 0.75rem 0.6rem;
+  font-size: 0.78rem;
+  color: var(--hs-error-text, #f87171);
+}
+
+.state {
+  display: inline-flex;
+  align-items: center;
+}
+
+.sessions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.statusMessage {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border-top: 1px solid var(--hs-border, #27313d);
+  font-size: 0.85rem;
+  color: var(--hs-text-muted, #8494a7);
+  font-style: italic;
+}
+
+.statusText {
+  flex: 1;
+  min-width: 0;
+}
+
+/*
+ * Dismiss. `align-items: flex-start` above keeps it on the first line while a
+ * long provider error wraps beside it (a failed container start runs to several
+ * lines), rather than drifting to the vertical middle of the block. Not italic —
+ * it inherits the message's slant otherwise, which reads as a typo.
+ */
+.statusDismiss {
+  flex: none;
+  padding: 0 0.25rem;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-style: normal;
+  font-size: 1rem;
+  line-height: 1.1;
+  color: var(--hs-text-muted, #8494a7);
+  cursor: pointer;
+}
+
+.statusDismiss:hover {
+  color: var(--hs-text, #dbe4ee);
+}
+
+.empty {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border-top: 1px solid var(--hs-border, #27313d);
+  font-size: 0.85rem;
+  color: var(--hs-text-muted, #8494a7);
+}
