@@ -1,0 +1,19 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+/* Set apart from the settings above it: it is about the conversation, not the
+   container. */
+.fresh {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--hs-border, #27313d);
+}
+
+.fresh small {
+  padding-left: 1.6rem;
+}

@@ -1,0 +1,9 @@
+• Explored
+  └ Read main.go
+
+• Working (12s • esc to interrupt)
+
+
+› Ask Codex to do anything
+
+  gpt-6-luna low · 87% context left

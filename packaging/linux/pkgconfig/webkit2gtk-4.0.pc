@@ -1,0 +1,24 @@
+# Build-time shim: resolve webkit2gtk-4.0 to 4.1.
+#
+# webview_go hardcodes `#cgo linux pkg-config: gtk+-3.0 webkit2gtk-4.0` and has
+# cut no release since Aug 2024 (its master still says 4.0), so the module
+# cannot ask for 4.1 itself. WebKitGTK 4.1 is the *same C API* as 4.0, rebuilt
+# against libsoup3 instead of the unmaintained libsoup2 — only the pkg-config
+# name and include directory differ — so satisfying the 4.0 request from 4.1 is
+# sound rather than a version fudge.
+#
+# It has to be 4.1: webkit2gtk-4.0 was dropped from the Ubuntu archive in 24.04
+# (which is what `ubuntu-latest` resolves to), while 4.1 is present from 22.04
+# onwards on amd64. Linking 4.0 would break the release build and produce a
+# .deb/.rpm whose library cannot be resolved on any current distro.
+#
+# Consumed via PKG_CONFIG_PATH from `make build-desktop` and the GoReleaser
+# build; it is a build input only and is never installed into the package.
+#
+# TODO: delete this file, and the PKG_CONFIG_PATH it needs, once webview_go
+# releases a version whose cgo directive names webkit2gtk-4.1.
+
+Name: WebKitGTK 4.0 to 4.1 shim
+Description: Satisfies webview_go's webkit2gtk-4.0 request from webkit2gtk-4.1
+Version: 4.1
+Requires: webkit2gtk-4.1

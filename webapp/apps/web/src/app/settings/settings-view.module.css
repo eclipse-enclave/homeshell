@@ -1,0 +1,167 @@
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100%;
+  min-height: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.headerActions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.body {
+  display: flex;
+  gap: 1.25rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.categories {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 12rem;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.category {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--hs-text);
+  font: inherit;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+.category:hover {
+  background: var(--hs-panel-raised);
+}
+
+.categorySelected {
+  composes: category;
+  background: var(--hs-accent-soft);
+  border-color: var(--hs-border);
+  color: var(--hs-text);
+  font-weight: 600;
+}
+
+.detail {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.detailHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.detailTitle {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.detailDescription {
+  margin: 0 0 0.85rem;
+  font-size: 0.8rem;
+  color: var(--hs-text-muted);
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  max-width: 34rem;
+  /* Reset the native <fieldset> frame — it is used only to disable all controls
+     at once (when settings could not load), not for its default chrome. */
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+
+/* Heading for a run of related controls inside a category (e.g. the
+   per-event notification switches), so the switches read as one group
+   rather than a flat list of toggles. */
+.groupTitle {
+  margin: 0.35rem 0 -0.25rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--hs-text-muted);
+}
+
+/* One notify-worthy event: its "alert me" switch and the "play a sound"
+   switch that qualifies it, side by side so the sound reads as belonging to
+   the event rather than as a setting of its own. */
+.eventRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--hs-border);
+  border-radius: 0.4rem;
+  background: var(--hs-panel-raised);
+}
+
+.eventRow > *:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.eventRow > *:last-child {
+  flex-shrink: 0;
+}
+
+@media (max-width: 480px) {
+  .eventRow {
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+}
+
+.loadError {
+  margin: 0 0 0.85rem;
+  padding: 0.5rem 0.65rem;
+  max-width: 34rem;
+  border: 1px solid var(--hs-state-error, #f87171);
+  border-radius: 0.4rem;
+  background: var(--hs-state-error-soft, rgba(248, 113, 113, 0.12));
+  color: var(--hs-error-text, #f87171);
+  font-size: 0.82rem;
+}
+
+@media (max-width: 640px) {
+  .body {
+    flex-direction: column;
+  }
+
+  .categories {
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: auto;
+  }
+}

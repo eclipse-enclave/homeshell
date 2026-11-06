@@ -1,0 +1,67 @@
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover {
+  background: var(--hs-panel-raised, #1b242f);
+}
+
+/* The left bar a selected session row has. */
+.selected,
+.selected:hover {
+  background: var(--hs-panel-raised, #1b242f);
+  box-shadow: inset 3px 0 0 var(--hs-accent, #2dd4bf);
+}
+
+/* Apart from the selection: Tab moves focus here without selecting. */
+.item:focus-visible {
+  outline: 2px solid var(--hs-accent, #2dd4bf);
+  outline-offset: -2px;
+}
+
+.itemBody {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.name {
+  font-size: 0.9rem;
+  color: var(--hs-text, #dbe4ee);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  font-size: 0.74rem;
+  color: var(--hs-text-muted, #8494a7);
+  white-space: nowrap;
+}
+
+.empty {
+  margin: 0;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.85rem;
+  color: var(--hs-text-muted, #8494a7);
+}

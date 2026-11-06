@@ -1,0 +1,21 @@
+.pill {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.3rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 12rem;
+}
+
+.neutral {
+  background: var(--hs-panel-raised, #1b242f);
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.accent {
+  background: var(--hs-accent-soft, rgba(45, 212, 191, 0.12));
+  color: var(--hs-accent-text, #2dd4bf);
+}

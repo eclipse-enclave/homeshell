@@ -1,0 +1,10 @@
+.kbd {
+  display: inline-block;
+  padding: 0 0.3rem;
+  font-family: inherit;
+  font-size: 0.72rem;
+  color: var(--hs-text-muted, #8494a7);
+  border: 1px solid var(--hs-border, #27313d);
+  border-radius: 3px;
+  white-space: nowrap;
+}

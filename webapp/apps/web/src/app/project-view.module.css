@@ -1,0 +1,86 @@
+/*
+ * The project's column fills whatever the layout gives it — there is no reading
+ * measure to protect here. A workstream card is a row of controls with a spacer
+ * in the middle (name and pills at the left, state and actions at the right), so
+ * extra width goes to the gap between them, and the session output it holds is
+ * monospace terminal text that only gets more readable with room. The 56rem cap
+ * this used to carry left a third of a laptop screen empty.
+ *
+ * What does *not* want the whole width is a form, so the forms cap themselves
+ * (see new-workstream-form.module.css) rather than being held back from here.
+ */
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Settings loading for a dialog about to open. */
+.loading {
+  cursor: progress;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.name {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.nameInput {
+  font: inherit;
+  font-size: 1.25rem;
+  font-weight: bold;
+}
+
+.error {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--hs-error-text, #f87171);
+}
+
+.status {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+/* Kept mounted, so a screen reader hears it filled; empty, it takes no room. */
+.status:empty {
+  position: absolute;
+}
+
+.headerActions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: flex-start;
+}
+
+.path {
+  font-size: 0.8rem;
+  color: var(--hs-text-muted);
+}
+
+.workstreams {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}

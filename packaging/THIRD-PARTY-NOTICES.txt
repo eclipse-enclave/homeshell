@@ -1,0 +1,10 @@
+HomeShell third-party notices
+
+herdr agent detection manifests
+https://github.com/herdrdev/herdr
+
+The homeshell daemon contains herdr's agent detection manifests in their
+original TOML format and a Go port of herdr's manifest rule engine, modified
+to run under Go's regular expression syntax.
+herdr is licensed under the Apache License, Version 2.0. Its full text is in
+licenses/herdr/LICENSE.

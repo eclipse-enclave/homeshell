@@ -1,0 +1,181 @@
+/* Shared by the new-workstream and new-session forms (and schema-form's
+   fields). Each spans what it sits in, like the cards and rows beside it. */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.6rem;
+  border: 1px solid var(--hs-border, #27313d);
+  border-radius: 0.45rem;
+  background: var(--hs-panel-raised, #1b242f);
+}
+
+.label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.74rem;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--hs-text, #dbe4ee);
+}
+
+/* Its box takes no input but keeps focus, as the text fields do. */
+.checkboxLabel:has(> input[aria-disabled='true']) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* A checkbox field: the box and its name, then what it does, under the name. */
+.check {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+/* The name and, when the value is someone else's default, where it comes from. */
+.labelRow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+/* Quiet, and cut short rather than pushing the name onto two lines. */
+.source {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.7rem;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.input {
+  border: 1px solid var(--hs-border, #27313d);
+  background: var(--hs-bg, #10151b);
+  color: var(--hs-text, #dbe4ee);
+  border-radius: 0.3rem;
+  padding: 0.3rem 0.5rem;
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.input:hover:not(:focus, [aria-disabled='true']) {
+  border-color: var(--hs-text-muted, #8494a7);
+}
+
+.input:focus {
+  outline: 1px solid var(--hs-accent, #2dd4bf);
+  outline-offset: -1px;
+}
+
+/* In the form's look rather than the platform's: a caret like the Container
+   group's, on the field's own ground. */
+select.input {
+  appearance: none;
+  padding-right: 1.8rem;
+  background: var(--hs-bg, #10151b)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4' fill='none' stroke='%238494a7' stroke-width='1.5'/%3E%3C/svg%3E")
+    no-repeat right 0.5rem center / 0.9rem;
+  cursor: pointer;
+}
+
+.input:disabled,
+.input[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.empty {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.error {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--hs-error-text, #f87171);
+}
+
+.fieldError {
+  font-size: 0.72rem;
+  color: var(--hs-error-text, #f87171);
+}
+
+/* Of a refused pill group, only the refused choice: the others are the way out. */
+.input[aria-invalid='true'],
+.pillGroup[aria-invalid='true'] .pill[aria-checked='true'] {
+  border-color: var(--hs-error-text, #f87171);
+}
+
+/* Still refused while focused, as it is after a refusal. */
+.input[aria-invalid='true']:focus {
+  outline-color: var(--hs-error-text, #f87171);
+}
+
+.pillGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.pill {
+  appearance: none;
+  border: 1px solid var(--hs-border, #27313d);
+  background: transparent;
+  color: var(--hs-text-muted, #8494a7);
+  border-radius: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+
+/* Not the checked pill: a hovered one must not look more chosen than it. */
+.pill:hover:enabled:not([aria-disabled='true'], [aria-checked='true']) {
+  border-color: var(--hs-text-muted, #8494a7);
+  color: var(--hs-text, #dbe4ee);
+}
+
+.pill:focus-visible {
+  outline: 2px solid var(--hs-accent, #2dd4bf);
+  outline-offset: 1px;
+}
+
+/* Told apart by a fill and weight, not by its colour alone, and by no outline
+ * or ring, which is the focus's look. */
+.pill[aria-checked='true'] {
+  border-color: transparent;
+  color: var(--hs-accent-text, #2dd4bf);
+  background: var(--hs-accent-soft, rgba(45, 212, 191, 0.12));
+  font-weight: 600;
+}
+
+.pill:disabled,
+.pill[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}

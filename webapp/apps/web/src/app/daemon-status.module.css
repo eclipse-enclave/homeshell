@@ -1,0 +1,51 @@
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.connecting {
+  background: var(--hs-state-idle);
+}
+
+.connected {
+  background: var(--hs-state-running);
+}
+
+.offline {
+  background: var(--hs-state-error, #f87171);
+}
+
+.text {
+  font-size: 0.78rem;
+  color: var(--hs-text-muted);
+}
+
+.update {
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--hs-state-running, #34d399);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--hs-state-running-text, #34d399);
+  cursor: pointer;
+}
+
+.update:hover:not(:disabled) {
+  background: var(--hs-state-running, #34d399);
+  color: var(--hs-bg, #0b1120);
+}
+
+.update:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

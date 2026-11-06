@@ -1,0 +1,12 @@
+{
+  "name": "@homeshell/web",
+  "version": "0.0.1",
+  "private": true,
+  "nx": {
+    "projectType": "application"
+  },
+  "dependencies": {
+    "@homeshell/components": "workspace:*",
+    "@homeshell/model": "workspace:*"
+  }
+}

@@ -1,0 +1,37 @@
+.wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copyButton {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border: none;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--hs-text-muted, #8494a7);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+
+.copyButton:hover {
+  color: var(--hs-text, #dbe4ee);
+  background: var(--hs-panel-raised, #1b242f);
+}
+
+.copyButton:active {
+  color: var(--hs-accent, #2dd4bf);
+}

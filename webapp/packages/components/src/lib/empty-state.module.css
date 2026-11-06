@@ -1,0 +1,22 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 2.5rem 1rem;
+  border: 1px dashed var(--hs-border, #27313d);
+  border-radius: 0.6rem;
+  text-align: center;
+}
+
+.title {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--hs-text, #dbe4ee);
+}
+
+.hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.82rem;
+  color: var(--hs-text-muted, #8494a7);
+}

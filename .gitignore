@@ -1,0 +1,15 @@
+/bin/
+/db/
+# GoReleaser output (`make package-linux`, `goreleaser release --snapshot`).
+/dist/
+/.pnpm-store/
+# Brainstorming/design plans are local, point-in-time artifacts — not checked in.
+# Scoped to docs/ but at any depth: a 1178-line design plan once landed in
+# docs/superpowers/plans/, which /docs/plans/ alone did not catch. Not a bare
+# `plans/`, which would silently untrack a directory of that name anywhere in the
+# repo, including a future source tree.
+/docs/**/plans/
+/daemon/internal/webui/dist/*
+!/daemon/internal/webui/dist/.gitkeep
+/scripts/fake-release/
+webapp/db/

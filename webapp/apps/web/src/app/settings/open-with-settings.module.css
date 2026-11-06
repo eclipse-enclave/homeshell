@@ -1,0 +1,138 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  max-width: 34rem;
+  align-items: flex-start;
+}
+
+.intro {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.intro code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  /* Set off as code even where no monospace face is installed. */
+  padding: 0.05rem 0.3rem;
+  border-radius: 0.25rem;
+  background: var(--hs-panel-raised, #1b242f);
+  color: var(--hs-text, #dbe4ee);
+}
+
+.muted {
+  margin: 0;
+  font-size: 0.82rem;
+  font-style: italic;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.entries {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  align-self: stretch;
+}
+
+.entry {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.6rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--hs-border, #27313d);
+  border-radius: 6px;
+  background: var(--hs-panel, #161d26);
+}
+
+/* A compact pair at the row's start, so the fields keep their width. */
+.order {
+  display: flex;
+  flex-direction: column;
+  align-self: center;
+  gap: 0.15rem;
+}
+
+.order > button {
+  padding: 0 0.3rem;
+  font-size: 0.7rem;
+  line-height: 1.2;
+}
+
+.field {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.order + .field {
+  flex: 0 0 9rem;
+}
+
+.fieldLabel {
+  font-size: 0.74rem;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.input {
+  min-width: 0;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--hs-text, #dbe4ee);
+  background: var(--hs-bg, #10151b);
+  border: 1px solid var(--hs-border, #27313d);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+}
+
+.input:focus {
+  outline: 1px solid var(--hs-accent, #2dd4bf);
+  outline-offset: -1px;
+}
+
+/* Trailing pills: bottom-aligned and lifted so they sit on the inputs' line.
+   Both carry the same border box so they line up with each other. */
+.defaultBadge,
+.unsaved {
+  align-self: flex-end;
+  margin-bottom: 0.3rem;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  color: var(--hs-text-muted, #8494a7);
+  white-space: nowrap;
+}
+
+/* Fixed width and right-aligned so every row's fields line up, however it ends. */
+.rowAction {
+  flex: 0 0 5.5rem;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+}
+
+.defaultBadge {
+  background: var(--hs-hover, #232e3c);
+}
+
+.unsaved {
+  border-color: var(--hs-border, #27313d);
+  border-style: dashed;
+}
+
+.terminalToggle {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding-bottom: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--hs-text-muted, #8494a7);
+  white-space: nowrap;
+}

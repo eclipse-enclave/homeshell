@@ -1,0 +1,36 @@
+/* Tinted on hover and while Alt+R reaches it. The tint is a background plus a
+   shadow of the same colour, so it spills into the gap without moving
+   anything; its 0.2rem reach matches the rename box's below. */
+.renamable {
+  border-radius: 0.3rem;
+  transition:
+    background-color 0.1s,
+    box-shadow 0.1s;
+}
+
+.renamable:hover,
+.renamable[data-mnemonic-shown] {
+  background-color: var(--hs-hover, #232e3c);
+  box-shadow: 0 0 0 0.2rem var(--hs-hover, #232e3c);
+}
+
+/* The box that takes the title's place (renameInputClass). Font and size are
+   the title's, set by each user of it. */
+.input {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0.3rem;
+  color: var(--hs-text, #dbe4ee);
+  background: var(--rename-fill, var(--hs-bg, #10151b));
+  box-shadow:
+    0 0 0 0.2rem var(--rename-fill, var(--hs-bg, #10151b)),
+    0 0 0 calc(0.2rem + 1px) var(--hs-border, #27313d);
+}
+
+.input:focus {
+  outline: none;
+  box-shadow:
+    0 0 0 0.2rem var(--rename-fill, var(--hs-bg, #10151b)),
+    0 0 0 calc(0.2rem + 1px) var(--hs-accent, #2dd4bf);
+}

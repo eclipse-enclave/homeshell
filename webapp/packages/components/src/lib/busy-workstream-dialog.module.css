@@ -1,0 +1,23 @@
+.description {
+  margin: 0 0 0.5rem;
+}
+
+/*
+ * The sessions the daemon named. A list, not a sentence: the point is that the
+ * user recognizes the work they are about to interrupt, one line at a time.
+ */
+.sessions {
+  margin: 0 0 0.5rem;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.session {
+  font-size: 0.85rem;
+}
+
+.state {
+  color: var(--hs-text-muted, #8494a7);
+}
