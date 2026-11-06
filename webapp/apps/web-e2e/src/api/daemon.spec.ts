@@ -67,8 +67,11 @@ test.describe('daemon HTTP API', () => {
     expect(body.projects.map((p: { name: string }) => p.name)).toContain(
       'homeshell',
     );
+    // Specs running in parallel create sessions in the seeded projects, so any
+    // aggregate state can show up, "starting" included.
+    const states = ['idle', 'starting', 'running', 'waiting', 'unknown', 'error', 'stopped', 'done'];
     for (const project of body.projects) {
-      expect(['idle', 'running', 'waiting', 'done']).toContain(project.state);
+      expect(states).toContain(project.state);
       expect(typeof project.runtimeState).toBe('string');
       expect(typeof project.effectiveState).toBe('string');
       expect(Array.isArray(project.workstreams)).toBe(true);
