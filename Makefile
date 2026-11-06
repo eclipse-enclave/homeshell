@@ -3,7 +3,21 @@
 GO        ?= go
 NODE      ?= node
 PNPM      ?= pnpm
-VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# VERSION is what the binaries report, PACKAGE_VERSION the deb/rpm version; both
+# derive from the latest release tag (scripts/version.sh).
+# Computed once per make run. A stray tag that scripts/version.sh rejects leaves
+# VERSION at dev, which the packaging targets refuse.
+ifndef VERSION
+VERSION := $(or $(shell ./scripts/version.sh),dev)
+endif
+ifndef PACKAGE_VERSION
+PACKAGE_VERSION := $(shell ./scripts/version.sh --package)
+endif
+COMMIT    ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+# Release channel of a standalone release binary (rolling or stable); only a
+# binary stamped with one updates itself.
+BUILD_CHANNEL ?=
+DAEMON_LDFLAGS = -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.channel=$(BUILD_CHANNEL)
 BIN_DIR   := bin
 BINARY    := $(BIN_DIR)/homeshell
 DESKTOP_DIR := desktop
@@ -11,7 +25,7 @@ DESKTOP_BIN := $(BIN_DIR)/homeshell-desktop
 WEB_DIST  := webapp/apps/web/dist
 EMBED_DIR := daemon/internal/webui/dist
 
-.PHONY: all help setup check-tools build build-webapp embed build-daemon build-desktop check-webview check-desktop-linkage package-linux run run-local run-desktop run-desktop-local dev dev-local dev-demo dev-daemon dev-update dev-update-build dev-update-server dev-update-daemon dev-webapp test test-docs-lint test-e2e check-dev-targets print-dev-token lint docs-lint fmt clean
+.PHONY: all help setup check-tools build build-webapp embed build-daemon build-desktop check-webview check-desktop-linkage archive deb deb-quick rpm dmg run run-local run-desktop run-desktop-local dev dev-local dev-demo dev-daemon dev-update dev-update-build dev-update-server dev-update-daemon dev-webapp test test-docs-lint test-release-scripts test-e2e check-dev-targets print-dev-token lint docs-lint fmt clean
 
 all: build
 
@@ -41,13 +55,14 @@ build-webapp:
 
 ## embed        copy the built web app into the daemon's embed directory
 embed:
+	@[ -f $(WEB_DIST)/index.html ] || { echo "$(WEB_DIST) has no built web UI: run make build-webapp first"; exit 1; }
 	rm -rf $(EMBED_DIR)
 	mkdir -p $(EMBED_DIR)
 	cp -r $(WEB_DIST)/. $(EMBED_DIR)/
 	touch $(EMBED_DIR)/.gitkeep
 
 build-daemon: embed
-	cd daemon && $(GO) build -ldflags "-X main.version=$(VERSION)" -o ../$(BINARY) ./cmd/homeshell
+	cd daemon && $(GO) build -trimpath -ldflags "$(DAEMON_LDFLAGS)" -o ../$(BINARY) ./cmd/homeshell
 
 # webview_go hardcodes `pkg-config: webkit2gtk-4.0`, which Ubuntu dropped in
 # 24.04. packaging/linux/pkgconfig/ answers that request from 4.1 — the same C
@@ -125,29 +140,100 @@ run-local: build
 HOMESHELL_HOME_DIR ?=
 HOMESHELL_ADDR     ?=
 
-## package-linux build the Linux .deb/.rpm locally (needs goreleaser installed)
-##               Usage: make package-linux
+## archive      build the standalone dist/homeshell-<os>-<arch>.tar.gz (web UI embedded)
+##              Usage: make archive [GOOS=linux GOARCH=arm64] [BUILD_CHANNEL=rolling]
+## deb, rpm     build the Linux package into dist/ (deb-quick skips the build-dependency check)
+## dmg          build dist/HomeShell-<version>-<arch>.dmg (macOS only) [GOARCH=amd64]
 #
-# GoReleaser's own config cannot name the shim directory: it has no template for
-# the project root, and a relative PKG_CONFIG_PATH does not resolve because the go
-# tool runs pkg-config from the cgo package's own directory in the module cache —
-# verified by building, which produced a silently 4.0-linked binary. So the caller
-# supplies the absolute path, and make is a caller that knows it.
-#
-# check-webview is not enough here: it accepts a 4.0-only machine, which
-# build-desktop supports but a package cannot, since the shim below needs 4.1 and
-# the declared dependency names it. So require 4.1 specifically.
-package-linux: check-webview
-	@pkg-config --exists webkit2gtk-4.1 || { \
-		printf 'Packaging needs WebKitGTK 4.1: the .deb/.rpm declare it, and the\n'; \
-		printf 'pkg-config shim resolves to it. A 4.0-only machine can build the\n'; \
-		printf 'shell (make build-desktop) but cannot produce a package.\n'; \
-		printf '  Debian/Ubuntu: sudo apt-get install libwebkit2gtk-4.1-dev\n'; \
-		printf '  Fedora:        sudo dnf install webkit2gtk4.1-devel\n'; \
-		exit 1; \
-	}
-	PKG_CONFIG_PATH="$(WEBKIT_PC_DIR)$(if $(PKG_CONFIG_PATH),:$(PKG_CONFIG_PATH),)" \
-		goreleaser release --snapshot --clean
+# All of them embed the web UI that is already built: run `make build-webapp`
+# first, or put a downloaded webapp/apps/web/dist in place as CI does.
+DIST_DIR := dist
+GOOS     ?= $(shell $(GO) env GOOS)
+GOARCH   ?= $(shell $(GO) env GOARCH)
+GIT_COMMIT_RFC2822 = $(shell git show -s --format=%cD HEAD 2>/dev/null || date -R)
+require_release_version = $(if $(filter-out dev,$(VERSION)),,$(error VERSION is dev: scripts/version.sh found no version; see its output above))$(if $(strip $(PACKAGE_VERSION)),,$(error PACKAGE_VERSION is empty: scripts/version.sh found no version))
+
+# The archive carries the project license and notices, and herdr's license: the
+# daemon embeds herdr's detection manifests, and Apache-2.0 requires it with every copy.
+archive: embed
+	$(require_release_version)
+	@stage=$$(mktemp -d) && trap 'rm -rf "$$stage"' EXIT && \
+	(cd daemon && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build -trimpath \
+		-ldflags "$(DAEMON_LDFLAGS)" -o "$$stage/homeshell" ./cmd/homeshell) && \
+	cp README.md LICENSE NOTICE.md packaging/THIRD-PARTY-NOTICES.txt "$$stage/" && \
+	mkdir -p "$$stage/licenses/herdr" $(DIST_DIR) && \
+	cp daemon/internal/detect/manifests/herdr/LICENSE "$$stage/licenses/herdr/" && \
+	tar -czf $(DIST_DIR)/homeshell-$(GOOS)-$(GOARCH).tar.gz -C "$$stage" \
+		homeshell README.md LICENSE NOTICE.md THIRD-PARTY-NOTICES.txt licenses
+	@echo "Archive built: $(DIST_DIR)/homeshell-$(GOOS)-$(GOARCH).tar.gz ($(VERSION), channel '$(BUILD_CHANNEL)')"
+
+# The package builds read a source tarball rather than the checkout: tracked
+# and untracked-but-not-ignored files, plus the embedded web UI, which is ignored.
+# Never channel-stamped: packages are upgraded by the package manager.
+SOURCE_TARBALL = git ls-files -z --cached --others --exclude-standard \
+		| grep -zv '^$(EMBED_DIR)/' \
+		| { cat; find $(EMBED_DIR) -type f -print0; } \
+		| tar --null --no-recursion -T - --transform 's,^,homeshell-$(PACKAGE_VERSION)/,' -czf
+
+# The Debian changelog entry is written into the build copy, so the package
+# version follows the release tags without a commit per build.
+define DEB_CHANGELOG_ENTRY
+homeshell ($(PACKAGE_VERSION)-1) unstable; urgency=medium
+
+  * Build of homeshell $(VERSION), commit $(COMMIT).
+
+ -- $(shell sed -n 's/^Maintainer: //p' debian/control)  $(GIT_COMMIT_RFC2822)
+endef
+deb deb-quick: export DEB_CHANGELOG = $(DEB_CHANGELOG_ENTRY)
+
+deb: DPKG_FLAGS :=
+deb-quick: DPKG_FLAGS := -d
+deb deb-quick: embed
+	$(require_release_version)
+	@command -v dpkg-buildpackage >/dev/null 2>&1 || { echo "dpkg-buildpackage is not installed (sudo apt install debhelper)"; exit 1; }
+	mkdir -p $(DIST_DIR)
+	@tmpdir=$$(mktemp -d) && trap 'chmod -R u+w "$$tmpdir" 2>/dev/null; rm -rf "$$tmpdir"' EXIT && \
+	$(SOURCE_TARBALL) "$$tmpdir/src.tar.gz" && \
+	tar -xzf "$$tmpdir/src.tar.gz" -C "$$tmpdir" && \
+	cd "$$tmpdir/homeshell-$(PACKAGE_VERSION)" && \
+	printf '%s\n' "$$DEB_CHANGELOG" > debian/changelog && \
+	BUILD_VERSION='$(VERSION)' BUILD_COMMIT='$(COMMIT)' dpkg-buildpackage -us -uc -b $(DPKG_FLAGS) && \
+	mv "$$tmpdir"/*.deb "$(CURDIR)/$(DIST_DIR)/"
+	@echo "Package built: $(DIST_DIR)/"
+
+# --nodeps lets this run on Debian/Ubuntu hosts, where apt-installed build
+# tools are not in the RPM database. Release RPMs are built on Fedora.
+rpm: embed
+	$(require_release_version)
+	@command -v rpmbuild >/dev/null 2>&1 || { echo "rpmbuild is not installed (on Debian/Ubuntu: sudo apt install rpm)"; exit 1; }
+	mkdir -p $(DIST_DIR)
+	@tmpdir=$$(mktemp -d) && trap 'chmod -R u+w "$$tmpdir" 2>/dev/null; rm -rf "$$tmpdir"' EXIT && \
+	mkdir -p "$$tmpdir/BUILD" "$$tmpdir/BUILDROOT" "$$tmpdir/RPMS" "$$tmpdir/SOURCES" "$$tmpdir/SRPMS" && \
+	$(SOURCE_TARBALL) "$$tmpdir/SOURCES/homeshell-$(PACKAGE_VERSION).tar.gz" && \
+	rpmbuild --nodeps -bb \
+		--define "_topdir $$tmpdir" \
+		--define "package_version $(PACKAGE_VERSION)" \
+		--define "build_version $(VERSION)" \
+		--define "build_commit $(COMMIT)" \
+		packaging/rpm/homeshell.spec && \
+	rpm_path=$$(find "$$tmpdir/RPMS" -type f -name '*.rpm' -print -quit) && \
+	{ [ -n "$$rpm_path" ] || { echo "rpmbuild did not produce an RPM" >&2; exit 1; }; } && \
+	cp "$$rpm_path" "$(CURDIR)/$(DIST_DIR)/"
+	@echo "Package built: $(DIST_DIR)/"
+
+# CGO cross-arch builds work on macOS: Xcode's clang targets arm64 and x86_64.
+dmg: embed
+	$(require_release_version)
+	@[ "$$(uname -s)" = Darwin ] || { echo "make dmg needs macOS (hdiutil, iconutil, the WebKit framework)"; exit 1; }
+	@stage=$$(mktemp -d) && trap 'rm -rf "$$stage"' EXIT && \
+	(cd daemon && CGO_ENABLED=0 GOOS=darwin GOARCH=$(GOARCH) $(GO) build -trimpath \
+		-ldflags "$(DAEMON_LDFLAGS)" -o "$$stage/homeshell" ./cmd/homeshell) && \
+	(cd $(DESKTOP_DIR) && CGO_ENABLED=1 GOOS=darwin GOARCH=$(GOARCH) $(GO) build -trimpath \
+		-ldflags "-X main.version=$(VERSION)" -o "$$stage/homeshell-desktop" ./cmd/homeshell-desktop) && \
+	packaging/macos/build-icns.sh packaging/linux/homeshell.png "$$stage/homeshell.icns" && \
+	mkdir -p $(DIST_DIR) && \
+	packaging/macos/build-app.sh "$(VERSION)" "$(GOARCH)" "$$stage/homeshell" \
+		"$$stage/homeshell-desktop" "$$stage/homeshell.icns" $(DIST_DIR)
 
 ## run-desktop   build daemon + web + desktop shell, then open the desktop window
 ##               (HOMESHELL_HOME_DIR / HOMESHELL_ADDR pick the daemon to attach to)
@@ -191,20 +277,21 @@ dev-daemon dev-webapp dev-update-daemon print-dev-token: export HOMESHELL_API_TO
 dev-daemon:
 	cd daemon && $(GO) run ./cmd/homeshell serve $(DAEMON_ARGS)
 
-## dev-update   test the self-update flow: build current (v0.0.1), compile a
-##              separate "new" binary (v0.0.2), start the fake release server,
+## dev-update   test the self-update flow: build current (0.0.1), compile a
+##              separate "new" binary (0.0.2), start the fake release server,
 ##              the daemon, and vite.  Usage: make dev-update [UPDATE_VERSION=0.0.2]
 UPDATE_VERSION ?= 0.0.2
 UPDATE_PORT    ?= 9876
 # The running daemon must report a version *below* UPDATE_VERSION or the updater
-# finds nothing to offer. VERSION defaults to `git describe`, which on a tagged
+# finds nothing to offer. VERSION defaults to scripts/version.sh, which on a tagged
 # checkout is higher than 0.0.2, so the dev-update targets pin it.
 CURRENT_VERSION ?= 0.0.1
 
-# Both binaries: the daemon under test at CURRENT_VERSION, and the "new" release the
-# fake server publishes at UPDATE_VERSION.
+# Both binaries: the daemon under test at CURRENT_VERSION, stamped for the stable
+# channel since only a channel-stamped build updates itself, and the "new" release
+# the fake server publishes at UPDATE_VERSION.
 dev-update-build:
-	$(MAKE) build VERSION=$(CURRENT_VERSION)
+	$(MAKE) build VERSION=$(CURRENT_VERSION) BUILD_CHANNEL=stable
 	./scripts/fake-release-server.sh build $(UPDATE_VERSION)
 
 # PREBUILT=1 tells the two serve targets that both binaries already exist, which is what
@@ -223,7 +310,7 @@ dev-update-server:
 	./scripts/fake-release-server.sh serve $(UPDATE_VERSION) $(UPDATE_PORT)
 
 dev-update-daemon:
-	[ -n "$(PREBUILT)" ] || $(MAKE) build VERSION=$(CURRENT_VERSION)
+	[ -n "$(PREBUILT)" ] || $(MAKE) build VERSION=$(CURRENT_VERSION) BUILD_CHANNEL=stable
 	HOMESHELL_UPDATE_BASE_URL=http://127.0.0.1:$(UPDATE_PORT) ./$(BINARY) serve
 
 # Run vite directly rather than through `nx dev`: the Nx terminal UI puts the
@@ -233,8 +320,8 @@ dev-update-daemon:
 dev-webapp:
 	cd webapp/apps/web && $(PNPM) exec vite dev
 
-## test         run daemon and webapp unit tests (+ docs-lint and dev-target gates)
-test: test-docs-lint check-dev-targets
+## test         run daemon and webapp unit tests (+ docs-lint, release-script and dev-target gates)
+test: test-docs-lint test-release-scripts check-dev-targets
 	cd daemon && $(GO) test -tags=dev ./...
 	cd $(DESKTOP_DIR) && $(GO) test ./internal/...
 	cd webapp && $(PNPM) nx run-many -t test
@@ -284,6 +371,10 @@ check-dev-targets:
 test-docs-lint:
 	bash scripts/docs-lint/lint.test.sh
 
+## test-release-scripts  test the release scripts against throwaway repos (scripts/release.test.sh)
+test-release-scripts:
+	bash scripts/release.test.sh
+
 ## test-e2e     run Playwright e2e tests (daemon API + web UI); starts both servers
 test-e2e:
 	cd webapp && $(PNPM) nx e2e @homeshell/web-e2e
@@ -310,7 +401,7 @@ lint: docs-lint
 
 ## clean        remove build artifacts
 clean:
-	rm -rf $(BIN_DIR) $(WEB_DIST) $(EMBED_DIR) scripts/fake-release
+	rm -rf $(BIN_DIR) $(DIST_DIR) $(WEB_DIST) $(EMBED_DIR) scripts/fake-release
 	mkdir -p $(EMBED_DIR)
 	touch $(EMBED_DIR)/.gitkeep
 

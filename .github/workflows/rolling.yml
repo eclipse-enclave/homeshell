@@ -1,0 +1,75 @@
+name: Rolling Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Delete and recreate the rolling release (main only)"
+        type: boolean
+        default: false
+
+# A newer push replaces the pending run, never a running one: a half-finished
+# upload to download.eclipse.org must not be cancelled.
+concurrency:
+  group: rolling-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  assets:
+    uses: ./.github/workflows/reusable-release-assets.yml
+    with:
+      channel: rolling
+
+  publish:
+    needs: assets
+    # Forks carry this file but must not publish with their own secrets, and
+    # only main publishes: the concurrency group is per ref, so a second ref
+    # would write the shared rolling directory concurrently.
+    if: ${{ github.repository == 'eclipse-enclave/homeshell' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: artifacts
+
+      # The updater reads rolling/latest (the commit) and the files beside it.
+      # Published before the GitHub release is replaced, so the two only
+      # disagree while this run is still in progress.
+      - name: Publish to download.eclipse.org
+        uses: ./.github/actions/publish-downloads
+        with:
+          source: artifacts
+          target: rolling
+          latest: ${{ github.sha }}
+          latest-path: rolling/latest
+          username: ${{ secrets.SCP_USERNAME }}
+          ssh-key: ${{ secrets.SCP_KEY }}
+          ssh-passphrase: ${{ secrets.SCP_PASSPHRASE }}
+
+      - name: Create rolling release
+        run: |
+          gh release delete rolling --yes --cleanup-tag || true
+          gh release create rolling \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Rolling Release" \
+            --notes "$(./scripts/release-notes.sh rolling "$GITHUB_SHA" "${{ github.server_url }}/${{ github.repository }}/releases/download/rolling")" \
+            artifacts/*
+          ./scripts/verify-github-release.sh rolling artifacts

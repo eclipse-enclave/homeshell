@@ -1,0 +1,33 @@
+name: Release Assets Smoke Test
+
+# Builds every release artifact for a pull request that changes how they are
+# built, so a packaging break shows up in review rather than on main or at tag
+# time. Publishes nothing.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/reusable-release-assets.yml'
+      - '.github/workflows/release-assets-smoke.yml'
+      - 'Makefile'
+      - 'debian/**'
+      - 'packaging/**'
+      - 'scripts/version.sh'
+      - 'scripts/github-asset-name.sh'
+      - 'scripts/verify-package.sh'
+      - 'daemon/go.mod'
+      - 'desktop/go.mod'
+
+concurrency:
+  group: release-assets-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  assets:
+    uses: ./.github/workflows/reusable-release-assets.yml
+    with:
+      channel: rolling

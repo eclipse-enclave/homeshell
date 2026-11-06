@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 
 export interface VersionInfo {
+  /** Release channel the daemon updates from; empty when it never updates itself. */
+  channel: string;
+  /** Builds are versions on the stable channel and short commits on rolling. */
   current: string;
   latest: string;
   updateAvailable: boolean;
@@ -65,11 +68,12 @@ export function useDaemonVersion(
           // immediately — even when the SSE reconnect does not trigger a
           // visible connection state change (e.g. behind a proxy that
           // transparently recovers the backend connection).
-          setInfo({
+          setInfo((prev) => ({
+            channel: prev?.channel ?? '',
             current: result.version,
             latest: result.version,
             updateAvailable: false,
-          });
+          }));
         }
         setPhase('idle');
       })

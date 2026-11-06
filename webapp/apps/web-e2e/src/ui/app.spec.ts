@@ -37,9 +37,30 @@ test('loads project state over the SSE stream (token auth via the vite proxy)', 
 test('shows the daemon version and offers no update when up to date', async ({
   page,
 }) => {
-  // The e2e daemon points at an unreachable release source, so no update shows.
+  // The e2e daemon is a source build without a release channel, so no update shows.
   await expect(page.getByText(/^daemon /)).toBeVisible();
   await expect(page.getByRole('button', { name: /update to/i })).toHaveCount(0);
+});
+
+test('a rolling build shows its channel beside the commit and offers the update', async ({
+  page,
+}) => {
+  // Only a channel-stamped release build reports this; the e2e daemon is not one.
+  await page.route('**/api/version', (route) =>
+    route.fulfill({
+      json: {
+        channel: 'rolling',
+        current: 'abc1234',
+        latest: 'def5678',
+        updateAvailable: true,
+      },
+    }),
+  );
+  await page.reload();
+  await expect(page.getByText('daemon abc1234 (rolling)')).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Update to def5678' }),
+  ).toBeVisible();
 });
 
 test('lists every project with its daemon-derived state', async ({ page }) => {

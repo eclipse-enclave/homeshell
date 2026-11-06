@@ -278,10 +278,12 @@ test.describe('daemon HTTP API', () => {
     expect(typeof body.current).toBe('string');
     expect(body.current.length).toBeGreaterThan(0);
     expect(typeof body.latest).toBe('string');
-    expect(typeof body.updateAvailable).toBe('boolean');
-    // The e2e daemon points at an unreachable release source, so it never
-    // reports an available update.
+    // The e2e daemon is a source build (`go run`) without a release channel:
+    // it never updates itself, and that is not a failed release check.
+    expect(body.channel).toBe('');
     expect(body.updateAvailable).toBe(false);
+    expect(body.latest).toBe(body.current);
+    expect(body.error).toBeUndefined();
   });
 
   test('rejects non-POST methods on /api/update', async ({ request }) => {
@@ -289,16 +291,15 @@ test.describe('daemon HTTP API', () => {
     expect(res.status()).toBe(405);
   });
 
-  test('POST /api/update reports failure when the release source is unreachable', async ({
+  test('POST /api/update refuses a build without a release channel', async ({
     request,
   }) => {
-    // The release source points at an unreachable local URL in tests, so the
-    // check fails: the daemon must report the failure (and leave itself
-    // running) rather than restart or hang.
+    // Only channel-stamped release builds replace themselves; the daemon must
+    // say why (and leave itself running) rather than restart or hang.
     const res = await request.post('/api/update');
-    expect(res.status()).toBe(500);
+    expect(res.status()).toBe(503);
     const body = await res.json();
-    expect(typeof body.error).toBe('string');
+    expect(body.error).toContain('self-update is not supported');
   });
 
   test('answers on / with the web UI or the not-embedded hint', async ({

@@ -12,8 +12,9 @@
 # onwards on amd64. Linking 4.0 would break the release build and produce a
 # .deb/.rpm whose library cannot be resolved on any current distro.
 #
-# Consumed via PKG_CONFIG_PATH from `make build-desktop` and the GoReleaser
-# build; it is a build input only and is never installed into the package.
+# Consumed via PKG_CONFIG_PATH from `make build-desktop` and the package
+# builds (debian/rules, the RPM spec); it is a build input only and is never
+# installed.
 #
 # TODO: delete this file, and the PKG_CONFIG_PATH it needs, once webview_go
 # releases a version whose cgo directive names webkit2gtk-4.1.

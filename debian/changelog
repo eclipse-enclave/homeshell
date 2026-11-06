@@ -1,0 +1,5 @@
+homeshell (0.0.0-1) unstable; urgency=medium
+
+  * Placeholder; make deb writes the entry for each build.
+
+ -- HomeShell contributors <homeshell@eclipse.org>  Fri, 06 Nov 2026 12:00:00 +0000

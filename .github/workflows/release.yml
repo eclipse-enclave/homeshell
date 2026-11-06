@@ -1,170 +1,103 @@
-name: Release
+name: Prepare Release
 
-# Publish cross-platform daemon binaries + checksums.txt to a GitHub Release
-# whenever a semver tag is pushed. These are the artifacts the self-update flow
-# downloads (docs/ARCHITECTURE.md, "Self-update").
+# A release tag vX.Y.Z, or vX.Y.Z-alpha.N, -beta.N, -rc.N for a pre-release,
+# builds the artifacts once and attaches them to a draft GitHub release.
+# Promote Release, a manual workflow, publishes the reviewed draft without
+# rebuilding anything.
+
 on:
   push:
     tags:
-      - "v*"
+      - 'v[0-9]*'
+
+# Shared with Promote Release so preparation and promotion cannot write the
+# same release concurrently.
+concurrency:
+  group: release
+  queue: max
 
 permissions:
-  # Required for GoReleaser to create the release and upload assets.
-  contents: write
+  contents: read
 
 jobs:
-  release:
-    name: Build & publish release
+  version:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          # GoReleaser needs full history + tags for the changelog.
-          fetch-depth: 0
-
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: daemon/go.mod
-          cache-dependency-path: daemon/go.sum
-
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
-        with:
-          package_json_file: webapp/package.json
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: webapp/pnpm-lock.yaml
-
-      - name: Install desktop build toolchain
+      - id: tag
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
-        with:
-          version: "~> v2"
-          args: release --clean
-        env:
-          # The default token can create releases and upload assets in this
-          # repository; no extra secret is required to publish.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # The desktop build needs the webkit2gtk-4.0 → 4.1 shim, and only an
-          # absolute path works (see .goreleaser.yaml). GoReleaser inherits this;
-          # the build's post hook fails the release if it did not take effect.
-          PKG_CONFIG_PATH: ${{ github.workspace }}/packaging/linux/pkgconfig
-
-  macos:
-    name: Build & publish macOS app bundle
-    # homeshell-desktop needs CGO + the WKWebView headers, so it (unlike the
-    # Linux builds above) must be compiled natively rather than
-    # cross-compiled by GoReleaser. This job runs after `release` so the draft
-    # GitHub release it creates already exists by the time attach-desktop-assets
-    # uploads what this job builds.
-    needs: release
-    runs-on: macos-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: daemon/go.mod
-          cache-dependency-path: daemon/go.sum
-
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
-        with:
-          package_json_file: webapp/package.json
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: webapp/pnpm-lock.yaml
-
-      - name: Build web UI
-        run: make build-webapp
-
-      - name: Build daemon + desktop shell for arm64 and amd64
-        # CGO_ENABLED=1 (via `make build-desktop`) cross-arch-compiles fine on
-        # a macOS runner: Xcode's clang ships universal arm64/x86_64 support,
-        # unlike cross-OS CGO builds.
-        env:
-          # The daemon stays pure Go; only homeshell-desktop needs CGO
-          # (build-desktop sets CGO_ENABLED=1 itself, inline in the Makefile).
-          CGO_ENABLED: "0"
-        run: |
-          set -euo pipefail
-          for arch in arm64 amd64; do
-            GOARCH="$arch" make build-daemon
-            GOARCH="$arch" make build-desktop
-            mkdir -p "artifacts/$arch"
-            cp bin/homeshell "artifacts/$arch/homeshell"
-            cp bin/homeshell-desktop "artifacts/$arch/homeshell-desktop"
-          done
-
-      - name: Generate homeshell.icns from the shared PNG icon
-        # No binary .icns is committed to the repo (it can't be produced on
-        # Linux dev machines); this native-tool conversion runs only here, on
-        # the macOS runner.
-        run: |
-          set -euo pipefail
-          iconset="$RUNNER_TEMP/homeshell.iconset"
-          mkdir -p "$iconset"
-          for size in 16 32 128 256 512; do
-            sips -z "$size" "$size" packaging/linux/homeshell.png \
-              --out "$iconset/icon_${size}x${size}.png"
-            double=$((size * 2))
-            sips -z "$double" "$double" packaging/linux/homeshell.png \
-              --out "$iconset/icon_${size}x${size}@2x.png"
-          done
-          iconutil -c icns "$iconset" -o packaging/macos/homeshell.icns
-
-      - name: Assemble HomeShell.app and wrap it as a .dmg
-        run: |
-          set -euo pipefail
+          case "$GITHUB_REF_NAME" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "tag $GITHUB_REF_NAME is not a release tag (vX.Y.Z or vX.Y.Z-<pre-release>)" >&2; exit 1 ;;
+          esac
           version="${GITHUB_REF_NAME#v}"
-          mkdir -p dist
-          for arch in arm64 amd64; do
-            packaging/macos/build-app.sh "$version" "$arch" \
-              "artifacts/$arch/homeshell" "artifacts/$arch/homeshell-desktop" \
-              packaging/macos/homeshell.icns dist
-          done
+          if ! printf '%s\n' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$'; then
+            echo "tag $GITHUB_REF_NAME is not a release tag (vX.Y.Z or vX.Y.Z-{alpha,beta,rc}.N, no leading zeros)" >&2
+            exit 1
+          fi
+          prerelease=false
+          case "$version" in *-*) prerelease=true ;; esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
-      - name: Hand the .dmg files to the attach job
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: macos-dmg
-          path: dist/*.dmg
-          if-no-files-found: error
+  assets:
+    needs: version
+    uses: ./.github/workflows/reusable-release-assets.yml
+    with:
+      channel: stable
+      version: ${{ needs.version.outputs.version }}
 
-  attach-desktop-assets:
-    name: Attach desktop installers to the release
-    # One job owns every write to the release object, so a future second desktop
-    # job cannot race on the draft release by attaching to it concurrently.
-    needs: [macos]
+  draft:
+    needs: [version, assets]
+    # Forks carry this file but must not publish with their own secrets.
+    if: ${{ github.repository == 'eclipse-enclave/homeshell' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Collect the per-OS artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          path: dist
-          merge-multiple: true
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.version.outputs.version }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
 
-      - name: Attach them to the release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          # GoReleaser creates the release as a draft (.goreleaser.yaml) so a
-          # maintainer can review before publishing; without this, attaching
-          # assets here would flip it to published as soon as this job runs.
-          draft: true
-          files: |
-            dist/*.dmg
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: release-assets
+          path: artifacts
+
+      - name: Create draft release
+        run: |
+          checksum="$(sha256sum artifacts/checksums.txt | cut -d' ' -f1)"
+          ./scripts/verify-release-artifacts.sh artifacts "$checksum"
+          marker="<!-- homeshell-release: $GITHUB_SHA $GITHUB_RUN_ID $checksum -->"
+          notes="$(./scripts/release-notes.sh stable "$VERSION" "${{ github.server_url }}/${{ github.repository }}/releases/download/$GITHUB_REF_NAME" "$GITHUB_SHA")"
+          if existing="$(gh release view "$GITHUB_REF_NAME" --json body,isDraft 2>/dev/null)"; then
+            # Preserve edited notes and the identity of the original build.
+            # Notes edited on the web come back with CRLF line endings.
+            if ! jq -r .body <<< "$existing" | tr -d '\r' | grep -Fxq -- "$marker"; then
+              echo "::error::release $GITHUB_REF_NAME already records another commit, build run, or artifact manifest; use a new release version" >&2
+              exit 1
+            fi
+            if [ "$(jq -r .isDraft <<< "$existing")" != true ]; then
+              echo "::error::release $GITHUB_REF_NAME is already published" >&2
+              exit 1
+            fi
+          else
+            flags=()
+            if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+            gh release create "$GITHUB_REF_NAME" \
+              --verify-tag --draft \
+              --title "HomeShell $VERSION" \
+              --notes "$notes
+
+          Build: ${{ github.server_url }}/${{ github.repository }}/actions/runs/$GITHUB_RUN_ID
+          $marker" \
+              "${flags[@]}"
+          fi
+          ./scripts/upload-github-release.sh "$GITHUB_REF_NAME" artifacts
+          echo "Draft ready. Review it, then run Promote Release for $GITHUB_REF_NAME." >> "$GITHUB_STEP_SUMMARY"

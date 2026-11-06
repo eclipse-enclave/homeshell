@@ -11,8 +11,19 @@ Docs: start at the [docs index](docs/README.md).
 
 ## Install
 
-No release is published yet, so install from source. Install the
-[toolchain](docs/DEV.md#toolchain), then
+Builds are published at [download.eclipse.org/enclave/homeshell][downloads] and as
+[GitHub releases](https://github.com/eclipse-enclave/homeshell/releases): `releases/` holds the
+stable releases, `rolling/` the latest build of `main`. Each release's notes have the install
+commands.
+
+- **Linux (amd64):** the `.deb` or `.rpm` package (daemon and desktop app).
+- **macOS:** the `.dmg` (desktop app). The build is unsigned, so Gatekeeper warns on first open.
+- **Anywhere else:** the `homeshell-<os>-<arch>.tar.gz` archive for your platform, used with a
+  browser. Installed into a directory you own, such as `~/.local/bin`, it updates itself from
+  the channel it came from. Packages and the app are updated by installing a newer one.
+- **Windows:** the Linux build inside WSL ([no native build](docs/DEV.md#releases)).
+
+To build from source, install the [toolchain](docs/DEV.md#toolchain), then
 
 ```sh
 make setup           # Go modules, pnpm workspace, Playwright's Chromium
@@ -20,14 +31,7 @@ make build           # bin/homeshell, with the web UI embedded
 make build-desktop   # optional: bin/homeshell-desktop (needs a system webview, see Setup in DEV.md)
 ```
 
-On Windows, build and run inside WSL ([no native build](docs/DEV.md#releases)).
-
-Once [GitHub releases](https://github.com/eclipse-enclave/homeshell/releases) are published, they
-will offer:
-
-- **Linux (amd64):** the `.deb` or `.rpm` package (daemon and desktop app).
-- **macOS:** the `.dmg` (desktop app). The build is unsigned, so Gatekeeper warns on first open.
-- **Anywhere else:** the `homeshell` archive for your platform, used with a browser.
+[downloads]: https://download.eclipse.org/enclave/homeshell/
 
 HomeShell runs the agents; it doesn't ship them. Install at least one agent CLI it knows
 (Claude Code, Codex, …) on your `PATH`, or the `enclave` CLI. What each

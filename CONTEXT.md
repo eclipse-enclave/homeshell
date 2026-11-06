@@ -186,3 +186,11 @@ _Avoid_: yoloarena
 **Sandbox**:
 The container an Enclave session runs in, together with its settings, which Enclave owns and
 HomeShell only passes through.
+
+### Releases
+
+**Release channel**:
+Where a standalone release build gets its updates: **rolling** (every push to `main`) or
+**stable** (tagged releases). Stamped into the binary at build time; packages, the macOS app and
+source builds have none and never update themselves.
+_Avoid_: track, stream (for the channel)

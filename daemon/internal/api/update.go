@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -46,7 +47,18 @@ func updateHandler(upd *updater.Service) http.HandlerFunc {
 			fmt.Fprintf(w, `{"updated":true,"version":%q}`, v)
 			flush()
 		})
-		if err != nil {
+		switch {
+		case errors.Is(err, updater.ErrUnsupported):
+			// A package, app or source build: the feature is off for this binary.
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintf(w, `{"error":%q}`, err.Error())
+			return
+		case errors.Is(err, updater.ErrNotWritable):
+			// The message names the manual reinstall, which the user needs.
+			w.WriteHeader(http.StatusConflict)
+			fmt.Fprintf(w, `{"error":%q}`, err.Error())
+			return
+		case err != nil:
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, `{"error":%q}`, "update failed")
 			slog.Error("self-update failed", "error", err)

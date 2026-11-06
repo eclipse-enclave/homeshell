@@ -182,7 +182,9 @@ sequenceDiagram
 
 - **`log`** events: `id:` is the record's sequence number, `data:` is
   `{seq, time, level, msg, attrs}`. `heartbeat` events as on the event stream.
-- No backlog: the stream starts with whatever is logged after connecting.
+- No backlog: the stream opens with a `heartbeat`, then carries whatever is logged after
+  connecting. Why the heartbeat: a proxy that holds headers until the first body byte would
+  leave a quiet daemon's stream looking unopened.
 - What arrives follows the daemon's live log level (see `/api/config`).
 - A slow client is dropped and reconnects. `503` if the daemon has no log hub.
 - The streaming path must not log. Why: each streamed record would log another one, forever.
@@ -196,17 +198,21 @@ Paths are under `/api`. Endpoints without a response listed answer `204` with no
 | Endpoint | Request | Response |
 |---|---|---|
 | `GET /hello` | | `{message, version}` |
-| `GET /version` | | `{current, latest, updateAvailable, error?}` |
+| `GET /version` | | `{channel, current, latest, updateAvailable, error?}` |
 | `POST /update` | | `{updated, version}`; `updated: false` if already latest |
 | `GET /config` | | `{logLevel}` |
 | `PATCH /config` | `{logLevel}` | `{logLevel}` |
 
 - **`/hello`** is the liveness probe; startup uses it to detect a running daemon.
-- **`/version`** never fails on a release-check error: it reports the running version with
-  `updateAvailable: false` and sets `error`.
+- **`/version`** reports builds of the [release channel](../CONTEXT.md#releases): versions on
+  `stable`, short commits on `rolling`. `channel` is empty for a build that never updates itself,
+  which then reports its own version as `latest` and `updateAvailable: false`, without `error`.
+  A failed release check also answers `updateAvailable: false` and sets `error`.
 - **`/update`** sends its answer before the daemon re-executes, then the event stream drops and
-  reconnects to the new binary ([Self-update](ARCHITECTURE.md#self-update)). `503` when
-  self-update is not available, `500` if it fails.
+  reconnects to the new binary ([Self-update](ARCHITECTURE.md#self-update)). `version` is the
+  installed build. `503` with the reason when this build does not update itself, `409` with the
+  manual reinstall commands when the executable is not writable for the daemon's user, `500` if
+  the download or verification fails.
 - **`/config`** is the live runtime configuration (today the log level); `PATCH` applies at once
   and saves the level as the startup default. Why separate from `/settings`: a stored copy of a
   live value could drift from what the daemon is doing.

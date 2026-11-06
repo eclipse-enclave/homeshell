@@ -13,7 +13,7 @@ Every entry point is a Makefile target. `make help` lists them.
 | Node.js | 24+ | `engines` in `webapp/package.json` |
 | pnpm | 11+ | `engines` and `packageManager` in `webapp/package.json` |
 | WebKitGTK dev files | 4.1 (Linux, desktop shell only) | `make check-webview` |
-| GoReleaser | v2 (packaging only) | `.github/workflows/release.yml` |
+| debhelper, rpm | packaging only | `debian/control`, `packaging/rpm/homeshell.spec` |
 
 - Two Go modules: `daemon` and `desktop`. Each has its own `go.mod`; CI fails when
   `go mod tidy` would change either.
@@ -45,9 +45,18 @@ make setup   # Go modules, pnpm workspace, Playwright's Chromium
 | `make embed` | Copies the web build into `daemon/internal/webui/dist` |
 | `make build-daemon` | `bin/homeshell` (runs `embed`) |
 | `make build-desktop` | `bin/homeshell-desktop` (CGO and a system webview) |
-| `make clean` | Removes `bin/`, the web build and the embedded copy |
+| `make archive` | `dist/homeshell-<os>-<arch>.tar.gz`, the standalone daemon |
+| `make deb`, `make rpm` | The Linux package in `dist/` (`deb-quick` skips the Build-Depends check) |
+| `make dmg` | `dist/HomeShell-<version>-<arch>.dmg` (macOS only) |
+| `make clean` | Removes `bin/`, `dist/`, the web build and the embedded copy |
 
-- `VERSION` (default `git describe`) is linked into `homeshell` and `homeshell-desktop`.
+- `VERSION` comes from `scripts/version.sh`: the release tag on a tagged commit, otherwise
+  `git describe` against the latest release tag (`0.0.0-g<sha>` before the first one).
+  `PACKAGE_VERSION` is its deb/rpm form, where snapshots sort between releases.
+- `homeshell` also links `COMMIT` and `BUILD_CHANNEL`. Only `make archive` with
+  `BUILD_CHANNEL=rolling` or `stable` produces a binary that updates itself
+  ([Self-update](ARCHITECTURE.md#self-update)).
+- The packaging targets embed the web build that exists; run `make build-webapp` first.
 - The session bridge is `bin/homeshell` itself, run as `homeshell bridge serve`, so there is no
   separate bridge binary ([Session bridge](ARCHITECTURE.md#session-bridge)).
 - `homeshell` is built with `CGO_ENABLED=0`; CGO is confined to the `desktop` module
@@ -124,10 +133,13 @@ curl -s -H "Authorization: Bearer $(jq -r .token "$state")" "http://$addr/api/pr
 
 `make dev-update` builds `bin/homeshell` at `CURRENT_VERSION` (`0.0.1`), a "new" binary at
 `UPDATE_VERSION` (`0.0.2`), then runs `scripts/fake-release-server.sh` on `UPDATE_PORT`
-(`9876`), the daemon pointed at it with `HOMESHELL_UPDATE_BASE_URL`, and Vite.
+(`9876`), the daemon pointed at it with `HOMESHELL_UPDATE_BASE_URL`, and Vite. The fake server
+serves the stable channel's layout ([Self-update](ARCHITECTURE.md#self-update)).
 
-- The current version is pinned. Why: on a tagged checkout `git describe` is above `0.0.2`, and
-  the updater would find nothing newer.
+- Both binaries are stamped `BUILD_CHANNEL=stable`. Why: a build without a channel never updates
+  itself, and the installed one should be able to update again.
+- The current version is pinned. Why: on a tagged checkout `scripts/version.sh` is above
+  `0.0.2`, and the updater would find nothing newer.
 - The parallel stage runs with `PREBUILT=1` and builds nothing. Why: two concurrent `embed` runs
   `rm -rf` the embed directory while a `go build` reads it.
 
@@ -238,7 +250,7 @@ pull request cancels its running checks.
 
 | Job | Runs |
 |---|---|
-| Docs lint | `docs-lint` and its tests |
+| Docs lint and release scripts | `docs-lint` and its tests, `scripts/release.test.sh` |
 | Daemon | `go mod tidy` check, `go vet`, `go test -tags=dev`, cross-compile |
 | Desktop shell | `go mod tidy` check, vet and test `./internal/...`, `make build-desktop` |
 | Webapp | `nx run-many -t lint typecheck test`, production build |
@@ -247,48 +259,75 @@ pull request cancels its running checks.
 - CI calls the steps directly rather than `make test` or `make lint`. A step added to one of
   those targets must be added to `ci.yml` too.
 - The daemon job cross-compiles for macOS. Why: every CI job runs on Ubuntu while releases also
-  build on macOS, so a Linux-only syscall would break only at tag time.
-- The desktop job builds the CGO binary, which otherwise only compiles in the release workflow.
+  build on macOS, so a Linux-only syscall would break only in the release build.
+- `release-assets-smoke.yml` builds every release artifact for a pull request that touches
+  packaging (`Makefile`, `debian/`, `packaging/`, the asset workflow, `go.mod`). It publishes
+  nothing.
 - Workflows pin every action to a full commit SHA, with its release tag in a comment. Why: a tag
   can be moved to other code, and the release jobs hold a token that can write releases.
 
 ## Releases
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`. It creates a **draft** GitHub release
-that a maintainer reviews and publishes.
+Two channels, both published to [download.eclipse.org/enclave/homeshell][downloads] and to GitHub
+releases:
+
+- **rolling**: every push to `main` replaces `rolling/` and the `rolling` GitHub pre-release.
+- **stable**: a `vX.Y.Z` tag, or `vX.Y.Z-alpha.N`, `-beta.N`, `-rc.N` for a pre-release, goes to
+  `releases/<version>/` after a maintainer promotes it.
 
 ```mermaid
 flowchart LR
-  T[push tag v*] --> R["release (GoReleaser)<br/>creates the draft"]
-  R --> M["macos<br/>.app / .dmg"]
-  M --> A[attach-desktop-assets]
-  A -->|single upload| Rel[(draft release)]
-  R -->|archives, .deb/.rpm, checksums.txt| Rel
+  P[push to main] --> RA1[release assets]
+  RA1 --> DL1[(rolling/ and rolling/latest)]
+  DL1 --> GR1[(GitHub release: rolling)]
+  T[push tag vX.Y.Z] --> RA2[release assets]
+  RA2 --> D[(draft GitHub release)]
+  D -->|maintainer runs Promote Release| DL2[(releases/X.Y.Z/ and releases/latest)]
+  DL2 --> GR2[(published GitHub release)]
 ```
 
-| Job | Builds |
+| Workflow | Does |
 |---|---|
-| `release` | GoReleaser: `homeshell` archives, `checksums.txt`, Linux `.deb`/`.rpm` |
-| `macos` | `homeshell` and `homeshell-desktop` per arch, bundled by `packaging/macos/build-app.sh` |
-| `attach-desktop-assets` | Uploads the `.dmg` files to the draft |
+| `reusable-release-assets.yml` | Builds every artifact once into one `release-assets` artifact |
+| `rolling.yml` | Publishes a `main` build to `rolling/`, then recreates the `rolling` release |
+| `release.yml` | On a release tag: builds and attaches the assets to a draft release |
+| `promote-release.yml` | Manual: publishes a reviewed draft to `releases/<version>/`, then on GitHub |
 
-- GoReleaser builds `homeshell` for Linux and macOS (amd64, arm64). There is no native Windows
-  build and the Go code has no Windows code paths: Windows users run the Linux build in WSL.
-  Why: the session bridge and Enclave are Unix-only.
-- The archives and `checksums.txt` are what self-update downloads
-  ([Self-update](ARCHITECTURE.md#self-update)).
-- The macOS desktop build runs natively. Why: CGO does not cross-compile across OSes.
-- Only `attach-desktop-assets` writes the desktop assets. Why: two jobs uploading to one release
-  race on it.
-- Linux packages are amd64 only, because `homeshell-desktop` has no arm64 build. arm64 users use
-  the daemon archive and a browser.
-- The `.deb` and `.rpm` name the WebKitGTK dependency per format (`libwebkit2gtk-4.1-0`,
-  `webkit2gtk4.1`).
+A release contains:
+
+| File | Built by | Updates itself |
+|---|---|---|
+| `homeshell-{linux,darwin}-{amd64,arm64}.tar.gz` | `make archive`, channel-stamped | yes |
+| `homeshell_<pkg-version>-1_amd64.deb` | `make deb-quick` on Ubuntu 24.04 | no |
+| `homeshell-<pkg-version>-1.<dist>.x86_64.rpm` | `make rpm` on Fedora | no |
+| `HomeShell-<version>-{arm64,amd64}.dmg` | `make dmg` on macOS | no |
+| `checksums.txt` | SHA-256 of every file above | |
+
+- The self-updater reads `rolling/latest` (a commit) or `releases/latest` (a version) and the
+  files beside it ([Self-update](ARCHITECTURE.md#self-update)). Packages and the macOS app
+  carry no channel and are updated by installing a newer one.
+- Assets are built once. Promote Release checks the draft's files against the tag build's own
+  artifact and the `homeshell-release` marker in the draft notes, then publishes those bytes.
+  Why: a release must be exactly what was reviewed, with no rebuild in between.
+- A release directory is immutable and `releases/latest` only moves forward. Pre-releases are
+  published but never become latest.
+- Package names have `~` replaced (`scripts/github-asset-name.sh`) before `checksums.txt` is
+  written. Why: GitHub renames assets on upload, and both download locations must agree.
+- There is no native Windows build and the Go code has no Windows code paths: Windows users run
+  the Linux build in WSL. Why: the session bridge and Enclave are Unix-only.
+- Linux packages are amd64 only, because CI builds `homeshell-desktop` for amd64 only. arm64
+  users use the daemon archive and a browser.
+- The `.deb` takes its WebKitGTK dependency from the binary (`dpkg-shlibdeps`); the `.rpm` names
+  `webkit2gtk4.1` and gets the sonames from the binary too.
 - Archives, Linux packages and macOS app bundles include `LICENSE`, `NOTICE.md`,
-  `THIRD-PARTY-NOTICES.txt` and the Herdr license under `licenses/herdr/LICENSE`.
-  Linux packages install these under `/usr/share/doc/homeshell`; macOS apps use `Contents/Resources`.
-- macOS artifacts are unsigned, so Gatekeeper warns on install
-  (`TODO(signing)` in `release.yml` and `build-app.sh`).
+  `THIRD-PARTY-NOTICES.txt` and the Herdr license under `licenses/herdr/LICENSE`. Linux packages
+  install these under `/usr/share/doc/homeshell`; macOS apps use `Contents/Resources`.
+- macOS artifacts are unsigned, so Gatekeeper warns on install (`TODO(signing)` in
+  `packaging/macos/build-app.sh`).
+- Publishing uses the `SCP_USERNAME`, `SCP_KEY` and `SCP_PASSPHRASE` organization secrets for
+  `projects-storage.eclipse.org` (Otterdog). Forks build but never publish.
+
+[downloads]: https://download.eclipse.org/enclave/homeshell/
 
 ### Changelog notes
 
@@ -319,27 +358,31 @@ any items still under `## Unreleased`, into `## X.Y.Z - YYYY-MM-DD` at the top o
   a PR was reverted.
 - Last fixes go in the same PR, so the tagged source describes the release it belongs to.
 
-The draft GitHub release's notes are generated separately by GoReleaser from the commit log
-(`changelog:` in `.goreleaser.yaml`); `CHANGELOG.md` is the curated list.
+The draft GitHub release's notes come from `scripts/release-notes.sh` (commit, downloads,
+install instructions). Paste the release's `CHANGELOG.md` section into the draft before promoting
+it, above the `homeshell-release` marker, which must stay.
 
 ### Testing a release locally
 
-The release workflow runs only on tags, so a green PR says nothing about it.
+The release builds run on `main`, on tags, and on pull requests that touch packaging, so most
+pull requests never exercise them.
 
-- `goreleaser check` validates `.goreleaser.yaml`.
-- `make package-linux` runs `goreleaser release --snapshot --clean` and needs WebKitGTK 4.1.
-  Use it rather than calling `goreleaser` directly. Why: the desktop build needs an absolute
-  `PKG_CONFIG_PATH` to the shim, which the config cannot express. In CI the workflow sets it.
-- The GoReleaser desktop build has its own post hook asserting the 4.1 linkage, since it
-  bypasses the Makefile.
+- `make archive BUILD_CHANNEL=rolling` builds a self-updating archive for this machine;
+  `GOOS`/`GOARCH` pick another platform.
+- `make deb-quick` needs `debhelper` and `libwebkit2gtk-4.1-dev`; `make rpm` needs `rpm`, and
+  builds more faithfully in a `fedora` container, where the release RPM is built.
+- Both package builds read a source tarball of the checkout (tracked and untracked files, plus
+  the embedded web UI), not the working tree, and pass `VERSION` and `COMMIT` in.
+- `bash scripts/release.test.sh` (part of `make test`) checks version derivation, asset naming
+  and the manifest check against throwaway repositories.
 
 ### Shipping a new binary
 
 A binary in `make build` is not yet in any artifact. Add it to every path that assembles one:
 
-- `.goreleaser.yaml`: a `builds:` entry, and its id in the `archives:` and `nfpms:` lists. A
-  build entry no list names is never shipped.
-- `packaging/macos/build-app.sh` and the `macos` job.
+- `debian/rules` and `packaging/rpm/homeshell.spec`, plus `scripts/verify-package.sh`.
+- The `dmg` target in the `Makefile` and `packaging/macos/build-app.sh`.
+- The `archive` target, if it belongs in the standalone daemon archive.
 
 Self-update replaces only the running `homeshell`, so a second binary keeps its installed
 version.

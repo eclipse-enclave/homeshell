@@ -288,8 +288,6 @@ Edits the agent catalog. Field meanings are in [API.md](API.md#agent-catalog).
 | `HOMESHELL_LOG_LEVEL` | daemon | Startup log level; `--log-level` wins over it |
 | `HOMESHELL_HOME_DIR` | desktop app | Data directory of the daemon to attach to or start |
 | `HOMESHELL_ADDR` | desktop app | Listen address of a daemon it starts |
-| `HOMESHELL_UPDATE_TOKEN` | daemon | GitHub token for self-update downloads |
-| `GITHUB_TOKEN`, `GH_TOKEN` | daemon | Fallbacks for `HOMESHELL_UPDATE_TOKEN`, in that order |
 | `XDG_DATA_HOME` | daemon, CLI | Parent of the default data directory |
 | `XDG_RUNTIME_DIR` | daemon | Where [session bridge](ARCHITECTURE.md#session-bridge) sockets go |
 | `TERMINAL` | daemon | Emulator `terminal.emulator: auto` prefers, outside macOS |
@@ -298,8 +296,6 @@ Edits the agent catalog. Field meanings are in [API.md](API.md#agent-catalog).
 
 - `HOMESHELL_API_TOKEN`: the daemon warns when a pinned token under 32 characters guards a
   network-reachable bind.
-- Self-update tries `gh auth token` first, then the token variables; with none it downloads
-  unauthenticated, which works for public releases.
 
 ### For tests
 
@@ -309,5 +305,5 @@ Read by the daemon, meant for automated runs rather than users.
 |---|---|
 | `HOMESHELL_SETTINGS_FILE` | Path of the settings file, instead of `settings.json` in the data directory |
 | `HOMESHELL_NO_NATIVE_DIALOG` | `1`, `true`, `yes` or `on` turns the native folder chooser off |
-| `HOMESHELL_UPDATE_BASE_URL` | Download updates from this HTTP release server instead of GitHub |
+| `HOMESHELL_UPDATE_BASE_URL` | Download updates from this server instead of `download.eclipse.org` |
 | `HOMESHELL_FAKE_SESSION_STARTUP_MS` | With `--demo`, new sessions take this many ms to start, with fake output |

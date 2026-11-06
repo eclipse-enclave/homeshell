@@ -18,6 +18,8 @@ export function DaemonStatus({ connection }: DaemonStatusProps) {
   // reconnect surfaces the new version automatically.
   const { info, phase, update } = useDaemonVersion(connection);
   const version = info?.current ?? null;
+  // A rolling build is a commit, which reads as a typo without the channel.
+  const channel = info?.channel === 'rolling' ? ' (rolling)' : '';
 
   const label = {
     connecting: 'Connecting to daemon',
@@ -34,7 +36,7 @@ export function DaemonStatus({ connection }: DaemonStatusProps) {
         title={label}
       />
       <span className={styles.text}>
-        {connection === 'connected' && `daemon ${version ?? '…'}`}
+        {connection === 'connected' && `daemon ${version ?? '…'}${channel}`}
         {connection === 'offline' && 'daemon offline'}
         {connection === 'connecting' && 'connecting…'}
       </span>

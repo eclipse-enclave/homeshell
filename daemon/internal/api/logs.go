@@ -18,8 +18,9 @@ func init() {
 
 // logsHandler streams the daemon's log records to a client as they are emitted,
 // for the web log viewer. Unlike the state stream it sends no initial snapshot:
-// the viewer shows only entries logged from the moment it connects. Each record
-// is one SSE "log" event; heartbeats keep the connection alive while idle. What
+// the viewer shows only entries logged from the moment it connects. It opens
+// with a heartbeat, each record is one SSE "log" event, and heartbeats keep the
+// connection alive while idle. What
 // reaches the stream follows the daemon's live log level.
 func logsHandler(hub *logging.Hub, heartbeat time.Duration) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -38,8 +39,12 @@ func logsHandler(hub *logging.Hub, heartbeat time.Duration) http.HandlerFunc {
 		records, cancel := hub.Subscribe()
 		defer cancel()
 
-		// Flush the response headers now so the client's connection opens even
-		// while no record has been emitted yet (the stream sends no snapshot).
+		// Open with a heartbeat rather than bare headers: with no snapshot to
+		// send, a proxy that holds headers until the first body byte (the vite
+		// dev server) would leave a quiet daemon's viewer "connecting".
+		if _, err := io.WriteString(w, "event: heartbeat\ndata: {}\n\n"); err != nil {
+			return
+		}
 		flusher.Flush()
 
 		timer := time.NewTimer(heartbeat)
