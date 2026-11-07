@@ -60,26 +60,16 @@ func fakeSessionStartup() time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
-// updateOwner and updateRepo identify the GitHub repository the self-update
-// flow pulls releases from.
-const (
-	updateOwner = "eclipsesource"
-	updateRepo  = "homeshell"
-)
-
-// newUpdateService builds the self-update service. Setting
-// HOMESHELL_UPDATE_BASE_URL points it at an HTTP release server instead of
-// GitHub.
-func newUpdateService(ctx context.Context, version string) (*updater.Service, error) {
-	up, err := updater.New(ctx, updater.Config{
-		Owner:   updateOwner,
-		Repo:    updateRepo,
+// newUpdateService builds the self-update service for the release channel this
+// binary was stamped with. HOMESHELL_UPDATE_BASE_URL points it at another
+// download server (dev and e2e runs).
+func newUpdateService(env Env) *updater.Service {
+	return updater.NewService(updater.New(updater.Config{
+		Version: env.Version,
+		Commit:  env.Commit,
+		Channel: env.Channel,
 		BaseURL: os.Getenv("HOMESHELL_UPDATE_BASE_URL"),
-	})
-	if err != nil {
-		return nil, err
-	}
-	return updater.NewService(up, version), nil
+	}))
 }
 
 func init() {
@@ -265,13 +255,7 @@ func run(ctx context.Context, env Env, flags serveFlags, logLevel *logging.Level
 	}
 	defer daemonstate.Remove()
 
-	// Self-update is best-effort: if the source cannot be built (e.g. offline
-	// token lookup), the daemon still serves and the update endpoints report
-	// it as unavailable.
-	updateSvc, err := newUpdateService(ctx, version)
-	if err != nil {
-		slog.Warn("self-update unavailable", "error", err)
-	}
+	updateSvc := newUpdateService(env)
 
 	// The store detects git-backing as projects are added. Seed paths are
 	// illustrative and are deliberately not re-detected on startup.

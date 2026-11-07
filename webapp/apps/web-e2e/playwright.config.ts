@@ -92,10 +92,9 @@ export default defineConfig({
       timeout: 120_000,
       env: {
         ...process.env,
-        // Keep the self-update release check off the public internet in tests:
-        // point it at an unreachable local URL so /api/version resolves fast
-        // and deterministically (no update available) instead of querying
-        // GitHub. Unit and Go integration tests cover the real update flow.
+        // A `go run` daemon has no release channel and never checks for
+        // updates; should one ever be stamped, keep its release check off the
+        // public internet. The Go updater tests cover the real update flow.
         HOMESHELL_UPDATE_BASE_URL: 'http://127.0.0.1:9/',
         // The native folder chooser opens a real window on this machine and the
         // request stays open until somebody answers it, so one Browse click in a

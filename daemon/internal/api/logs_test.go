@@ -24,8 +24,11 @@ func TestLogsStreamDeliversRecords(t *testing.T) {
 	stream, closeStream := openStream(t, server.URL+"/api/logs")
 	defer closeStream()
 
-	// The subscription is registered by the time the stream's headers flush,
-	// so a record logged now reaches this client.
+	if ev := readEvent(t, stream); ev.Type != "heartbeat" {
+		t.Fatalf("opening event type = %q, want heartbeat", ev.Type)
+	}
+	// The subscription is registered by the time the opening heartbeat
+	// flushes, so a record logged now reaches this client.
 	slog.Info("stream-me", "detail", "yes")
 
 	ev := readEvent(t, stream)
@@ -37,6 +40,25 @@ func TestLogsStreamDeliversRecords(t *testing.T) {
 	}
 	if !strings.Contains(ev.Data, "stream-me") || !strings.Contains(ev.Data, "detail") {
 		t.Errorf("payload lacks the record: %s", ev.Data)
+	}
+}
+
+// A viewer behind a proxy that holds headers until the first body byte sees
+// the stream open only once something is written, so a quiet daemon must not
+// wait a full heartbeat interval to say it is live.
+func TestLogsStreamOpensWithAHeartbeat(t *testing.T) {
+	orig := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(orig) })
+
+	hub := logging.Configure(io.Discard, slog.LevelError)
+	server := httptest.NewServer(handlerForTest(Deps{Logs: hub, Heartbeat: time.Hour, Notifications: notify.NewHub()}))
+	defer server.Close()
+
+	stream, closeStream := openStream(t, server.URL+"/api/logs")
+	defer closeStream()
+
+	if ev := readEvent(t, stream); ev.Type != "heartbeat" {
+		t.Fatalf("opening event type = %q, want heartbeat", ev.Type)
 	}
 }
 

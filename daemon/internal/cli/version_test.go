@@ -16,16 +16,23 @@ func TestVersionVerb(t *testing.T) {
 		{
 			name: "reports the client and the daemon when they agree",
 			route: map[string]stubResponse{
-				"GET /api/version": {http.StatusOK, `{"current":"1.2.3","latest":"1.2.3","updateAvailable":false}`},
+				"GET /api/version": {http.StatusOK, `{"channel":"stable","current":"1.2.3","latest":"1.2.3","updateAvailable":false}`},
 			},
-			wantStdout: []string{"client  " + testVersion, "daemon  1.2.3", "latest  1.2.3 (up to date)"},
+			wantStdout: []string{"client  " + testVersion, "daemon  1.2.3", "latest  1.2.3 (stable, up to date)"},
 		},
 		{
 			name: "points at the update verb when a newer release exists",
 			route: map[string]stubResponse{
-				"GET /api/version": {http.StatusOK, `{"current":"1.2.3","latest":"1.3.0","updateAvailable":true}`},
+				"GET /api/version": {http.StatusOK, `{"channel":"stable","current":"1.2.3","latest":"1.3.0","updateAvailable":true}`},
 			},
-			wantStdout: []string{"daemon  1.2.3", "latest  1.3.0", `"homeshell update"`},
+			wantStdout: []string{"daemon  1.2.3", "latest  1.3.0 (stable)", `"homeshell update"`},
+		},
+		{
+			name: "a build without a channel does not claim to be up to date",
+			route: map[string]stubResponse{
+				"GET /api/version": {http.StatusOK, `{"channel":"","current":"1.2.3","latest":"1.2.3","updateAvailable":false}`},
+			},
+			wantStdout: []string{"daemon  1.2.3", "latest  unknown (this build does not update itself)"},
 		},
 		{
 			name: "a failed release check leaves the latest version unknown",

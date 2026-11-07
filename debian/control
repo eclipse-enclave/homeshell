@@ -1,0 +1,19 @@
+Source: homeshell
+Section: devel
+Priority: optional
+Maintainer: HomeShell contributors <homeshell@eclipse.org>
+Build-Depends: debhelper-compat (= 13), golang-go, libwebkit2gtk-4.1-dev, pkgconf
+Standards-Version: 4.6.2
+Homepage: https://github.com/eclipse-enclave/homeshell
+Rules-Requires-Root: no
+
+Package: homeshell
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Control plane for AI coding agents
+ HomeShell watches and drives AI coding agents across your projects. A local
+ daemon tracks every agent session, whether it runs on your machine or in an
+ Eclipse Enclave container, and shows them all in one web UI or desktop
+ window.
+ .
+ This package contains the homeshell daemon and the homeshell-desktop app.

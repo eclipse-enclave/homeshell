@@ -10,33 +10,36 @@ import (
 )
 
 // executablePath is indirected so tests can supply a fake binary path.
-var executablePath = os.Executable
+var executablePath = resolvedExecutablePath
 
 // now is indirected so cache-expiry tests need not sleep.
 var now = time.Now
 
 // Cache TTLs for the release check. A successful result is cached long enough
-// to keep routine SSE reconnects (each re-fetches /api/version) well under
-// GitHub's 60 req/hr unauthenticated limit, while failures are cached briefly
-// so a transient GitHub error is not hammered on every reconnect yet recovers
-// quickly.
+// that routine SSE reconnects (each re-fetches /api/version) do not each reach
+// the download server, while failures are cached briefly so a transient error
+// is not hammered on every reconnect yet recovers quickly.
 const (
 	checkTTL      = 5 * time.Minute
 	checkErrorTTL = 30 * time.Second
 )
 
-// Status reports the running version alongside the newest available one.
+// Status reports the running build alongside the newest one on its channel.
+// Builds are versions on the stable channel and short commits on rolling.
 type Status struct {
+	// Channel is empty for a build that does not update itself.
+	Channel         string `json:"channel"`
 	Current         string `json:"current"`
 	Latest          string `json:"latest"`
 	UpdateAvailable bool   `json:"updateAvailable"`
+	// build is the channel's full identifier of Latest, which Install needs.
+	build string
 }
 
-// Service orchestrates the self-update flow for a specific running version. It
-// is shared by the HTTP API and the CLI so both behave identically.
+// Service orchestrates the self-update flow. It is shared by the HTTP API and
+// the CLI so both behave identically.
 type Service struct {
-	up      Updater
-	current string
+	up Updater
 
 	mu        sync.Mutex
 	cached    Status
@@ -45,21 +48,14 @@ type Service struct {
 	expires   time.Time
 }
 
-// NewService wraps an Updater with the daemon's running version.
-func NewService(up Updater, current string) *Service {
-	return &Service{up: up, current: current}
+// NewService wraps an Updater.
+func NewService(up Updater) *Service {
+	return &Service{up: up}
 }
 
-// Current returns the running version.
-func (s *Service) Current() string { return s.current }
-
-// Check reports whether a newer release is available. A missing release
-// (ErrNoRelease) is not an error: it yields a Status with the current version
-// as latest and UpdateAvailable false.
-//
-// The result is cached behind a short TTL (checkTTL, or checkErrorTTL for
-// failures) so the repeated calls the UI makes on every SSE reconnect do not
-// each trigger an unauthenticated GitHub release check.
+// Check reports whether a newer build is available, cached behind a short TTL
+// (checkTTL, or checkErrorTTL for failures) so the calls the UI makes on every
+// SSE reconnect do not each reach the download server.
 func (s *Service) Check(ctx context.Context) (Status, error) {
 	s.mu.Lock()
 	if s.cacheSet && now().Before(s.expires) {
@@ -69,7 +65,7 @@ func (s *Service) Check(ctx context.Context) (Status, error) {
 	}
 	s.mu.Unlock()
 
-	status, err := s.check(ctx)
+	status, err := s.up.Check(ctx)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -83,22 +79,6 @@ func (s *Service) Check(ctx context.Context) (Status, error) {
 	return status, nil
 }
 
-// check performs the uncached release lookup.
-func (s *Service) check(ctx context.Context) (Status, error) {
-	latest, err := s.up.Latest(ctx)
-	if err != nil {
-		if err == ErrNoRelease {
-			return Status{Current: s.current, Latest: s.current}, nil
-		}
-		return Status{}, err
-	}
-	return Status{
-		Current:         s.current,
-		Latest:          latest.Version,
-		UpdateAvailable: isNewer(latest.Version, s.current),
-	}, nil
-}
-
 // invalidate drops any cached release-check result so the next Check hits the
 // source. Called after an update attempt, whose outcome changes availability.
 func (s *Service) invalidate() {
@@ -107,8 +87,9 @@ func (s *Service) invalidate() {
 	s.mu.Unlock()
 }
 
-// Apply checks for a newer release and, if one exists, downloads and verifies
-// it, atomically swaps the running binary, and restarts the daemon.
+// Apply checks for a newer build and, if one exists, downloads and verifies
+// it, atomically swaps the running binary, and restarts the daemon. A build
+// that does not update itself fails with an error wrapping ErrUnsupported.
 //
 // The onReady callback, if non-nil, is invoked exactly once after the binary
 // has been verified and swapped but before the process restarts. It lets the
@@ -122,33 +103,33 @@ func (s *Service) invalidate() {
 // replaced by a fresh one, so Apply normally does not return; it only returns
 // (version, true, nil) if restartFunc is stubbed in tests.
 func (s *Service) Apply(ctx context.Context, onReady func(version string)) (version string, updated bool, err error) {
-	latest, err := s.up.Latest(ctx)
-	if err != nil {
-		if err == ErrNoRelease {
-			return s.current, false, nil
-		}
+	if err := s.up.Supported(); err != nil {
 		return "", false, err
 	}
-	if !isNewer(latest.Version, s.current) {
-		return s.current, false, nil
+	latest, err := s.up.Check(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	if !latest.UpdateAvailable {
+		return latest.Current, false, nil
 	}
 
 	exe, err := executablePath()
 	if err != nil {
 		return "", false, fmt.Errorf("locating executable: %w", err)
 	}
-	slog.Info("self-update: downloading and verifying", "version", latest.Version, "exe", exe)
-	if err := s.up.Apply(ctx, latest, exe); err != nil {
+	slog.Info("self-update: downloading and verifying", "channel", latest.Channel, "build", latest.Latest, "exe", exe)
+	if err := s.up.Install(ctx, latest, exe); err != nil {
 		// A verification or download failure leaves the binary untouched.
 		return "", false, err
 	}
-	slog.Info("self-update: binary swapped successfully", "version", latest.Version)
+	slog.Info("self-update: binary swapped successfully", "build", latest.Latest)
 	// The swapped-in binary changes what a release check reports; drop the
 	// cache so a stubbed restart (tests) or any post-swap Check is accurate.
 	s.invalidate()
 
 	if onReady != nil {
-		onReady(latest.Version)
+		onReady(latest.Latest)
 	}
 
 	// syscall.Exec replaces the process image: the OS closes all file
@@ -160,5 +141,5 @@ func (s *Service) Apply(ctx context.Context, onReady func(version string)) (vers
 	}
 	// Unreachable when restartFunc replaces the process; reached only if a
 	// test stubs restartFunc to return nil.
-	return latest.Version, true, nil
+	return latest.Latest, true, nil
 }

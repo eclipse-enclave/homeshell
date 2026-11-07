@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,15 +18,19 @@ import (
 // stubUpdater is a fake updater.Updater for exercising the version/update HTTP
 // handlers without a real release source.
 type stubUpdater struct {
-	latest    updater.Release
-	latestErr error
+	status      updater.Status
+	checkErr    error
+	unsupported error
+	installErr  error
 }
 
-func (s stubUpdater) Latest(context.Context) (updater.Release, error) {
-	return s.latest, s.latestErr
+func (s stubUpdater) Supported() error { return s.unsupported }
+
+func (s stubUpdater) Check(context.Context) (updater.Status, error) {
+	return s.status, s.checkErr
 }
 
-func (s stubUpdater) Apply(context.Context, updater.Release, string) error { return nil }
+func (s stubUpdater) Install(context.Context, updater.Status, string) error { return s.installErr }
 
 // handlerWithUpdater builds the daemon HTTP surface backed by seeded state and
 // the given self-update service.
@@ -60,25 +66,44 @@ func TestVersionEndpointWithoutUpdater(t *testing.T) {
 	}
 }
 
-func TestVersionEndpointReportsAvailableUpdate(t *testing.T) {
-	svc := updater.NewService(stubUpdater{latest: updater.Release{Version: "2.0.0"}}, "1.2.3")
-	handler := handlerWithUpdater(t, svc)
+func TestVersionEndpointReportsTheUpdatersStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stub stubUpdater
+		want string
+	}{
+		{
+			name: "update available",
+			stub: stubUpdater{status: updater.Status{Channel: "stable", Current: "1.2.3", Latest: "2.0.0", UpdateAvailable: true}},
+			want: `{"channel":"stable","current":"1.2.3","latest":"2.0.0","updateAvailable":true}`,
+		},
+		{
+			name: "rolling build up to date",
+			stub: stubUpdater{status: updater.Status{Channel: "rolling", Current: "abc1234", Latest: "abc1234"}},
+			want: `{"channel":"rolling","current":"abc1234","latest":"abc1234","updateAvailable":false}`,
+		},
+		{
+			name: "build that does not update itself",
+			stub: stubUpdater{status: updater.Status{Current: "1.2.3", Latest: "1.2.3"}},
+			want: `{"channel":"","current":"1.2.3","latest":"1.2.3","updateAvailable":false}`,
+		},
+		{
+			name: "release check fails",
+			stub: stubUpdater{checkErr: errors.New("download server unreachable")},
+			want: `{"channel":"","current":"1.2.3","latest":"1.2.3","updateAvailable":false,"error":"release check failed"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := handlerWithUpdater(t, updater.NewService(tc.stub))
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/version", nil))
 
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/version", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
-	}
-	var body struct {
-		Current         string `json:"current"`
-		Latest          string `json:"latest"`
-		UpdateAvailable bool   `json:"updateAvailable"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	if !body.UpdateAvailable || body.Latest != "2.0.0" {
-		t.Errorf("body = %+v, want update to 2.0.0", body)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+			}
+			if got := strings.TrimSpace(rec.Body.String()); got != tc.want {
+				t.Errorf("body = %s, want %s", got, tc.want)
+			}
+		})
 	}
 }

@@ -1,0 +1,55 @@
+#!/usr/bin/make -f
+# Built by `make deb` from a source tarball that already contains the embedded
+# web UI; BUILD_VERSION and BUILD_COMMIT come from the Makefile.
+
+export DH_VERBOSE = 1
+export GOCACHE = $(CURDIR)/.gocache
+export GOMODCACHE = $(CURDIR)/.gomodcache
+export GOFLAGS = -modcacherw -trimpath
+
+BUILD_VERSION ?= $(shell dpkg-parsechangelog --show-field Version | sed 's/-[^-]*$$//')
+BUILD_COMMIT ?= unknown
+# webview_go asks pkg-config for webkit2gtk-4.0; the shim answers from 4.1. Only
+# an absolute path works (docs/DEV.md, "Desktop shell").
+WEBKIT_PC_DIR = $(CURDIR)/packaging/linux/pkgconfig
+PKG = $(CURDIR)/debian/homeshell
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	test -f daemon/internal/webui/dist/index.html || { echo "the web UI is not embedded; build with make deb" >&2; exit 1; }
+	mkdir -p bin
+	cd daemon && CGO_ENABLED=0 go build -ldflags "-X main.version=$(BUILD_VERSION) -X main.commit=$(BUILD_COMMIT)" -o ../bin/homeshell ./cmd/homeshell
+	cd desktop && PKG_CONFIG_PATH=$(WEBKIT_PC_DIR) CGO_ENABLED=1 go build -ldflags "-X main.version=$(BUILD_VERSION)" -o ../bin/homeshell-desktop ./cmd/homeshell-desktop
+	ldd bin/homeshell-desktop | grep -q 'libwebkit2gtk-4\.1' || { echo "homeshell-desktop does not link libwebkit2gtk-4.1" >&2; exit 1; }
+
+override_dh_auto_install:
+	install -D -m 0755 bin/homeshell $(PKG)/usr/bin/homeshell
+	install -D -m 0755 bin/homeshell-desktop $(PKG)/usr/bin/homeshell-desktop
+	install -D -m 0644 packaging/linux/homeshell.desktop $(PKG)/usr/share/applications/homeshell.desktop
+	install -D -m 0644 packaging/linux/homeshell.png $(PKG)/usr/share/icons/hicolor/512x512/apps/homeshell.png
+	install -D -m 0644 README.md $(PKG)/usr/share/doc/homeshell/README.md
+	install -D -m 0644 LICENSE $(PKG)/usr/share/doc/homeshell/LICENSE
+	install -D -m 0644 NOTICE.md $(PKG)/usr/share/doc/homeshell/NOTICE.md
+	# The daemon embeds herdr's detection manifests; Apache-2.0 requires its license.
+	install -D -m 0644 packaging/THIRD-PARTY-NOTICES.txt $(PKG)/usr/share/doc/homeshell/THIRD-PARTY-NOTICES.txt
+	install -D -m 0644 daemon/internal/detect/manifests/herdr/LICENSE $(PKG)/usr/share/doc/homeshell/licenses/herdr/LICENSE
+
+override_dh_auto_test:
+	# Tests run in CI, not in the package build.
+
+# The top-level Makefile's clean would wipe the embedded web UI.
+override_dh_auto_clean:
+	if [ -d .gomodcache ]; then chmod -R u+w .gomodcache; fi
+	rm -rf bin .gocache .gomodcache
+
+# Go binaries use compressed debug info, which dwz does not handle.
+override_dh_dwz:
+
+# The licenses must stay readable where NOTICE.md and THIRD-PARTY-NOTICES.txt point to them.
+override_dh_compress:
+	dh_compress -X LICENSE -X NOTICE.md -X THIRD-PARTY-NOTICES.txt -X licenses/
+
+override_dh_strip:
+	dh_strip --no-automatic-dbgsym

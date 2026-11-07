@@ -407,16 +407,27 @@ the agent's PTY and serves screen snapshots on a unix socket; the wire format is
 
 ## Self-update
 
+A standalone release build replaces its own binary with the newest build of the
+[release channel](../CONTEXT.md#releases) it was published on. The channel is stamped at build
+time (`main.channel`).
+
+| Channel | `latest` file holds | Files under |
+|---|---|---|
+| `rolling` | the commit of the newest push to `main` | `rolling/` |
+| `stable` | the newest release version (never a pre-release) | `releases/<version>/` |
+
 ```mermaid
 sequenceDiagram
     participant UI as Web UI
     participant D as Daemon (old binary)
-    participant GH as GitHub Releases
+    participant DL as download.eclipse.org
     participant N as Daemon (new binary)
 
     UI->>D: POST /api/update
-    D->>GH: latest release, checksums.txt
-    GH-->>D: newer binary
+    D->>DL: <channel>/latest, checksums.txt
+    D->>DL: homeshell-<os>-<arch>.tar.gz
+    DL-->>D: archive
+    D->>DL: <channel>/latest unchanged?
     D->>D: verify checksum, swap binary in place
     D-->>UI: {"updated": true, "version": …}
     D->>N: re-exec (same PID, new token)
@@ -427,8 +438,22 @@ sequenceDiagram
     UI->>N: GET /api/version
 ```
 
+- The base is `https://download.eclipse.org/enclave/homeshell`; the release workflows publish
+  there ([Releases](DEV.md#releases)).
+- Only the `homeshell-<os>-<arch>.tar.gz` archives (Linux, macOS; amd64, arm64) carry a channel.
+  The `.deb`, `.rpm`, macOS app and source builds have none and never update themselves: they
+  report no update, and `POST /api/update` answers `503`. Why: a package manager or the app
+  bundle owns those files.
+- An update is offered when a rolling build's commit differs from `rolling/latest`, or a stable
+  build's version sorts below `releases/latest`. A newer stable build (installed by hand, or a
+  pre-release) is never downgraded.
+- The archive is hashed while its `homeshell` entry streams to a temp file beside the
+  executable; only a matching checksum, with `latest` unchanged before and after, renames it
+  into place. Any failure leaves the running binary untouched.
+- The updater never elevates privileges. An executable this user cannot replace answers `409`
+  with the manual download, verify and `sudo install` commands.
 - Entry points: `api/update.go` `updateHandler` (also behind `homeshell update`) and
-  `updater.Service.Apply`; the re-exec is `updater` `execReplace`.
-- Releases and `checksums.txt` are built by `.goreleaser.yaml`.
+  `updater.Service.Apply`; the download and swap are `updater` `Install`, the re-exec
+  `execReplace`.
 - The UI side is `webapp/apps/web/src/app/use-daemon-version.ts` and `use-daemon-state.ts` in the
   same directory.

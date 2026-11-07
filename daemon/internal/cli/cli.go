@@ -12,11 +12,15 @@ import (
 	"strings"
 )
 
-// Env carries process I/O and the build-injected version to a verb. It is the
-// seam through which future lifecycle verbs (status, stop) will also receive
-// daemon discovery, without changing the Command signature.
+// Env carries process I/O and the build stamps to a verb. It is the seam
+// through which future lifecycle verbs (status, stop) will also receive daemon
+// discovery, without changing the Command signature.
 type Env struct {
-	Version        string
+	Version string
+	// Commit and Channel identify the build to the self-updater; Channel is
+	// empty for builds that do not update themselves.
+	Commit         string
+	Channel        string
 	Stdin          io.Reader
 	Stdout, Stderr io.Writer
 }

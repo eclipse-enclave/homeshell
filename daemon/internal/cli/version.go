@@ -29,6 +29,7 @@ func init() {
 
 // daemonVersion mirrors the payload of GET /api/version.
 type daemonVersion struct {
+	Channel         string `json:"channel"`
 	Current         string `json:"current"`
 	Latest          string `json:"latest"`
 	UpdateAvailable bool   `json:"updateAvailable"`
@@ -120,9 +121,11 @@ func writeVersionText(env Env, payload []byte, unreachable error) {
 		// The release check is best-effort in the daemon too; say why the latest
 		// version is unknown rather than printing the current one as if it were.
 		fmt.Fprintf(env.Stdout, "latest  unknown (%s)\n", reported.Error)
+	case reported.Channel == "":
+		fmt.Fprintln(env.Stdout, "latest  unknown (this build does not update itself)")
 	case reported.UpdateAvailable:
-		fmt.Fprintf(env.Stdout, "latest  %s — run \"homeshell update\"\n", reported.Latest)
+		fmt.Fprintf(env.Stdout, "latest  %s (%s) — run \"homeshell update\"\n", reported.Latest, reported.Channel)
 	default:
-		fmt.Fprintf(env.Stdout, "latest  %s (up to date)\n", reported.Latest)
+		fmt.Fprintf(env.Stdout, "latest  %s (%s, up to date)\n", reported.Latest, reported.Channel)
 	}
 }

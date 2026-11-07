@@ -16,6 +16,7 @@ describe('DaemonStatus update button', () => {
   });
 
   const stubVersion = (info: {
+    channel?: string;
     current: string;
     latest: string;
     updateAvailable: boolean;
@@ -67,6 +68,35 @@ describe('DaemonStatus update button', () => {
     // the hook updates info immediately and the button disappears.
     await waitFor(() => expect(screen.queryByRole('button')).toBeNull());
     expect(screen.getByText('daemon 1.1.0')).toBeTruthy();
+  });
+
+  it('names the rolling channel next to its commit, also after an update', async () => {
+    stubVersion({
+      channel: 'rolling',
+      current: 'abc1234',
+      latest: 'def5678',
+      updateAvailable: true,
+    });
+    render(<DaemonStatus connection="connected" />);
+    await screen.findByText('daemon abc1234 (rolling)');
+
+    await act(async () => {
+      fireEvent.click(
+        await screen.findByRole('button', { name: /update to def5678/i }),
+      );
+    });
+    await screen.findByText('daemon def5678 (rolling)');
+  });
+
+  it('shows a stable version without a channel', async () => {
+    stubVersion({
+      channel: 'stable',
+      current: '1.0.0',
+      latest: '1.0.0',
+      updateAvailable: false,
+    });
+    render(<DaemonStatus connection="connected" />);
+    await screen.findByText('daemon 1.0.0');
   });
 
   it('hides the update button while offline', async () => {
