@@ -15,12 +15,18 @@ describe('DaemonStatus update button', () => {
     vi.restoreAllMocks();
   });
 
-  const stubVersion = (info: {
-    channel?: string;
-    current: string;
-    latest: string;
-    updateAvailable: boolean;
-  }) => {
+  const stubVersion = (
+    info: {
+      channel?: string;
+      current: string;
+      latest: string;
+      updateAvailable: boolean;
+    },
+    updateResponse: { ok: boolean; body: unknown } = {
+      ok: true,
+      body: { updated: true, version: info.latest },
+    },
+  ) => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith('/api/version')) {
@@ -28,8 +34,8 @@ describe('DaemonStatus update button', () => {
       }
       if (url.endsWith('/api/update')) {
         return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ updated: true, version: info.latest }),
+          ok: updateResponse.ok,
+          json: () => Promise.resolve(updateResponse.body),
         });
       }
       return Promise.reject(new Error(`unexpected fetch ${url}`));
@@ -68,6 +74,26 @@ describe('DaemonStatus update button', () => {
     // the hook updates info immediately and the button disappears.
     await waitFor(() => expect(screen.queryByRole('button')).toBeNull());
     expect(screen.getByText('daemon 1.1.0')).toBeTruthy();
+  });
+
+  it('names why an update failed and offers a retry', async () => {
+    stubVersion(
+      { current: '1.0.0', latest: '1.1.0', updateAvailable: true },
+      { ok: false, body: { error: 'checksum mismatch for homeshell.tar.gz' } },
+    );
+    render(<DaemonStatus connection="connected" />);
+    const button = await screen.findByRole('button', {
+      name: /update to 1\.1\.0/i,
+    });
+
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    const retry = await screen.findByRole('button', { name: /retry/i });
+    expect(retry.getAttribute('title')).toBe(
+      'Update to 1.1.0 failed: checksum mismatch for homeshell.tar.gz',
+    );
   });
 
   it('names the rolling channel next to its commit, also after an update', async () => {

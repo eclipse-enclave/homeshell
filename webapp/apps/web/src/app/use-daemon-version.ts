@@ -15,6 +15,8 @@ export interface DaemonVersion {
   /** null until the first /api/version response arrives. */
   info: VersionInfo | null;
   phase: UpdatePhase;
+  /** Why the last update failed, while `phase` is 'error'. */
+  error: string | null;
   /** Triggers POST /api/update; the daemon restarts on success. The SSE hook
    *  recreates its EventSource on the resulting fatal error, re-authenticating
    *  with the rotated token so the stream comes back on the new version. */
@@ -33,6 +35,7 @@ export function useDaemonVersion(
 ): DaemonVersion {
   const [info, setInfo] = useState<VersionInfo | null>(null);
   const [phase, setPhase] = useState<UpdatePhase>('idle');
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (connection !== 'connected') return;
@@ -54,10 +57,14 @@ export function useDaemonVersion(
 
   const update = useCallback(() => {
     setPhase('updating');
+    setError(null);
     fetch('/api/update', { method: 'POST' })
-      .then((res) => {
+      .then(async (res) => {
         if (!res.ok) {
-          throw new Error(`update failed with ${res.status}`);
+          const body = (await res.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          throw new Error(body.error || `update failed with ${res.status}`);
         }
         return res.json() as Promise<{ updated: boolean; version: string }>;
       })
@@ -77,8 +84,11 @@ export function useDaemonVersion(
         }
         setPhase('idle');
       })
-      .catch(() => setPhase('error'));
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : String(err));
+        setPhase('error');
+      });
   }, []);
 
-  return { info, phase, update };
+  return { info, phase, error, update };
 }

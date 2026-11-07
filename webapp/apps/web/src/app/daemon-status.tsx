@@ -16,7 +16,7 @@ export interface DaemonStatusProps {
 export function DaemonStatus({ connection }: DaemonStatusProps) {
   // Re-read the version whenever the connection state changes so a post-update
   // reconnect surfaces the new version automatically.
-  const { info, phase, update } = useDaemonVersion(connection);
+  const { info, phase, error, update } = useDaemonVersion(connection);
   const version = info?.current ?? null;
   // A rolling build is a commit, which reads as a typo without the channel.
   const channel = info?.channel === 'rolling' ? ' (rolling)' : '';
@@ -46,7 +46,11 @@ export function DaemonStatus({ connection }: DaemonStatusProps) {
           className={styles.update}
           onClick={update}
           disabled={phase === 'updating'}
-          title={`Update to ${info.latest}`}
+          title={
+            phase === 'error'
+              ? `Update to ${info.latest} failed: ${error}`
+              : `Update to ${info.latest}`
+          }
         >
           {phase === 'updating'
             ? 'Updating…'

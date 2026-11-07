@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -18,11 +18,12 @@ const archive = `homeshell-${process.platform}-${process.arch === 'x64' ? 'amd64
 test.describe('a failed self-update', () => {
   let server: Server;
   let daemon: IsolatedDaemon;
+  let dir: string;
 
   test.beforeAll(async () => {
     test.setTimeout(120_000);
     // A well-formed archive, so the checksum is what fails rather than the unpacking.
-    const dir = mkdtempSync(join(tmpdir(), 'homeshell-self-update-'));
+    dir = mkdtempSync(join(tmpdir(), 'homeshell-self-update-'));
     writeFileSync(join(dir, 'homeshell'), 'not the binary the checksum names');
     execFileSync('tar', ['-czf', join(dir, archive), '-C', dir, 'homeshell']);
     const archiveBytes = readFileSync(join(dir, archive));
@@ -50,6 +51,7 @@ test.describe('a failed self-update', () => {
   test.afterAll(async () => {
     daemon?.dispose();
     await new Promise((r) => server?.close(r));
+    if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
   test('reports the checksum mismatch and keeps serving', async () => {

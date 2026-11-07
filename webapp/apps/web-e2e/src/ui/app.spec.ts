@@ -63,6 +63,33 @@ test('a rolling build shows its channel beside the commit and offers the update'
   ).toBeVisible();
 });
 
+test('a failed update names its reason on the retry button', async ({
+  page,
+}) => {
+  await page.route('**/api/version', (route) =>
+    route.fulfill({
+      json: {
+        channel: 'rolling',
+        current: 'abc1234',
+        latest: 'def5678',
+        updateAvailable: true,
+      },
+    }),
+  );
+  await page.route('**/api/update', (route) =>
+    route.fulfill({
+      status: 500,
+      json: { error: 'checksum mismatch for homeshell-linux-amd64.tar.gz' },
+    }),
+  );
+  await page.reload();
+  await page.getByRole('button', { name: 'Update to def5678' }).click();
+  await expect(page.getByRole('button', { name: /retry/ })).toHaveAttribute(
+    'title',
+    'Update to def5678 failed: checksum mismatch for homeshell-linux-amd64.tar.gz',
+  );
+});
+
 test('lists every project with its daemon-derived state', async ({ page }) => {
   const nav = page.getByRole('navigation', { name: 'Projects' });
   await expect(nav.getByRole('button').first()).toBeVisible();

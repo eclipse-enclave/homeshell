@@ -15,7 +15,8 @@ cp "$desktop_bin" "$app/Contents/MacOS/homeshell-desktop"
 for bin in "$app"/Contents/MacOS/*; do
   minos=$(otool -l "$bin" | awk '/LC_BUILD_VERSION/{f=1} f && $1=="minos"{print $2; exit}')
   [ "$minos" = "$MACOSX_DEPLOYMENT_TARGET" ] || {
-    echo "$bin targets macOS $minos, want $MACOSX_DEPLOYMENT_TARGET" >&2; exit 1; }
+    echo "$bin targets macOS $minos, want $MACOSX_DEPLOYMENT_TARGET" \
+      "(if Go raised its minimum, bump MACOSX_DEPLOYMENT_TARGET in the Makefile)" >&2; exit 1; }
 done
 cp "$icns" "$app/Contents/Resources/homeshell.icns"
 cp LICENSE NOTICE.md "$app/Contents/Resources/"

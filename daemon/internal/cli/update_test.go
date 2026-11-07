@@ -91,15 +91,16 @@ func TestUpdateReportsDaemonError(t *testing.T) {
 	updateDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error":"update failed"}`))
+		w.Write([]byte(`{"error":"checksum mismatch for homeshell-linux-amd64.tar.gz"}`))
 	})
 
 	code, _, stderr := runVerb(runUpdate, nil)
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1", code)
 	}
-	if !strings.Contains(stderr, "update failed") {
-		t.Errorf("stderr = %q, want it to report the failure", stderr)
+	want := "homeshell: update failed: checksum mismatch for homeshell-linux-amd64.tar.gz\n"
+	if stderr != want {
+		t.Errorf("stderr = %q, want %q", stderr, want)
 	}
 }
 
