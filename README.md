@@ -17,7 +17,8 @@ stable releases, `rolling/` the latest build of `main`. Each release's notes hav
 commands.
 
 - **Linux (amd64):** the `.deb` or `.rpm` package (daemon and desktop app).
-- **macOS:** the `.dmg` (desktop app). The build is unsigned, so Gatekeeper warns on first open.
+- **macOS 12 or later:** the `.dmg` (desktop app). The build is unsigned, so Gatekeeper blocks the
+  first open; the release notes say how to allow it.
 - **Anywhere else:** the `homeshell-<os>-<arch>.tar.gz` archive for your platform, used with a
   browser. Installed into a directory you own, such as `~/.local/bin`, it updates itself from
   the channel it came from. Packages and the app are updated by installing a newer one.

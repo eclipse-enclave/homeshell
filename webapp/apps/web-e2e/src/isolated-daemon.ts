@@ -50,15 +50,21 @@ export interface IsolatedDaemon {
 }
 
 /** Builds the daemon binary once per spec file, into a file named after it. */
-export function buildDaemon(name: string): string {
+export function buildDaemon(name: string, ldflags = ''): string {
   const binary = join(tmpdir(), `homeshell-${name}-e2e`);
-  execFileSync('go', ['build', '-o', binary, './cmd/homeshell'], {
-    cwd: daemonDir,
-  });
+  execFileSync(
+    'go',
+    ['build', '-ldflags', ldflags, '-o', binary, './cmd/homeshell'],
+    { cwd: daemonDir },
+  );
   return binary;
 }
 
-export function isolatedDaemon(binary: string, name: string): IsolatedDaemon {
+export function isolatedDaemon(
+  binary: string,
+  name: string,
+  env: NodeJS.ProcessEnv = {},
+): IsolatedDaemon {
   const homeDir = mkdtempSync(join(tmpdir(), `homeshell-${name}-`));
   const stateFile = join(homeDir, 'daemon.json');
   let child: ReturnType<typeof spawn> | undefined;
@@ -70,7 +76,7 @@ export function isolatedDaemon(binary: string, name: string): IsolatedDaemon {
       child = spawn(
         binary,
         ['serve', '-demo=false', `-home-dir=${homeDir}`, '-addr', '127.0.0.1:0'],
-        { cwd: daemonDir, stdio: 'ignore' },
+        { cwd: daemonDir, stdio: 'ignore', env: { ...process.env, ...env } },
       );
       if (!(await waitFor(() => existsSync(stateFile), 30_000))) {
         throw new Error('the daemon did not publish its state file');

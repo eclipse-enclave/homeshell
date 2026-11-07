@@ -59,8 +59,9 @@ func updateHandler(upd *updater.Service) http.HandlerFunc {
 			fmt.Fprintf(w, `{"error":%q}`, err.Error())
 			return
 		case err != nil:
+			// The reason (unreachable server, checksum mismatch) is what the user acts on.
 			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintf(w, `{"error":%q}`, "update failed")
+			fmt.Fprintf(w, `{"error":%q}`, "update failed: "+err.Error())
 			slog.Error("self-update failed", "error", err)
 			return
 		}

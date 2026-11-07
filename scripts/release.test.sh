@@ -138,6 +138,11 @@ if [[ "$notes" == *"https://download.eclipse.org/enclave/homeshell/releases/1.0.
 else
   bad "stable notes link the release directory" "$notes"
 fi
+if [[ "$notes" == *"Open Anyway"* && "$notes" == *'`xattr -dr com.apple.quarantine'* ]]; then
+  ok "notes explain opening the unsigned app on current macOS"
+else
+  bad "notes explain opening the unsigned app on current macOS" "$notes"
+fi
 
 echo
 echo "$pass passed, $fail failed"

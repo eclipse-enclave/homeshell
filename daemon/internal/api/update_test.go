@@ -80,7 +80,7 @@ func TestUpdateEndpointRefusals(t *testing.T) {
 			name:       "download fails",
 			stub:       stubUpdater{checkErr: errors.New("download server unreachable")},
 			wantStatus: http.StatusInternalServerError,
-			wantError:  "update failed",
+			wantError:  "update failed: download server unreachable",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

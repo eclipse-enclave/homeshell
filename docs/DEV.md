@@ -322,8 +322,11 @@ A release contains:
 - Archives, Linux packages and macOS app bundles include `LICENSE`, `NOTICE.md`,
   `THIRD-PARTY-NOTICES.txt` and the Herdr license under `licenses/herdr/LICENSE`. Linux packages
   install these under `/usr/share/doc/homeshell`; macOS apps use `Contents/Resources`.
-- macOS artifacts are unsigned, so Gatekeeper warns on install (`TODO(signing)` in
+- macOS artifacts are unsigned, so Gatekeeper blocks the first open (`TODO(signing)` in
   `packaging/macos/build-app.sh`).
+- The macOS app targets macOS 12 (`MACOSX_DEPLOYMENT_TARGET` on the `dmg` target), the oldest
+  release Go supports, and `build-app.sh` fails if a binary targets another. Why: without it cgo
+  links for the runner's SDK, and the app refuses older systems.
 - Publishing uses the `SCP_USERNAME`, `SCP_KEY` and `SCP_PASSPHRASE` organization secrets for
   `projects-storage.eclipse.org` (Otterdog). Forks build but never publish.
 
