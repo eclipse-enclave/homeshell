@@ -22,7 +22,9 @@ describe('DaemonStatus update button', () => {
       latest: string;
       updateAvailable: boolean;
     },
-    updateResponse: { ok: boolean; body: unknown } = {
+    // 'unreachable' rejects the fetch; a missing body makes json() reject.
+    updateResponse:
+      { ok: boolean; status?: number; body?: unknown } | 'unreachable' = {
       ok: true,
       body: { updated: true, version: info.latest },
     },
@@ -33,9 +35,17 @@ describe('DaemonStatus update button', () => {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(info) });
       }
       if (url.endsWith('/api/update')) {
+        if (updateResponse === 'unreachable') {
+          return Promise.reject(new TypeError('Failed to fetch'));
+        }
+        const { ok, status = ok ? 200 : 500, body } = updateResponse;
         return Promise.resolve({
-          ok: updateResponse.ok,
-          json: () => Promise.resolve(updateResponse.body),
+          ok,
+          status,
+          json: () =>
+            body === undefined
+              ? Promise.reject(new SyntaxError('Unexpected token'))
+              : Promise.resolve(body),
         });
       }
       return Promise.reject(new Error(`unexpected fetch ${url}`));
@@ -76,25 +86,47 @@ describe('DaemonStatus update button', () => {
     expect(screen.getByText('daemon 1.1.0')).toBeTruthy();
   });
 
-  it('names why an update failed and offers a retry', async () => {
-    stubVersion(
-      { current: '1.0.0', latest: '1.1.0', updateAvailable: true },
-      { ok: false, body: { error: 'checksum mismatch for homeshell.tar.gz' } },
-    );
-    render(<DaemonStatus connection="connected" />);
-    const button = await screen.findByRole('button', {
-      name: /update to 1\.1\.0/i,
-    });
+  it.each([
+    {
+      name: 'the daemon reason',
+      response: {
+        ok: false,
+        body: { error: 'checksum mismatch for homeshell.tar.gz' },
+      },
+      reason: 'checksum mismatch for homeshell.tar.gz',
+    },
+    {
+      name: 'the status for a non-JSON error',
+      response: { ok: false, status: 502 },
+      reason: 'daemon responded with 502',
+    },
+    {
+      name: 'an unreachable daemon',
+      response: 'unreachable' as const,
+      reason: 'Could not reach the daemon.',
+    },
+  ])(
+    'shows $name when an update fails and offers a retry',
+    async ({ response, reason }) => {
+      stubVersion(
+        { current: '1.0.0', latest: '1.1.0', updateAvailable: true },
+        response,
+      );
+      render(<DaemonStatus connection="connected" />);
+      const button = await screen.findByRole('button', {
+        name: /update to 1\.1\.0/i,
+      });
 
-    await act(async () => {
-      fireEvent.click(button);
-    });
+      await act(async () => {
+        fireEvent.click(button);
+      });
 
-    const retry = await screen.findByRole('button', { name: /retry/i });
-    expect(retry.getAttribute('title')).toBe(
-      'Update to 1.1.0 failed: checksum mismatch for homeshell.tar.gz',
-    );
-  });
+      const retry = await screen.findByRole('button', { name: /retry/i });
+      const alert = screen.getByRole('alert');
+      expect(alert.textContent).toBe(reason);
+      expect(retry.getAttribute('aria-describedby')).toBe(alert.id);
+    },
+  );
 
   it('names the rolling channel next to its commit, also after an update', async () => {
     stubVersion({

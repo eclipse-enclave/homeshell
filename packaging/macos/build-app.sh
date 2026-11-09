@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Assemble HomeShell.app from natively-built binaries and wrap it as a .dmg.
-# Usage: build-app.sh <version> <arch> <homeshell-bin> <desktop-bin> <icns> <out-dir>
+# Usage: MACOSX_DEPLOYMENT_TARGET=<min-macos> \
+#   build-app.sh <version> <arch> <homeshell-bin> <desktop-bin> <icns> <out-dir>
 set -euo pipefail
 version="$1"; arch="$2"; hs_bin="$3"; desktop_bin="$4"; icns="$5"; out="$6"
 # The .app is staged outside out-dir, so only the .dmg lands there.
@@ -8,7 +9,7 @@ stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 app="$stage/HomeShell.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-sed -e "s/__VERSION__/$version/" -e "s/__MIN_MACOS__/${MACOSX_DEPLOYMENT_TARGET:?}/" \
+sed -e "s/__VERSION__/$version/" -e "s/__MIN_MACOS__/${MACOSX_DEPLOYMENT_TARGET:?set by make dmg}/" \
   packaging/macos/Info.plist > "$app/Contents/Info.plist"
 cp "$hs_bin" "$app/Contents/MacOS/homeshell"
 cp "$desktop_bin" "$app/Contents/MacOS/homeshell-desktop"

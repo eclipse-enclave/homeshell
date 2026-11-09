@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import type { DaemonErrorBody } from './field-errors';
+
 export interface VersionInfo {
   /** Release channel the daemon updates from; empty when it never updates itself. */
   channel: string;
@@ -58,37 +60,46 @@ export function useDaemonVersion(
   const update = useCallback(() => {
     setPhase('updating');
     setError(null);
-    fetch('/api/update', { method: 'POST' })
-      .then(async (res) => {
-        if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as {
-            error?: string;
-          };
-          throw new Error(body.error || `update failed with ${res.status}`);
-        }
-        return res.json() as Promise<{ updated: boolean; version: string }>;
-      })
-      .then((result) => {
-        if (result.updated) {
-          // The daemon has swapped its binary and is restarting. Apply the
-          // version from the response so the UI reflects the update
-          // immediately — even when the SSE reconnect does not trigger a
-          // visible connection state change (e.g. behind a proxy that
-          // transparently recovers the backend connection).
-          setInfo((prev) => ({
-            channel: prev?.channel ?? '',
-            current: result.version,
-            latest: result.version,
-            updateAvailable: false,
-          }));
-        }
-        setPhase('idle');
-      })
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : String(err));
+    requestUpdate().then((result) => {
+      if (typeof result === 'string') {
+        setError(result);
         setPhase('error');
-      });
+        return;
+      }
+      if (result.updated) {
+        // The daemon has swapped its binary and is restarting. Apply the
+        // version from the response so the UI reflects the update
+        // immediately — even when the SSE reconnect does not trigger a
+        // visible connection state change (e.g. behind a proxy that
+        // transparently recovers the backend connection).
+        setInfo((prev) => ({
+          channel: prev?.channel ?? '',
+          current: result.version,
+          latest: result.version,
+          updateAvailable: false,
+        }));
+      }
+      setPhase('idle');
+    });
   }, []);
 
   return { info, phase, error, update };
+}
+
+/** POST /api/update; resolves to the daemon's answer or why it failed. */
+async function requestUpdate(): Promise<
+  { updated: boolean; version: string } | string
+> {
+  try {
+    const res = await fetch('/api/update', { method: 'POST' });
+    if (!res.ok) {
+      const body = (await res
+        .json()
+        .catch(() => null)) as DaemonErrorBody | null;
+      return body?.error ?? `daemon responded with ${res.status}`;
+    }
+    return (await res.json()) as { updated: boolean; version: string };
+  } catch {
+    return 'Could not reach the daemon.';
+  }
 }

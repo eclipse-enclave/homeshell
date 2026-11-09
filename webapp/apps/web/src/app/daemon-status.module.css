@@ -49,3 +49,12 @@
   opacity: 0.6;
   cursor: default;
 }
+
+.error {
+  max-width: 24rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  color: var(--hs-error-text, #f87171);
+}

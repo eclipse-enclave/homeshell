@@ -1,3 +1,5 @@
+import { useId } from 'react';
+
 import styles from './daemon-status.module.css';
 import type { DaemonConnection } from './use-daemon-state';
 import { useDaemonVersion } from './use-daemon-version';
@@ -17,6 +19,7 @@ export function DaemonStatus({ connection }: DaemonStatusProps) {
   // Re-read the version whenever the connection state changes so a post-update
   // reconnect surfaces the new version automatically.
   const { info, phase, error, update } = useDaemonVersion(connection);
+  const errorId = useId();
   const version = info?.current ?? null;
   // A rolling build is a commit, which reads as a typo without the channel.
   const channel = info?.channel === 'rolling' ? ' (rolling)' : '';
@@ -46,11 +49,8 @@ export function DaemonStatus({ connection }: DaemonStatusProps) {
           className={styles.update}
           onClick={update}
           disabled={phase === 'updating'}
-          title={
-            phase === 'error'
-              ? `Update to ${info.latest} failed: ${error}`
-              : `Update to ${info.latest}`
-          }
+          title={`Update to ${info.latest}`}
+          aria-describedby={phase === 'error' ? errorId : undefined}
         >
           {phase === 'updating'
             ? 'Updating…'
@@ -58,6 +58,17 @@ export function DaemonStatus({ connection }: DaemonStatusProps) {
               ? 'Update failed — retry'
               : `Update to ${info.latest}`}
         </button>
+      )}
+      {connection === 'connected' && phase === 'error' && (
+        // Truncated to fit the top bar; the title carries the full reason.
+        <span
+          id={errorId}
+          className={styles.error}
+          role="alert"
+          title={error ?? undefined}
+        >
+          {error}
+        </span>
       )}
     </span>
   );

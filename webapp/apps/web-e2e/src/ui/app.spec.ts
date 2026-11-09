@@ -63,7 +63,7 @@ test('a rolling build shows its channel beside the commit and offers the update'
   ).toBeVisible();
 });
 
-test('a failed update names its reason on the retry button', async ({
+test('a failed update shows its reason beside the retry button', async ({
   page,
 }) => {
   await page.route('**/api/version', (route) =>
@@ -84,10 +84,11 @@ test('a failed update names its reason on the retry button', async ({
   );
   await page.reload();
   await page.getByRole('button', { name: 'Update to def5678' }).click();
-  await expect(page.getByRole('button', { name: /retry/ })).toHaveAttribute(
-    'title',
-    'Update to def5678 failed: checksum mismatch for homeshell-linux-amd64.tar.gz',
-  );
+  const reason = 'checksum mismatch for homeshell-linux-amd64.tar.gz';
+  await expect(page.getByRole('alert')).toHaveText(reason);
+  await expect(
+    page.getByRole('button', { name: /retry/ }),
+  ).toHaveAccessibleDescription(reason);
 });
 
 test('lists every project with its daemon-derived state', async ({ page }) => {
@@ -468,7 +469,9 @@ async function stubNativeFolderChooser(
       status,
       contentType: 'application/json',
       body: JSON.stringify(
-        status === 501 ? { error: 'no native folder chooser on this host' } : body,
+        status === 501
+          ? { error: 'no native folder chooser on this host' }
+          : body,
       ),
     }),
   );
@@ -489,9 +492,9 @@ test('add project: Browse fills the path from the host desktop chooser', async (
     '/tmp/chosen-by-the-desktop',
   );
   // The desktop answered, so the in-app picker must never appear.
-  await expect(
-    page.getByRole('dialog', { name: 'Select folder' }),
-  ).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Select folder' })).toHaveCount(
+    0,
+  );
 
   await page.getByRole('button', { name: 'Cancel' }).click();
 });
@@ -508,9 +511,9 @@ test('add project: dismissing the host desktop chooser leaves the form alone', a
   // dismissal means "not now", not "show me the other picker instead".
   await expect(page.getByRole('button', { name: 'Browse' })).toBeEnabled();
   await expect(page.getByPlaceholder('/path/to/project')).toHaveValue('');
-  await expect(
-    page.getByRole('dialog', { name: 'Select folder' }),
-  ).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Select folder' })).toHaveCount(
+    0,
+  );
 
   await page.getByRole('button', { name: 'Cancel' }).click();
 });
@@ -631,7 +634,11 @@ test('rename workstream: inline edit updates the card name', async ({
     await (await request.post('/api/projects', { data: { path: dir } })).json()
   ).id;
   await request.post(`/api/projects/${projectId}/workstreams`, {
-    data: { providerId: 'fake', name: 'before-rename', config: { branch: 'main' } },
+    data: {
+      providerId: 'fake',
+      name: 'before-rename',
+      config: { branch: 'main' },
+    },
   });
 
   await page.goto('/');
