@@ -211,8 +211,8 @@ Paths are under `/api`. Endpoints without a response listed answer `204` with no
 - **`/update`** sends its answer before the daemon re-executes, then the event stream drops and
   reconnects to the new binary ([Self-update](ARCHITECTURE.md#self-update)). `version` is the
   installed build. `503` with the reason when this build does not update itself, `409` with the
-  manual reinstall commands when the executable is not writable for the daemon's user, `500` if
-  the download or verification fails.
+  manual reinstall commands when the executable is not writable for the daemon's user, `500` with
+  the reason if the download or verification fails.
 - **`/config`** is the live runtime configuration (today the log level); `PATCH` applies at once
   and saves the level as the startup default. Why separate from `/settings`: a stored copy of a
   live value could drift from what the daemon is doing.

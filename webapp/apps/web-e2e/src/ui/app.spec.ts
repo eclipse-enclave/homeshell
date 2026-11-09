@@ -1,4 +1,5 @@
 import { expect, tempProjectDir, test } from '../fixtures';
+import { type Page } from '@playwright/test';
 import { isPlaceholderSession } from '../placeholders';
 import { createWorkstreamInForm, selectProject } from './workstream-helpers';
 
@@ -61,6 +62,64 @@ test('a rolling build shows its channel beside the commit and offers the update'
   await expect(
     page.getByRole('button', { name: 'Update to def5678' }),
   ).toBeVisible();
+});
+
+const failUpdate = async (
+  page: Page,
+  status: number,
+  reason: string,
+): Promise<void> => {
+  await page.route('**/api/version', (route) =>
+    route.fulfill({
+      json: {
+        channel: 'rolling',
+        current: 'abc1234',
+        latest: 'def5678',
+        updateAvailable: true,
+      },
+    }),
+  );
+  await page.route('**/api/update', (route) =>
+    route.fulfill({ status, json: { error: reason } }),
+  );
+  await page.reload();
+  await page.getByRole('button', { name: 'Update to def5678' }).click();
+};
+
+test('a failed update shows its reason and offers a retry', async ({
+  page,
+}) => {
+  const reason = 'checksum mismatch for homeshell-linux-amd64.tar.gz';
+  await failUpdate(page, 500, reason);
+  await expect(page.getByRole('alert')).toContainText(reason);
+  await expect(
+    page.getByRole('button', { name: /retry/ }),
+  ).toHaveAccessibleDescription(reason);
+
+  await page.getByRole('button', { name: 'Close' }).click();
+  await expect(page.getByRole('alert')).toBeHidden();
+  await expect(
+    page.getByRole('button', { name: 'Update failure details' }),
+  ).toBeFocused();
+});
+
+test('an update the daemon cannot apply shows the whole manual reinstall', async ({
+  page,
+}) => {
+  const reason =
+    'homeshell cannot replace /usr/local/bin/homeshell: its location is not writable for this ' +
+    'user and the updater does not elevate privileges; download ' +
+    'https://example.com/homeshell-linux-amd64.tar.gz and https://example.com/SHA256SUMS into ' +
+    'one directory and reinstall from there with: sha256sum --check --ignore-missing SHA256SUMS';
+  await failUpdate(page, 409, reason);
+  await expect(
+    page.getByRole('button', { name: 'Update needs manual steps' }),
+  ).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByRole('button', { name: /retry/ })).toHaveCount(0);
+  // The reason wraps instead of being cut off, so its last words are on screen.
+  await expect(
+    page.getByRole('alert').getByText(/sha256sum --check/),
+  ).toBeInViewport();
 });
 
 test('lists every project with its daemon-derived state', async ({ page }) => {
@@ -441,7 +500,9 @@ async function stubNativeFolderChooser(
       status,
       contentType: 'application/json',
       body: JSON.stringify(
-        status === 501 ? { error: 'no native folder chooser on this host' } : body,
+        status === 501
+          ? { error: 'no native folder chooser on this host' }
+          : body,
       ),
     }),
   );
@@ -462,9 +523,9 @@ test('add project: Browse fills the path from the host desktop chooser', async (
     '/tmp/chosen-by-the-desktop',
   );
   // The desktop answered, so the in-app picker must never appear.
-  await expect(
-    page.getByRole('dialog', { name: 'Select folder' }),
-  ).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Select folder' })).toHaveCount(
+    0,
+  );
 
   await page.getByRole('button', { name: 'Cancel' }).click();
 });
@@ -481,9 +542,9 @@ test('add project: dismissing the host desktop chooser leaves the form alone', a
   // dismissal means "not now", not "show me the other picker instead".
   await expect(page.getByRole('button', { name: 'Browse' })).toBeEnabled();
   await expect(page.getByPlaceholder('/path/to/project')).toHaveValue('');
-  await expect(
-    page.getByRole('dialog', { name: 'Select folder' }),
-  ).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Select folder' })).toHaveCount(
+    0,
+  );
 
   await page.getByRole('button', { name: 'Cancel' }).click();
 });
@@ -604,7 +665,11 @@ test('rename workstream: inline edit updates the card name', async ({
     await (await request.post('/api/projects', { data: { path: dir } })).json()
   ).id;
   await request.post(`/api/projects/${projectId}/workstreams`, {
-    data: { providerId: 'fake', name: 'before-rename', config: { branch: 'main' } },
+    data: {
+      providerId: 'fake',
+      name: 'before-rename',
+      config: { branch: 'main' },
+    },
   });
 
   await page.goto('/');

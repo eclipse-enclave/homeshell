@@ -222,6 +222,8 @@ rpm: embed
 	@echo "Package built: $(DIST_DIR)/"
 
 # CGO cross-arch builds work on macOS: Xcode's clang targets arm64 and x86_64.
+# Without a deployment target clang builds for the SDK's macOS; 12 is Go's minimum.
+dmg: export MACOSX_DEPLOYMENT_TARGET := 12.0
 dmg: embed
 	$(require_release_version)
 	@[ "$$(uname -s)" = Darwin ] || { echo "make dmg needs macOS (hdiutil, iconutil, the WebKit framework)"; exit 1; }

@@ -87,5 +87,5 @@ homeshell serve
 
 The daemon from an archive updates itself from the \`$channel\` channel (\`homeshell update\`, or the update button in the UI) when installed into a directory you own, such as \`~/.local/bin\`. The packages and the macOS app are updated by installing a newer one.
 
-The macOS builds are unsigned and not notarized, so Gatekeeper warns on first open; right-click the app and choose Open. Windows users run the Linux build inside WSL.
+The macOS app needs macOS 12 or later. It is unsigned and not notarized, so Gatekeeper blocks the first open: on macOS 15 and later, choose Open Anyway under System Settings > Privacy & Security; on earlier versions, right-click the app and choose Open. If macOS reports the app as damaged, run \`xattr -dr com.apple.quarantine /Applications/HomeShell.app\`. Windows users run the Linux build inside WSL.
 EOT

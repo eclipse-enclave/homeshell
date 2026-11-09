@@ -11,6 +11,7 @@
   <!-- macOS expects CFBundleVersion alongside the short string; tooling that
        reads only this key treats a bundle without it as version 0. -->
   <key>CFBundleVersion</key><string>__VERSION__</string>
+  <key>LSMinimumSystemVersion</key><string>__MIN_MACOS__</string>
   <key>CFBundleIconFile</key><string>homeshell.icns</string>
   <key>NSHighResolutionCapable</key><true/>
   <!-- The shell loads the daemon over plain http on a loopback port. App
