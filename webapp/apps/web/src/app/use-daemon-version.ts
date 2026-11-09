@@ -13,12 +13,18 @@ export interface VersionInfo {
 
 export type UpdatePhase = 'idle' | 'updating' | 'error';
 
+export interface UpdateFailure {
+  reason: string;
+  /** False when the daemon refused the update (409, 503): retrying cannot help. */
+  retryable: boolean;
+}
+
 export interface DaemonVersion {
   /** null until the first /api/version response arrives. */
   info: VersionInfo | null;
   phase: UpdatePhase;
   /** Why the last update failed, while `phase` is 'error'. */
-  error: string | null;
+  failure: UpdateFailure | null;
   /** Triggers POST /api/update; the daemon restarts on success. The SSE hook
    *  recreates its EventSource on the resulting fatal error, re-authenticating
    *  with the rotated token so the stream comes back on the new version. */
@@ -37,7 +43,7 @@ export function useDaemonVersion(
 ): DaemonVersion {
   const [info, setInfo] = useState<VersionInfo | null>(null);
   const [phase, setPhase] = useState<UpdatePhase>('idle');
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<UpdateFailure | null>(null);
 
   useEffect(() => {
     if (connection !== 'connected') return;
@@ -59,10 +65,10 @@ export function useDaemonVersion(
 
   const update = useCallback(() => {
     setPhase('updating');
-    setError(null);
+    setFailure(null);
     requestUpdate().then((result) => {
-      if (typeof result === 'string') {
-        setError(result);
+      if ('reason' in result) {
+        setFailure(result);
         setPhase('error');
         return;
       }
@@ -83,12 +89,12 @@ export function useDaemonVersion(
     });
   }, []);
 
-  return { info, phase, error, update };
+  return { info, phase, failure, update };
 }
 
 /** POST /api/update; resolves to the daemon's answer or why it failed. */
 async function requestUpdate(): Promise<
-  { updated: boolean; version: string } | string
+  { updated: boolean; version: string } | UpdateFailure
 > {
   try {
     const res = await fetch('/api/update', { method: 'POST' });
@@ -96,10 +102,13 @@ async function requestUpdate(): Promise<
       const body = (await res
         .json()
         .catch(() => null)) as DaemonErrorBody | null;
-      return body?.error ?? `daemon responded with ${res.status}`;
+      return {
+        reason: body?.error ?? `daemon responded with ${res.status}`,
+        retryable: res.status !== 409 && res.status !== 503,
+      };
     }
     return (await res.json()) as { updated: boolean; version: string };
   } catch {
-    return 'Could not reach the daemon.';
+    return { reason: 'Could not reach the daemon.', retryable: true };
   }
 }

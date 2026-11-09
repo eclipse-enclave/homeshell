@@ -1,4 +1,5 @@
 .status {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
@@ -50,11 +51,32 @@
   cursor: default;
 }
 
-.error {
-  max-width: 24rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.72rem;
+/* Anchored under the status so a long reason (URLs, reinstall commands) wraps
+   and stays selectable instead of being cut off in the top bar. */
+.details {
+  position: absolute;
+  top: calc(100% + 0.6rem);
+  right: 0;
+  z-index: 150;
+  width: min(36rem, 90vw);
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--hs-border, #27313d);
+  border-radius: 0.375rem;
+  background: var(--hs-panel-raised, #1b242f);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 35%);
+}
+
+.reason {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
   color: var(--hs-error-text, #f87171);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
 }

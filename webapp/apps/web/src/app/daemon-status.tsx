@@ -1,4 +1,5 @@
-import { useId } from 'react';
+import { Button, copyText } from '@homeshell/components';
+import { useId, useRef, useState } from 'react';
 
 import styles from './daemon-status.module.css';
 import type { DaemonConnection } from './use-daemon-state';
@@ -18,8 +19,19 @@ export interface DaemonStatusProps {
 export function DaemonStatus({ connection }: DaemonStatusProps) {
   // Re-read the version whenever the connection state changes so a post-update
   // reconnect surfaces the new version automatically.
-  const { info, phase, error, update } = useDaemonVersion(connection);
-  const errorId = useId();
+  const { info, phase, failure, update } = useDaemonVersion(connection);
+  const detailsId = useId();
+  const reasonId = `${detailsId}-reason`;
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  // Each new failure opens its reason (state adjusted during render, not in an effect).
+  const [shownFailure, setShownFailure] = useState(failure);
+  if (failure !== shownFailure) {
+    setShownFailure(failure);
+    setDetailsOpen(failure !== null);
+    setCopied(false);
+  }
   const version = info?.current ?? null;
   // A rolling build is a commit, which reads as a typo without the channel.
   const channel = info?.channel === 'rolling' ? ' (rolling)' : '';
@@ -29,6 +41,15 @@ export function DaemonStatus({ connection }: DaemonStatusProps) {
     connected: 'Daemon connected',
     offline: 'Daemon unreachable',
   }[connection];
+
+  const shownError =
+    connection === 'connected' && phase === 'error' ? failure : null;
+  const showDetails = shownError !== null && detailsOpen;
+
+  const closeDetails = () => {
+    setDetailsOpen(false);
+    toggleRef.current?.focus();
+  };
 
   return (
     <span className={styles.status}>
@@ -43,32 +64,55 @@ export function DaemonStatus({ connection }: DaemonStatusProps) {
         {connection === 'offline' && 'daemon offline'}
         {connection === 'connecting' && 'connecting…'}
       </span>
-      {connection === 'connected' && info?.updateAvailable && (
+      {connection === 'connected' &&
+        info?.updateAvailable &&
+        shownError?.retryable !== false && (
+          <button
+            type="button"
+            className={styles.update}
+            onClick={update}
+            disabled={phase === 'updating'}
+            title={`Update to ${info.latest}`}
+            aria-describedby={showDetails ? reasonId : undefined}
+          >
+            {phase === 'updating'
+              ? 'Updating…'
+              : phase === 'error'
+                ? 'Update failed — retry'
+                : `Update to ${info.latest}`}
+          </button>
+        )}
+      {shownError && (
         <button
+          ref={toggleRef}
           type="button"
           className={styles.update}
-          onClick={update}
-          disabled={phase === 'updating'}
-          title={`Update to ${info.latest}`}
-          aria-describedby={phase === 'error' ? errorId : undefined}
+          aria-label={
+            shownError.retryable ? 'Update failure details' : undefined
+          }
+          aria-expanded={detailsOpen}
+          aria-controls={showDetails ? detailsId : undefined}
+          onClick={() => setDetailsOpen((open) => !open)}
         >
-          {phase === 'updating'
-            ? 'Updating…'
-            : phase === 'error'
-              ? 'Update failed — retry'
-              : `Update to ${info.latest}`}
+          {shownError.retryable ? 'Details' : 'Update needs manual steps'}
         </button>
       )}
-      {connection === 'connected' && phase === 'error' && (
-        // Truncated to fit the top bar; the title carries the full reason.
-        <span
-          id={errorId}
-          className={styles.error}
-          role="alert"
-          title={error ?? undefined}
-        >
-          {error}
-        </span>
+      {showDetails && (
+        <div id={detailsId} className={styles.details} role="alert">
+          <p id={reasonId} className={styles.reason}>
+            {shownError.reason}
+          </p>
+          <div className={styles.actions}>
+            <Button
+              onClick={() =>
+                copyText(shownError.reason).then((ok) => setCopied(ok))
+              }
+            >
+              {copied ? 'Copied' : 'Copy'}
+            </Button>
+            <Button onClick={closeDetails}>Close</Button>
+          </div>
+        </div>
       )}
     </span>
   );

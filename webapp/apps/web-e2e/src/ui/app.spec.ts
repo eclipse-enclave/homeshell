@@ -1,4 +1,5 @@
 import { expect, tempProjectDir, test } from '../fixtures';
+import { type Page } from '@playwright/test';
 import { isPlaceholderSession } from '../placeholders';
 import { createWorkstreamInForm, selectProject } from './workstream-helpers';
 
@@ -63,9 +64,11 @@ test('a rolling build shows its channel beside the commit and offers the update'
   ).toBeVisible();
 });
 
-test('a failed update shows its reason beside the retry button', async ({
-  page,
-}) => {
+const failUpdate = async (
+  page: Page,
+  status: number,
+  reason: string,
+): Promise<void> => {
   await page.route('**/api/version', (route) =>
     route.fulfill({
       json: {
@@ -77,18 +80,46 @@ test('a failed update shows its reason beside the retry button', async ({
     }),
   );
   await page.route('**/api/update', (route) =>
-    route.fulfill({
-      status: 500,
-      json: { error: 'checksum mismatch for homeshell-linux-amd64.tar.gz' },
-    }),
+    route.fulfill({ status, json: { error: reason } }),
   );
   await page.reload();
   await page.getByRole('button', { name: 'Update to def5678' }).click();
+};
+
+test('a failed update shows its reason and offers a retry', async ({
+  page,
+}) => {
   const reason = 'checksum mismatch for homeshell-linux-amd64.tar.gz';
-  await expect(page.getByRole('alert')).toHaveText(reason);
+  await failUpdate(page, 500, reason);
+  await expect(page.getByRole('alert')).toContainText(reason);
   await expect(
     page.getByRole('button', { name: /retry/ }),
   ).toHaveAccessibleDescription(reason);
+
+  await page.getByRole('button', { name: 'Close' }).click();
+  await expect(page.getByRole('alert')).toBeHidden();
+  await expect(
+    page.getByRole('button', { name: 'Update failure details' }),
+  ).toBeFocused();
+});
+
+test('an update the daemon cannot apply shows the whole manual reinstall', async ({
+  page,
+}) => {
+  const reason =
+    'homeshell cannot replace /usr/local/bin/homeshell: its location is not writable for this ' +
+    'user and the updater does not elevate privileges; download ' +
+    'https://example.com/homeshell-linux-amd64.tar.gz and https://example.com/SHA256SUMS into ' +
+    'one directory and reinstall from there with: sha256sum --check --ignore-missing SHA256SUMS';
+  await failUpdate(page, 409, reason);
+  await expect(
+    page.getByRole('button', { name: 'Update needs manual steps' }),
+  ).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByRole('button', { name: /retry/ })).toHaveCount(0);
+  // The reason wraps instead of being cut off, so its last words are on screen.
+  await expect(
+    page.getByRole('alert').getByText(/sha256sum --check/),
+  ).toBeInViewport();
 });
 
 test('lists every project with its daemon-derived state', async ({ page }) => {
