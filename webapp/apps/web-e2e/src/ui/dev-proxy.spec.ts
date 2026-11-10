@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../fixtures';
 
 /**
  * The dev/e2e vite proxy speaks for the browser: on a proxied /api request it strips

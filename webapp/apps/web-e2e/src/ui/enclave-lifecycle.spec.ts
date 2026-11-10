@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../fixtures';
 import { createServer, request as proxyRequest } from 'node:http';
 import { basename } from 'node:path';
 import {

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../fixtures';
 
 /**
  * The terminal-tail preview and send-text flow against the demo daemon. Both

@@ -240,6 +240,12 @@ Writing e2e specs:
   `scratchDir`, so they sit under the root.
 - A raw `fetch` uses the `baseURL` fixture. Why: `HOMESHELL_DAEMON_URL` is not set in the test
   process, so a local fallback constant points at the wrong port.
+- A ui spec imports `test` and `expect` from `src/fixtures.ts`, not `@playwright/test`. Its
+  `page.goto` and `page.reload` then load the page again (at most 4 times, after a growing, jittered pause) when a host
+  network change aborted the document or a script, or stalled the load past 10 s
+  (`src/page-load-retry.ts`). Why: any Docker network or address change makes Chromium abort
+  in-flight requests, `127.0.0.1` included, and the app never mounts. Pages a spec opens itself
+  (`browser.newContext`) don't get the retry.
 
 When e2e fails strangely:
 
@@ -249,6 +255,9 @@ When e2e fails strangely:
 - **Many UI timeouts with an empty page:** check `df -h /tmp`. Chromium profiles go there, and
   through Nx a full disk shows up only as timeouts. Run one spec with `playwright test` to see the
   real error.
+- **A `network-changed-retry` annotation on a test:** a host network change aborted its page
+  load and the fixture loaded the page again. A test that still fails with
+  `net::ERR_NETWORK_CHANGED` hit it mid-test or on 5 loads in a row; that is not retried.
 
 ### Dev-target gate
 
