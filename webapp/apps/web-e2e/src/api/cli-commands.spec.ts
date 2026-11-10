@@ -752,16 +752,23 @@ test.describe('homeshell data verbs', () => {
     );
     expect(badValue.code).toBe(EXIT.failed);
 
-    // The live log level is runtime config, not the settings document.
-    const level = (
-      await cliOk('config', 'get', 'logLevel', homeDirArg)
-    ).stdout.trim();
-    await cliOk('config', 'set', 'logLevel', 'debug', homeDirArg);
-    const live = (await (await request.get('/api/config')).json()) as {
-      logLevel: string;
-    };
-    expect(live.logLevel).toBe('debug');
-    await cliOk('config', 'set', 'logLevel', level, homeDirArg);
+    // The live log level is runtime config, not the settings document, but it
+    // is saved in the same file and `config.spec.ts` changes it too: under the
+    // lock, so neither reads back the other's level.
+    await withSettingsLock(async () => {
+      const level = (
+        await cliOk('config', 'get', 'logLevel', homeDirArg)
+      ).stdout.trim();
+      try {
+        await cliOk('config', 'set', 'logLevel', 'debug', homeDirArg);
+        const live = (await (await request.get('/api/config')).json()) as {
+          logLevel: string;
+        };
+        expect(live.logLevel).toBe('debug');
+      } finally {
+        await cliOk('config', 'set', 'logLevel', level, homeDirArg);
+      }
+    });
 
     const badLevel = await cli(
       'config',

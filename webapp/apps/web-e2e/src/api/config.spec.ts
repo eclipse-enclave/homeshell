@@ -1,8 +1,11 @@
 import { expect, test } from '@playwright/test';
+import { withSettingsLock } from '../settings-lock';
 
 /**
  * Black-box tests for the daemon config endpoint. The log level is
- * process-global daemon state, so each test restores what it found.
+ * process-global daemon state, so each test restores what it found. It is
+ * saved in the settings file, so a test that changes it holds the settings
+ * lock (`cli-commands.spec.ts` changes it too).
  */
 test.describe('daemon config API', () => {
   test('GET /api/config reports the effective log level', async ({ request }) => {
@@ -17,19 +20,22 @@ test.describe('daemon config API', () => {
   test('PATCH /api/config changes the log level at runtime', async ({
     request,
   }) => {
-    const original = (await (await request.get('/api/config')).json()).logLevel;
-    try {
-      const patch = await request.patch('/api/config', {
-        data: { logLevel: 'warn' },
-      });
-      expect(patch.status()).toBe(200);
-      expect((await patch.json()).logLevel).toBe('warn');
+    await withSettingsLock(async () => {
+      const original = (await (await request.get('/api/config')).json())
+        .logLevel;
+      try {
+        const patch = await request.patch('/api/config', {
+          data: { logLevel: 'warn' },
+        });
+        expect(patch.status()).toBe(200);
+        expect((await patch.json()).logLevel).toBe('warn');
 
-      const after = await (await request.get('/api/config')).json();
-      expect(after.logLevel).toBe('warn');
-    } finally {
-      await request.patch('/api/config', { data: { logLevel: original } });
-    }
+        const after = await (await request.get('/api/config')).json();
+        expect(after.logLevel).toBe('warn');
+      } finally {
+        await request.patch('/api/config', { data: { logLevel: original } });
+      }
+    });
   });
 
   test('PATCH /api/config rejects an invalid level', async ({ request }) => {

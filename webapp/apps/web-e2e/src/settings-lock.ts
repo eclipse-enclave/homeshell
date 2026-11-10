@@ -5,7 +5,8 @@ import { type Page } from '@playwright/test';
 import { settingsLockDir } from './e2e-env';
 
 /**
- * A cross-worker mutex for the shared daemon's settings document. Workers are
+ * A cross-worker mutex for what the shared daemon saves in its settings file:
+ * the settings document and the live log level. Workers are
  * separate processes, so the lock is a directory: it is built complete under
  * a private name, holding an `owner` file with the holder's pid, and acquired
  * by renaming it into place, which fails while another holder's lock exists.
