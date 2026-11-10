@@ -1,21 +1,18 @@
 import { expect, test } from '@playwright/test';
-import { execFile, execFileSync } from 'node:child_process';
-import { join, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { homeshellBin as binary } from '../e2e-env';
 
 /**
  * Black-box tests for the homeshell CLI's non-serving verbs (dispatch, usage,
  * --version). The daemon-serving `serve` path is covered by daemon.spec.ts,
  * which runs against the daemon that playwright.config.ts starts with `serve`.
  *
- * The binary is compiled up front and exec'd directly rather than via
- * `go run`, because `go run` masks the program's exit code (it exits 1 for any
- * non-zero child), and these tests assert the exact codes.
+ * The run's daemon build is exec'd directly rather than via `go run`, because
+ * `go run` masks the program's exit code (it exits 1 for any non-zero child),
+ * and these tests assert the exact codes.
  */
 const execFileAsync = promisify(execFile);
-const daemonDir = resolve(__dirname, '../../../../../daemon');
-const binary = join(tmpdir(), 'homeshell-cli-e2e');
 
 interface CliResult {
   code: number;
@@ -34,13 +31,6 @@ async function runCli(args: string[]): Promise<CliResult> {
 }
 
 test.describe('homeshell CLI', () => {
-  test.beforeAll(() => {
-    test.setTimeout(120_000);
-    execFileSync('go', ['build', '-o', binary, './cmd/homeshell'], {
-      cwd: daemonDir,
-    });
-  });
-
   test('bare invocation prints usage and exits 0', async () => {
     const { code, stdout } = await runCli([]);
     expect(code).toBe(0);

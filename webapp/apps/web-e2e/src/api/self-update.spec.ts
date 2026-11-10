@@ -1,12 +1,16 @@
 import { expect, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { buildDaemon, isolatedDaemon, type IsolatedDaemon } from '../isolated-daemon';
+import { scratchDir } from '../e2e-env';
+import {
+  buildDaemonVariant,
+  isolatedDaemon,
+  type IsolatedDaemon,
+} from '../isolated-daemon';
 
 /**
  * A rolling build against a download server whose checksum does not match the
@@ -23,7 +27,7 @@ test.describe('a failed self-update', () => {
   test.beforeAll(async () => {
     test.setTimeout(120_000);
     // A well-formed archive, so the checksum is what fails rather than the unpacking.
-    dir = mkdtempSync(join(tmpdir(), 'homeshell-self-update-'));
+    dir = scratchDir('update-');
     writeFileSync(join(dir, 'homeshell'), 'not the binary the checksum names');
     execFileSync('tar', ['-czf', join(dir, archive), '-C', dir, 'homeshell']);
     const archiveBytes = readFileSync(join(dir, archive));
@@ -38,18 +42,19 @@ test.describe('a failed self-update', () => {
     });
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
     const { port } = server.address() as AddressInfo;
-    const binary = buildDaemon(
+    const binary = buildDaemonVariant(
       'self-update',
       `-X main.version=0.0.0-gaaaaaaa -X main.commit=${'a'.repeat(40)} -X main.channel=rolling`,
     );
-    daemon = isolatedDaemon(binary, 'self-update', {
-      HOMESHELL_UPDATE_BASE_URL: `http://127.0.0.1:${port}`,
+    daemon = isolatedDaemon('update', {
+      binary,
+      env: { HOMESHELL_UPDATE_BASE_URL: `http://127.0.0.1:${port}` },
     });
     await daemon.start();
   });
 
   test.afterAll(async () => {
-    daemon?.dispose();
+    await daemon?.dispose();
     await new Promise((r) => server?.close(r));
     if (dir) rmSync(dir, { recursive: true, force: true });
   });

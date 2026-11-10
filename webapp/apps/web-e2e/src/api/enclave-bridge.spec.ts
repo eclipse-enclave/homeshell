@@ -15,16 +15,15 @@ import {
   projectAndWorkstream,
   removeEnclaveFixture,
 } from '../enclave-helpers';
+import { disposeIsolatedDaemons } from '../isolated-daemon';
 import { pollFor } from './workstream-helpers';
 
 const exec = promisify(execFile);
 
 test.describe('Enclave host bridge', () => {
   test.skip(process.platform === 'win32', 'Host bridge requires Unix PTYs');
-  test.beforeAll(() => {
-    test.setTimeout(120_000);
-    buildEnclaveFixture();
-  });
+  test.beforeAll(buildEnclaveFixture);
+  test.afterEach(disposeIsolatedDaemons);
   test.afterAll(removeEnclaveFixture);
 
   test('keeps the conversation through bridge/daemon loss and cleans up input, stop, start and exit', async () => {

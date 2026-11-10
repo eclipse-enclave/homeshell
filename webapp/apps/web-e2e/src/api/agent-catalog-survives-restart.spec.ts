@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { buildDaemon, isolatedDaemon, type IsolatedDaemon } from '../isolated-daemon';
+import { isolatedDaemon, type IsolatedDaemon } from '../isolated-daemon';
 
 /**
  * The agent catalog is the user's: an agent described, a setting added to it
@@ -44,8 +44,7 @@ test.describe('the agent catalog survives a restart', () => {
   let daemon: IsolatedDaemon;
 
   test.beforeAll(() => {
-    test.setTimeout(120_000);
-    daemon = isolatedDaemon(buildDaemon('catalog-restart'), 'catalog-restart');
+    daemon = isolatedDaemon('catalog');
   });
 
   test.afterAll(() => daemon.dispose());

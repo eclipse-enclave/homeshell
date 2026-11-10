@@ -9,6 +9,8 @@ import {
   projectAndWorkstream,
   removeEnclaveFixture,
 } from '../enclave-helpers';
+import { webUrl } from '../e2e-env';
+import { disposeIsolatedDaemons } from '../isolated-daemon';
 import { pollFor } from '../api/workstream-helpers';
 import { selectProject } from './workstream-helpers';
 
@@ -22,7 +24,7 @@ async function browserServer(
       request.url ?? '/',
       request.url?.startsWith('/api/')
         ? daemon.url
-        : (process.env.HOMESHELL_WEB_URL ?? 'http://localhost:4201'),
+        : webUrl,
     );
     const upstream = proxyRequest(
       target,
@@ -64,10 +66,8 @@ async function browserServer(
 
 test.describe('Enclave lifecycle controls', () => {
   test.skip(process.platform === 'win32', 'Host bridge requires Unix PTYs');
-  test.beforeAll(() => {
-    test.setTimeout(120_000);
-    buildEnclaveFixture();
-  });
+  test.beforeAll(buildEnclaveFixture);
+  test.afterEach(disposeIsolatedDaemons);
   test.afterAll(removeEnclaveFixture);
 
   test('Stop and Start preserve a conversation; ambiguous Start guides a fresh restart', async ({

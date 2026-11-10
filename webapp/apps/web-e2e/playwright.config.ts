@@ -1,5 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import {
+  daemonUrl,
+  e2eRoot,
+  homeshellBin,
+  sharedRuntimeDir,
+  webUrl,
+} from './src/e2e-env';
 
 /**
  * Two end-to-end suites (see docs/ARCHITECTURE.md, "Principles"):
@@ -10,10 +17,19 @@ import { resolve } from 'node:path';
  *   proxies /api to the daemon (the same wiring `make dev` uses).
  *
  * Both servers are started automatically; already-running dev servers are
- * reused outside CI.
+ * reused outside CI. Their ports, the daemon build and every temp file come
+ * from this checkout's e2e root (src/e2e-env.ts), so two checkouts can run the
+ * suite at once.
  */
-const DAEMON_URL = process.env.HOMESHELL_DAEMON_URL ?? 'http://127.0.0.1:8421';
-const WEB_URL = process.env.HOMESHELL_WEB_URL ?? 'http://localhost:4201';
+const DAEMON_URL = daemonUrl;
+const WEB_URL = webUrl;
+
+// Pinned for the whole run: the runner and every worker evaluate this file, and
+// the workers inherit the runner's env. globalSetup compares the build's mtime
+// with the run's start to tell a fresh build from a reused daemon's old one.
+process.env.HOMESHELL_E2E_ROOT = e2eRoot;
+process.env.HOMESHELL_E2E_BIN = homeshellBin;
+process.env.HOMESHELL_E2E_RUN_START ||= String(Date.now());
 
 // The daemon requires an API token on every /api request (Bearer header or the
 // hs_api_token cookie). Pin a fixed token for e2e so the api project can attach
@@ -42,6 +58,8 @@ export default defineConfig({
   testDir: './src',
   outputDir: './test-output/playwright',
   fullyParallel: true,
+  globalSetup: './src/global-setup.ts',
+  globalTeardown: './src/global-teardown.ts',
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: [['list']],
@@ -78,7 +96,21 @@ export default defineConfig({
       // same state: a run cut short leaves its state file and provider data
       // behind, and they would otherwise pile up into the next run's. A reused
       // server skips this command, so a live daemon's directory is never wiped.
-      command: `rm -rf "${E2E_HOME_DIR}" && mkdir -p "${E2E_HOME_DIR}" && printf '%s' '{"schemaVersion":1,"settings":{"notifications":{"style":"none"}}}' > "${E2E_HOME_DIR}/settings.json" && go run ./cmd/homeshell serve -demo=true -home-dir=${E2E_HOME_DIR} -addr=${new URL(DAEMON_URL).host}`,
+      //
+      // This command makes the run's one daemon build, which every spec helper
+      // uses too: web servers start before globalSetup, so it cannot be built
+      // there (globalSetup only rebuilds it when a reused daemon skipped this).
+      // `touch`: go build leaves an up-to-date file alone, and globalSetup reads
+      // the mtime. `exec`, so the daemon itself gets Playwright's SIGTERM.
+      command: [
+        `mkdir -p "${dirname(homeshellBin)}"`,
+        `go build -o "${homeshellBin}" ./cmd/homeshell`,
+        `touch "${homeshellBin}"`,
+        `rm -rf "${E2E_HOME_DIR}"`,
+        `mkdir -p "${E2E_HOME_DIR}"`,
+        `printf '%s' '{"schemaVersion":1,"settings":{"notifications":{"style":"none"}}}' > "${E2E_HOME_DIR}/settings.json"`,
+        `exec "${homeshellBin}" serve -demo=true -home-dir=${E2E_HOME_DIR} -addr=${new URL(DAEMON_URL).host}`,
+      ].join(' && '),
       cwd: '../../../daemon',
       // Readiness probe. Note this polls an *authenticated* endpoint without a
       // token, so every poll is a 401 (visible as a WARN in the daemon log at
@@ -90,9 +122,14 @@ export default defineConfig({
       url: `${DAEMON_URL}/api/hello`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
+      // Lets the daemon shut down instead of a SIGKILL to its process group.
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 5_000 },
       env: {
         ...process.env,
-        // A `go run` daemon has no release channel and never checks for
+        // Its bridges' sockets stay in the e2e root, where globalTeardown
+        // stops them.
+        XDG_RUNTIME_DIR: sharedRuntimeDir,
+        // A source-built daemon has no release channel and never checks for
         // updates; should one ever be stamped, keep its release check off the
         // public internet. The Go updater tests cover the real update flow.
         HOMESHELL_UPDATE_BASE_URL: 'http://127.0.0.1:9/',
@@ -117,7 +154,9 @@ export default defineConfig({
     {
       // vite directly, not `nx dev`: Nx detaches continuous tasks into their
       // own session, so Playwright's teardown would leak the vite process.
-      command: `pnpm exec vite dev --port ${new URL(WEB_URL).port}`,
+      // --strictPort: vite would otherwise move to the next free port while
+      // Playwright keeps polling this one.
+      command: `pnpm exec vite dev --host ${new URL(WEB_URL).hostname} --port ${new URL(WEB_URL).port} --strictPort`,
       cwd: '../web',
       url: WEB_URL,
       reuseExistingServer: !process.env.CI,

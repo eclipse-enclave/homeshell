@@ -3,42 +3,34 @@ import {
   request as http,
   type APIRequestContext,
 } from '@playwright/test';
-import {
-  execFile,
-  execFileSync,
-  spawn,
-  type ChildProcess,
-} from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { awaitRealWorkstream, sessionsOf } from './api/workstream-helpers';
+import { homeshellBin as binary, scratchDir } from './e2e-env';
+import { isolatedHome, runtimeEnv, trackIsolatedHome } from './isolated-daemon';
 
 const exec = promisify(execFile);
-const repo = resolve(__dirname, '../../../..');
-export const binaries = mkdtempSync(join(tmpdir(), 'hs-enclave-bin-'));
-const binary = join(binaries, 'homeshell');
+/** The fixture `enclave` CLI and terminal, first on the daemon's PATH. */
+export const binaries = scratchDir('encl-bin-');
 
 // Public HTTP against a real daemon, bridge and PTY. The external Enclave CLI
 // peer makes container lifetime deterministic without requiring Docker in CI.
 // It rejects the old monitor/status/exec path. Real Docker compatibility is a
 // separate integration check, not something this peer can establish.
 export async function isolatedDaemon() {
-  const root = mkdtempSync(join(tmpdir(), 'hs-enclave-api-'));
+  const root = isolatedHome('encl');
   const fixture = join(root, 'fixture');
-  const runtime = join(root, 'run');
   mkdirSync(fixture);
-  mkdirSync(runtime);
   writeFileSync(
     join(root, 'settings.json'),
     JSON.stringify({
@@ -47,7 +39,8 @@ export async function isolatedDaemon() {
       logLevel: 'warn',
     }),
   );
-  let daemon: ChildProcess;
+  let daemon: ChildProcess | undefined;
+  const dispose = trackIsolatedHome(root, () => daemon);
   let api: APIRequestContext;
   const logs: string[] = [];
   async function start() {
@@ -59,7 +52,7 @@ export async function isolatedDaemon() {
         env: {
           ...process.env,
           PATH: `${binaries}:/usr/bin:/bin`,
-          XDG_RUNTIME_DIR: runtime,
+          ...runtimeEnv(root),
           HOMESHELL_ENCLAVE_FIXTURE: fixture,
           TERMINAL: join(binaries, 'fixture-terminal'),
           HOMESHELL_API_TOKEN: 'enclave-bridge-api',
@@ -84,7 +77,7 @@ export async function isolatedDaemon() {
   async function stopDaemon() {
     await exec(binary, ['stop', `-home-dir=${root}`], { timeout: 15_000 });
     await expect
-      .poll(() => daemon.exitCode, { timeout: 10_000 })
+      .poll(() => daemon?.exitCode, { timeout: 10_000 })
       .not.toBeNull();
     await api.dispose();
   }
@@ -104,11 +97,11 @@ export async function isolatedDaemon() {
       await start();
     },
     stop: async () => {
+      // The shared teardown: bridges first, then the daemon, then the home.
       try {
-        await stopDaemon();
+        await dispose();
       } finally {
-        if (daemon.exitCode === null) daemon.kill('SIGKILL');
-        rmSync(root, { recursive: true, force: true });
+        await api.dispose();
       }
     },
   };
@@ -189,9 +182,8 @@ function nodeExecutable(name: string, script: string) {
 }
 
 export function buildEnclaveFixture() {
-  execFileSync('go', ['build', '-o', binary, './cmd/homeshell'], {
-    cwd: join(repo, 'daemon'),
-  });
+  // Another spec file's removeEnclaveFixture may have run in this worker.
+  mkdirSync(binaries, { recursive: true });
   const cliScript = join(binaries, 'enclave-cli.cjs');
   copyFileSync(join(__dirname, 'api/enclave-cli.fixture.cjs'), cliScript);
   nodeExecutable('enclave', cliScript);

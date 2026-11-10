@@ -1,11 +1,10 @@
-import { execFile, execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { execFile, spawn } from 'node:child_process';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { APIRequestContext } from '@playwright/test';
 import { expect, tempProjectDir, test } from '../fixtures';
 import { isPlaceholderSession } from '../placeholders';
+import { homeshellBin as binary, repoRoot, scratchDir } from '../e2e-env';
 import { withSettingsLock } from '../settings-lock';
 
 /**
@@ -23,9 +22,6 @@ import { withSettingsLock } from '../settings-lock';
  * exit code — and the exit codes are half of what is being asserted.
  */
 const execFileAsync = promisify(execFile);
-const repoRoot = resolve(__dirname, '../../../../..');
-const daemonDir = join(repoRoot, 'daemon');
-const binary = join(tmpdir(), 'homeshell-cli-commands-e2e');
 
 // The daemon under test publishes its state file here (see playwright.config.ts),
 // so this is how the CLI discovers it.
@@ -150,13 +146,6 @@ test.describe('homeshell data verbs', () => {
   // shared demo daemon to destabilize the *other* api specs. One at a time keeps
   // this spec's footprint to a single worker.
   test.describe.configure({ mode: 'serial' });
-
-  test.beforeAll(() => {
-    test.setTimeout(180_000);
-    execFileSync('go', ['build', '-o', binary, './cmd/homeshell'], {
-      cwd: daemonDir,
-    });
-  });
 
   test('project list prints a table and --json yields the API payload', async ({
     request,
@@ -482,7 +471,7 @@ test.describe('homeshell data verbs', () => {
 
   test('exit codes distinguish no daemon, a refusal and a bad invocation', async () => {
     // No daemon: an empty data directory has no state file to discover.
-    const elsewhere = mkdtempSync(join(tmpdir(), 'hs-cli-nodaemon-'));
+    const elsewhere = scratchDir('nodaemon-');
     const missing = await cli('project', 'list', `-home-dir=${elsewhere}`);
     expect(missing.code).toBe(EXIT.noDaemon);
     expect(missing.stderr).toContain('no daemon is running');

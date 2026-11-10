@@ -1,10 +1,16 @@
 import { expect, test } from '@playwright/test';
 import { execFile, execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { daemonDir, homeshellBin, repoRoot } from '../e2e-env';
+import {
+  buildDaemonVariant,
+  disposeIsolatedHome,
+  isolatedHome,
+  runtimeEnv,
+} from '../isolated-daemon';
 
 /**
  * Black-box coverage of `homeshell ensure-running` (the desktop shell's daemon
@@ -13,56 +19,43 @@ import { promisify } from 'node:util';
  * authenticates like a browser. Survives a daemon rewrite (CLI + HTTP only).
  */
 const execFileAsync = promisify(execFile);
-const repoRoot = resolve(__dirname, '../../../../..');
-const daemonDir = join(repoRoot, 'daemon');
-const binary = join(tmpdir(), 'homeshell-ensure-e2e');
-const homeDir = mkdtempSync(join(tmpdir(), 'homeshell-ensure-'));
-const stateFile = join(homeDir, 'daemon.json');
+let binary = homeshellBin;
+const homeDir = isolatedHome('ensure');
 
 // -addr=127.0.0.1:0 asks the spawned daemon to bind an ephemeral port so this
 // spec never collides with the fixed :8420 default (or another instance).
 const ADDR_ARG = '-addr=127.0.0.1:0';
 
+// The daemons ensure-running spawns inherit this, so their bridges stay in
+// their home, where the shared teardown looks.
+const ensureRunning = (home: string, ...args: string[]) =>
+  execFileAsync(binary, ['ensure-running', `-home-dir=${home}`, ...args], {
+    env: { ...process.env, ...runtimeEnv(home) },
+  });
+
 test.describe('ensure-running', () => {
   test.beforeAll(() => {
-    test.setTimeout(120_000);
-
     // A fresh checkout has no built UI embedded in the daemon: the GET / 200
     // + hs_api_token cookie assertion below needs a real index.html, so build
-    // and embed it first if it's missing. On a normal dev tree the artifacts
-    // are already present and this is a no-op, keeping the common case fast.
+    // and embed it first if it's missing, then build a daemon of this spec's
+    // own (the run's build was made without it). On a normal dev tree the
+    // artifacts are already present and this is a no-op, keeping the common
+    // case fast.
     const embeddedIndex = join(daemonDir, 'internal/webui/dist/index.html');
     if (!existsSync(embeddedIndex)) {
+      test.setTimeout(180_000);
       execFileSync('make', ['build-webapp'], { cwd: repoRoot });
       execFileSync('make', ['embed'], { cwd: repoRoot });
-    }
-
-    execFileSync('go', ['build', '-o', binary, './cmd/homeshell'], { cwd: daemonDir });
-  });
-
-  test.afterAll(async () => {
-    await execFileAsync(binary, ['stop', `-home-dir=${homeDir}`]).catch(() => undefined);
-
-    // Safety net: if `stop` failed to reach a still-running daemon (e.g. a
-    // failed assertion left it dangling), read the pid it published and kill
-    // it directly so a leaked daemon can't block future runs.
-    if (existsSync(stateFile)) {
-      try {
-        const state = JSON.parse(readFileSync(stateFile, 'utf8')) as { pid?: number };
-        if (state.pid) process.kill(state.pid, 'SIGKILL');
-      } catch {
-        // Best-effort cleanup only.
-      }
+      binary = buildDaemonVariant('ensure-ui');
     }
   });
+
+  // Stops the daemon ensure-running spawned (by the pid it published, should
+  // `stop` not reach it) and its bridges, and deletes its home.
+  test.afterAll(() => disposeIsolatedHome(homeDir));
 
   test('spawns a daemon and prints a URL that serves the UI', async () => {
-    const { stdout } = await execFileAsync(binary, [
-      'ensure-running',
-      `-home-dir=${homeDir}`,
-      ADDR_ARG,
-      '--json',
-    ]);
+    const { stdout } = await ensureRunning(homeDir, ADDR_ARG, '--json');
     const result = JSON.parse(stdout) as { url: string; spawned: boolean };
     expect(result.spawned).toBe(true);
     expect(result.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
@@ -74,12 +67,7 @@ test.describe('ensure-running', () => {
     expect(doc.headers.get('set-cookie') ?? '').toContain('hs_api_token');
 
     // A second call attaches to the same daemon without spawning.
-    const again = await execFileAsync(binary, [
-      'ensure-running',
-      `-home-dir=${homeDir}`,
-      ADDR_ARG,
-      '--json',
-    ]);
+    const again = await ensureRunning(homeDir, ADDR_ARG, '--json');
     const second = JSON.parse(again.stdout) as { url: string; spawned: boolean };
     expect(second.spawned).toBe(false);
     expect(second.url).toBe(result.url);
@@ -92,7 +80,7 @@ test.describe('ensure-running', () => {
    * well inside the timeout, and the bind error reaches the caller.
    */
   test('reports why a spawned daemon could not start', async () => {
-    const occupiedHome = mkdtempSync(join(tmpdir(), 'homeshell-ensure-busy-'));
+    const occupiedHome = isolatedHome('busy');
     const squatter = createServer();
     const port = await new Promise<number>((resolvePort, rejectPort) => {
       squatter.once('error', rejectPort);
@@ -109,12 +97,11 @@ test.describe('ensure-running', () => {
     try {
       const timeoutSeconds = 30;
       const startedAt = Date.now();
-      const failure = await execFileAsync(binary, [
-        'ensure-running',
-        `-home-dir=${occupiedHome}`,
+      const failure = await ensureRunning(
+        occupiedHome,
         `-addr=127.0.0.1:${port}`,
         `-timeout=${timeoutSeconds}s`,
-      ]).then(
+      ).then(
         () => undefined,
         (error: { code?: number; stderr?: string }) => error,
       );
@@ -131,7 +118,7 @@ test.describe('ensure-running', () => {
       expect(existsSync(join(occupiedHome, 'daemon.log'))).toBe(true);
     } finally {
       await new Promise((closed) => squatter.close(closed));
-      await execFileAsync(binary, ['stop', `-home-dir=${occupiedHome}`]).catch(() => undefined);
+      await disposeIsolatedHome(occupiedHome);
     }
   });
 });
