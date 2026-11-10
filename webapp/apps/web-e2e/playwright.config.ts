@@ -67,7 +67,16 @@ export default defineConfig({
   globalTeardown: './src/global-teardown.ts',
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  reporter: [['list']],
+  // CI adds annotations on the PR (`github`) and a machine-readable report the
+  // workflow turns into its step summary, so a test that passed only on retry
+  // (flaky) shows up instead of hiding behind a green job.
+  reporter: process.env.CI
+    ? [
+        ['list'],
+        ['github'],
+        ['json', { outputFile: 'test-output/results.json' }],
+      ]
+    : [['list']],
   projects: [
     {
       name: 'api',
