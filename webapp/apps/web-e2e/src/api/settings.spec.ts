@@ -153,23 +153,29 @@ test('rejects unsupported methods on /api/settings', async ({ request }) => {
 test('PUT /api/settings keeps defaults for keys the body omits', async ({
   request,
 }) => {
-  const current = await (await request.get('/api/settings')).json();
-  const put = await request.put('/api/settings', {
-    data: {
-      ...current,
-      // A pre-upgrade notifications document: the two keys that existed then.
-      notifications: {
-        style: current.notifications.style,
-        sound: current.notifications.sound,
-      },
-    },
-  });
-  expect(put.status()).toBe(200);
+  await withSettingsLock(async () => {
+    const current = await (await request.get('/api/settings')).json();
+    try {
+      const put = await request.put('/api/settings', {
+        data: {
+          ...current,
+          // A pre-upgrade notifications document: the two keys that existed then.
+          notifications: {
+            style: current.notifications.style,
+            sound: current.notifications.sound,
+          },
+        },
+      });
+      expect(put.status()).toBe(200);
 
-  const body = await put.json();
-  expect(body.notifications.waiting.notify).toBe(true);
-  expect(body.notifications.finished.notify).toBe(true);
-  expect(body.notifications.quietSeconds).toBeGreaterThan(0);
+      const body = await put.json();
+      expect(body.notifications.waiting.notify).toBe(true);
+      expect(body.notifications.finished.notify).toBe(true);
+      expect(body.notifications.quietSeconds).toBeGreaterThan(0);
+    } finally {
+      await request.put('/api/settings', { data: current });
+    }
+  });
 });
 
 // The other half of the same rule: an explicit false is the user's choice and
@@ -177,19 +183,23 @@ test('PUT /api/settings keeps defaults for keys the body omits', async ({
 test('PUT /api/settings honours an explicitly disabled event', async ({
   request,
 }) => {
-  const current = await (await request.get('/api/settings')).json();
-  const put = await request.put('/api/settings', {
-    data: {
-      ...current,
-      notifications: {
-        ...current.notifications,
-        waiting: { notify: false, sound: false },
-      },
-    },
+  await withSettingsLock(async () => {
+    const current = await (await request.get('/api/settings')).json();
+    try {
+      const put = await request.put('/api/settings', {
+        data: {
+          ...current,
+          notifications: {
+            ...current.notifications,
+            waiting: { notify: false, sound: false },
+          },
+        },
+      });
+      expect(put.status()).toBe(200);
+      expect((await put.json()).notifications.waiting.notify).toBe(false);
+    } finally {
+      // Put it back, so the notification specs sharing this daemon are unaffected.
+      await request.put('/api/settings', { data: current });
+    }
   });
-  expect(put.status()).toBe(200);
-  expect((await put.json()).notifications.waiting.notify).toBe(false);
-
-  // Put it back, so the notification specs sharing this daemon are unaffected.
-  await request.put('/api/settings', { data: current });
 });
