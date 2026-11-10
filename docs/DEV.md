@@ -103,8 +103,8 @@ The daemon never sets its auth cookie there, so the proxy adds the token as a Be
 
 | Variable | Read by | Effect |
 |---|---|---|
-| `HOMESHELL_DAEMON_URL` | Vite, Playwright | Daemon the proxy targets; Vite defaults to `http://127.0.0.1:8420` |
-| `HOMESHELL_WEB_URL` | Playwright | Dev server the UI suite opens; default `http://localhost:4201` |
+| `HOMESHELL_DAEMON_URL` | Vite, Playwright | Daemon the proxy targets; Vite's default is `http://127.0.0.1:8420` |
+| `HOMESHELL_WEB_URL` | Playwright | Dev server the UI suite opens; default per checkout ([End-to-end](#end-to-end)) |
 | `HOMESHELL_API_TOKEN` | Vite, Playwright, daemon | Token the daemon pins and the proxy and e2e specs send |
 
 - The `dev*` targets pin `HOMESHELL_API_TOKEN` to `homeshell-dev-token` unless it is set to a
@@ -182,10 +182,22 @@ Playwright starts both servers itself:
 
 ```mermaid
 flowchart LR
-  P[Playwright] -->|api suite| D["daemon (go run, -demo)<br/>127.0.0.1:8421, db/e2e"]
-  P -->|ui suite| C[Chromium] --> V["Vite<br/>localhost:4201"] -->|/api + token| D
+  P[Playwright] -->|api suite| D["daemon (root/bin/homeshell, -demo)<br/>127.0.0.1:port, db/e2e"]
+  P -->|ui suite| C[Chromium] --> V["Vite<br/>127.0.0.1:port+1"] -->|/api + token| D
+  P -->|some specs| I["isolated daemons<br/>127.0.0.1:0, root/h/…"]
 ```
 
+- Every run belongs to its checkout's **e2e root**, `$TMPDIR/hs-e2e-<hash>` from a hash of the
+  checkout path (`src/e2e-env.ts`). The ports come from the same hash, a daemon port and Vite's
+  next to it; `HOMESHELL_DAEMON_URL` and `HOMESHELL_WEB_URL` override them. Why: two checkouts or
+  worktrees can run the suite at once without sharing a server, a lock or a binary.
+- The root holds `bin/` (the run's one daemon build), `h/` (isolated daemon homes and fixture
+  dirs), `run/` (the shared daemon's `XDG_RUNTIME_DIR`, where its bridge sockets go) and
+  `settings.lock`. Keep it short: bridge sockets sit a few levels below it, and a socket path
+  has about 107 bytes.
+- The daemon web server builds `bin/homeshell` and runs it; every spec and helper runs that same
+  binary. `src/global-setup.ts` rebuilds it only when a reused daemon skipped the build. Why: web
+  servers start before `globalSetup`, and one build per run instead of one per worker.
 - The daemon runs with `-demo` from a freshly wiped `db/e2e`, with a pre-seeded `settings.json`
   that turns notifications off. Its environment points the update server at nothing, turns the
   native folder dialog off and slows fake session starts
@@ -195,21 +207,45 @@ flowchart LR
   restarts, `src/enclave-helpers.ts` for Enclave sessions. The latter replaces the `enclave`
   CLI with a fixture script that keeps its state in the directory `HOMESHELL_ENCLAVE_FIXTURE`
   names, so no Docker is needed.
-- With `CI` set, Playwright never reuses a running server, forbids `test.only` and retries
-  failures twice.
+- `src/global-teardown.ts` stops the shared daemon's bridges, kills and reports any process
+  still running from the root (bridges, isolated daemons, fixture scripts), and deletes `h/`.
+  A leftover process fails the run.
+- Locally 4 workers; with `CI` set, Playwright's default. With `CI` set, Playwright also never
+  reuses a running server, forbids `test.only`, retries failures twice and writes
+  `test-output/results.json`, which the CI job turns into its list of failed and flaky tests.
+
+| Variable | Effect |
+|---|---|
+| `HOMESHELL_E2E_ROOT` | The e2e root, instead of `$TMPDIR/hs-e2e-<hash>` |
+| `HOMESHELL_E2E_BIN` | The daemon binary the run builds and uses, instead of `<root>/bin/homeshell` |
+| `PW_WORKERS` | Worker count, a number or a percentage, instead of 4 (local runs only) |
 
 Writing e2e specs:
 
-- All specs share one daemon and run in parallel. Don't reset global state (settings, log
-  level) in hooks; assert per-request contracts and leave persistence to Go unit tests.
+- All specs share one daemon and run in parallel, so a spec never resets global state in hooks.
+  Assert per-request contracts and leave persistence to Go unit tests.
+- Hold `withSettingsLock` (`src/settings-lock.ts`) around anything that writes settings, changes
+  the live log level, or reads what a setting decides (such as `workstreams.location`). Why: a
+  settings write replaces the whole document, so two unlocked writers undo each other.
+- A test establishes the state it relies on, under the lock, rather than expecting the daemon's
+  defaults. A settings writer puts the document back in `finally`.
+- Assertions on shared data (demo workstreams, the session list) allow every state another test
+  can leave it in, `starting` included.
+- An isolated daemon goes through the shared teardown: register it with `trackIsolatedHome` and
+  add `test.afterEach(disposeIsolatedDaemons)` (`src/isolated-daemon.ts`). It stops the daemon's
+  bridges, then the daemon, then deletes its home. Why: a test's `finally` doesn't run on a
+  timeout, and a bridge outlives its daemon.
+- Run the daemon as `homeshellBin` (`src/e2e-env.ts`); never `go run` or `go build` in a spec.
+  A spec that needs a differently stamped build uses `buildDaemonVariant`. Scratch dirs come from
+  `scratchDir`, so they sit under the root.
 - A raw `fetch` uses the `baseURL` fixture. Why: `HOMESHELL_DAEMON_URL` is not set in the test
   process, so a local fallback constant points at the wrong port.
 
 When e2e fails strangely:
 
 - **Unrelated failures after a daemon change:** outside CI Playwright reuses a server already
-  listening, and a `go run` child can outlive its parent. Check
-  `lsof -iTCP:8421 -sTCP:LISTEN` and kill the stale process.
+  listening, which runs the old build. `pgrep -fa '[h]s-e2e-.*serve -demo'` shows it with its
+  `-addr`; stop it.
 - **Many UI timeouts with an empty page:** check `df -h /tmp`. Chromium profiles go there, and
   through Nx a full disk shows up only as timeouts. Run one spec with `playwright test` to see the
   real error.
@@ -254,7 +290,7 @@ pull request cancels its running checks.
 | Daemon | `go mod tidy` check, `go vet`, `go test -tags=dev`, cross-compile |
 | Desktop shell | `go mod tidy` check, vet and test `./internal/...`, `make build-desktop` |
 | Webapp | `nx run-many -t lint typecheck test`, production build |
-| Binary build & e2e | `make build`, `make test-e2e`; uploads Playwright output on failure |
+| Binary build & e2e | `make build`, `make test-e2e`; lists failed and flaky tests, uploads Playwright output |
 
 - CI calls the steps directly rather than `make test` or `make lint`. A step added to one of
   those targets must be added to `ci.yml` too.
