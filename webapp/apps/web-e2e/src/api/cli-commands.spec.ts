@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import type { APIRequestContext } from '@playwright/test';
 import { expect, tempProjectDir, test } from '../fixtures';
 import { isPlaceholderSession } from '../placeholders';
+import { withSettingsLock } from '../settings-lock';
 
 /**
  * Black-box coverage of the CLI's **data verbs** (`project`, `workstream`,
@@ -713,29 +714,36 @@ test.describe('homeshell data verbs', () => {
     request,
   }) => {
     // A setting the daemon owns: change it here, read it back over the API.
-    const original = (
-      await cliOk('settings', 'get', 'projects.confirmRemove', homeDirArg)
-    ).stdout.trim();
-    const flipped = original === 'true' ? 'false' : 'true';
+    // Under the settings lock: other tests write the whole document, and one
+    // that lands between the CLI's write and this read would undo it.
+    await withSettingsLock(async () => {
+      const original = (
+        await cliOk('settings', 'get', 'projects.confirmRemove', homeDirArg)
+      ).stdout.trim();
+      const flipped = original === 'true' ? 'false' : 'true';
 
-    await cliOk(
-      'settings',
-      'set',
-      'projects.confirmRemove',
-      flipped,
-      homeDirArg,
-    );
-    const overApi = (await (await request.get('/api/settings')).json()) as {
-      projects: { confirmRemove: boolean };
-    };
-    expect(String(overApi.projects.confirmRemove)).toBe(flipped);
-    await cliOk(
-      'settings',
-      'set',
-      'projects.confirmRemove',
-      original,
-      homeDirArg,
-    );
+      try {
+        await cliOk(
+          'settings',
+          'set',
+          'projects.confirmRemove',
+          flipped,
+          homeDirArg,
+        );
+        const overApi = (await (await request.get('/api/settings')).json()) as {
+          projects: { confirmRemove: boolean };
+        };
+        expect(String(overApi.projects.confirmRemove)).toBe(flipped);
+      } finally {
+        await cliOk(
+          'settings',
+          'set',
+          'projects.confirmRemove',
+          original,
+          homeDirArg,
+        );
+      }
+    });
 
     // A wrong type is caught before the daemon; a wrong value is the daemon's.
     const badType = await cli(
