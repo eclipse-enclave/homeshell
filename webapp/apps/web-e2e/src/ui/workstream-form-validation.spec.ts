@@ -173,16 +173,24 @@ test('a second in-place workstream is refused on the strategy, with the form ope
   );
   // Only the refused choice is painted as refused, not the ones it points to:
   // they keep the border of a pill in a group nothing refused.
+  // Read once its transitions end: clicking "Default" fades it out of the
+  // checked look, and near the end of that fade its border reads as
+  // rgba(…, 1), which equals no settled border.
   const unrefused = await form
     .getByRole('radio', { name: 'Fake Provider' })
-    .evaluate(
-      (pill) =>
-        (
-          globalThis as unknown as {
-            getComputedStyle: (e: unknown) => { borderColor: string };
-          }
-        ).getComputedStyle(pill).borderColor,
-    );
+    .evaluate(async (pill) => {
+      const el = pill as unknown as {
+        getAnimations: () => { finished: Promise<unknown> }[];
+      };
+      for (let a = el.getAnimations(); a.length; a = el.getAnimations()) {
+        await Promise.allSettled(a.map((anim) => anim.finished));
+      }
+      return (
+        globalThis as unknown as {
+          getComputedStyle: (e: unknown) => { borderColor: string };
+        }
+      ).getComputedStyle(pill).borderColor;
+    });
   for (const name of ['worktree', 'copy']) {
     await expect(form.getByRole('radio', { name })).toHaveCSS(
       'border-color',
