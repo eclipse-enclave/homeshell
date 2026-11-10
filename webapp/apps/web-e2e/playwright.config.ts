@@ -31,6 +31,10 @@ process.env.HOMESHELL_E2E_ROOT = e2eRoot;
 process.env.HOMESHELL_E2E_BIN = homeshellBin;
 process.env.HOMESHELL_E2E_RUN_START ||= String(Date.now());
 
+/** 4 locally (`PW_WORKERS` overrides; a number or a percentage), Playwright's default in CI. */
+const workers =
+  process.env.PW_WORKERS?.trim() || (process.env.CI ? undefined : 4);
+
 // The daemon requires an API token on every /api request (Bearer header or the
 // hs_api_token cookie). Pin a fixed token for e2e so the api project can attach
 // it as a default header, the vite proxy can inject it for the browser path, and
@@ -58,6 +62,7 @@ export default defineConfig({
   testDir: './src',
   outputDir: './test-output/playwright',
   fullyParallel: true,
+  workers,
   globalSetup: './src/global-setup.ts',
   globalTeardown: './src/global-teardown.ts',
   forbidOnly: !!process.env.CI,
