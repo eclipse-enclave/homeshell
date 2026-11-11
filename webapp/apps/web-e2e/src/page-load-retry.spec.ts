@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ATTEMPT_TIMEOUT_MS,
   MAX_NETWORK_CHANGED_RETRIES,
+  NETWORK_CHANGED_ANNOTATION,
+  SLOW_LOAD_ANNOTATION,
   interfaceFingerprint,
   isNetworkChangedLoad,
   retryOnNetworkChange,
@@ -87,7 +89,8 @@ function fakePage(steps: Step[]) {
     return `response ${calls}`;
   };
   const opts = {
-    annotate: (n: string) => notes.push(n),
+    annotate: (type: string, description: string) =>
+      notes.push(type === NETWORK_CHANGED_ANNOTATION ? description : `${type}: ${description}`),
     fingerprint: () => `gen${generation}`,
     pause: () => 0,
     sampleMs: 5,
@@ -145,10 +148,37 @@ describe('retryOnNetworkChange', () => {
     await expect(f.run()).resolves.toBe('response 2');
   });
 
-  it('does not retry a timeout without a network change', async () => {
+  it('loads once more without the cap after a timeout without a network change', async () => {
+    const f = fakePage([{ throws: 'timeout' }, {}]);
+    await expect(f.run()).resolves.toBe('response 2');
+    expect(f.timeouts).toEqual([ATTEMPT_TIMEOUT_MS, 0]);
+    expect(f.notes).toEqual([
+      `${SLOW_LOAD_ANNOTATION}: attempt 1 timed out after ${ATTEMPT_TIMEOUT_MS / 1000} s ` +
+        'with no network change; loading again without the cap',
+    ]);
+  });
+
+  it('rethrows when the uncapped load also times out', async () => {
     const f = fakePage([{ throws: 'timeout' }]);
     await expect(f.run()).rejects.toThrow('Timeout exceeded');
-    expect(f.calls()).toBe(1);
+    expect(f.calls()).toBe(2);
+    expect(f.listeners()).toBe(0);
+  });
+
+  it('goes back to the cap after the uncapped load hit a network change', async () => {
+    const f = fakePage([
+      { throws: 'timeout' },
+      { failures: [failedRequest('script', changed)] },
+      {},
+    ]);
+    await expect(f.run()).resolves.toBe('response 3');
+    expect(f.timeouts).toEqual([ATTEMPT_TIMEOUT_MS, 0, ATTEMPT_TIMEOUT_MS]);
+  });
+
+  it('keeps the cap for a stall during a network change', async () => {
+    const f = fakePage([{ throws: 'timeout', interfacesChange: true }, {}]);
+    await f.run();
+    expect(f.timeouts).toEqual([ATTEMPT_TIMEOUT_MS, ATTEMPT_TIMEOUT_MS]);
   });
 
   it('does not retry a network change that broke nothing', async () => {

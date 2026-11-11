@@ -2,10 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { test as base, type APIRequestContext } from '@playwright/test';
-import {
-  NETWORK_CHANGED_ANNOTATION,
-  retryOnNetworkChange,
-} from './page-load-retry';
+import { retryOnNetworkChange } from './page-load-retry';
 
 /**
  * Shared Playwright fixtures. Import `test`/`expect` from here instead of
@@ -49,11 +46,12 @@ async function removeProjectsAt(
 
 export const test = base.extend<{ throwawayProjects: void }>({
   // goto and reload load the page again when a host network change broke the
-  // load (src/page-load-retry.ts); each retry is a test annotation.
+  // load, or once when it timed out (src/page-load-retry.ts); each retry is a
+  // test annotation.
   page: async ({ page }, use, testInfo) => {
     const opts = {
-      annotate: (description: string) =>
-        testInfo.annotations.push({ type: NETWORK_CHANGED_ANNOTATION, description }),
+      annotate: (type: string, description: string) =>
+        testInfo.annotations.push({ type, description }),
     };
     const goto = page.goto.bind(page);
     const reload = page.reload.bind(page);

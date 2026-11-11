@@ -44,7 +44,7 @@ test.describe('the agent catalog survives a restart', () => {
   let daemon: IsolatedDaemon;
 
   test.beforeAll(() => {
-    daemon = isolatedDaemon('catalog');
+    daemon = isolatedDaemon('cat');
   });
 
   test.afterAll(() => daemon.dispose());

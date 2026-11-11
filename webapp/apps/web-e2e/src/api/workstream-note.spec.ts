@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import { withSettingsLock } from '../settings-lock';
 import { awaitRealWorkstream, createProject } from './workstream-helpers';
 
 /**
@@ -54,9 +55,13 @@ test('a workstream with files on the host offers its notes, so labelled', async 
   request,
 }) => {
   const projectId = await createProject(request, 'hs-note-e2e-');
-  const res = await request.post(`/api/projects/${projectId}/workstreams`, {
-    data: { providerId: 'core', config: { strategy: 'copy' } },
-  });
+  // Under the lock: where a copy goes is the workstreams.location setting,
+  // which other tests set to a folder inside the project, where copies are refused.
+  const res = await withSettingsLock(() =>
+    request.post(`/api/projects/${projectId}/workstreams`, {
+      data: { providerId: 'core', config: { strategy: 'copy' } },
+    }),
+  );
   expect(res.status()).toBe(201);
   const workstream = await awaitRealWorkstream(request, projectId, 15_000);
   expect(

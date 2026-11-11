@@ -1,7 +1,9 @@
 import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { isAlive } from './dir-lock';
 import { daemonDir, e2eRoot, homeshellBin, scratchDir } from './e2e-env';
 
 /**
@@ -26,27 +28,53 @@ async function waitFor(
   return predicate();
 }
 
-const isAlive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
+/** The longest unix socket path: `sun_path` has 108 bytes, its NUL included. */
+export const MAX_SOCKET_PATH = 107;
 
 /**
- * A home dir for an isolated daemon under the run's root, with the runtime dir
- * (`XDG_RUNTIME_DIR`) its bridges' sockets go to. Pass `runtimeEnv(home)` to
- * the daemon so `disposeIsolatedHome` finds every bridge it started.
+ * The longest bridge socket a daemon with `runtimeDir` as its
+ * `XDG_RUNTIME_DIR` creates: `<dir>/homeshell-<12 hex>/hs-<uuid>.sock`, a
+ * local session's (`hostbridge.New` in the daemon).
+ */
+export const worstSocketPath = (runtimeDir: string) =>
+  join(runtimeDir, `homeshell-${'0'.repeat(12)}`, `hs-${randomUUID()}.sock`);
+
+/**
+ * Throws when a bridge under `runtimeDir` could not bind its socket, so a run
+ * under a long `TMPDIR` fails here, naming the cause, rather than in a bridge.
+ */
+export function checkSocketBudget(runtimeDir: string): void {
+  const path = worstSocketPath(runtimeDir);
+  const length = Buffer.byteLength(path);
+  if (length <= MAX_SOCKET_PATH) return;
+  throw new Error(
+    `bridge sockets under ${runtimeDir} would be ${length} bytes (${path}), past the ` +
+      `${MAX_SOCKET_PATH} a unix socket path allows: use a shorter TMPDIR or HOMESHELL_E2E_ROOT`,
+  );
+}
+
+/**
+ * A home dir for an isolated daemon under the run's root. It is also the
+ * daemon's runtime dir (`XDG_RUNTIME_DIR`), where its bridges' sockets go:
+ * pass `runtimeEnv(home)` to the daemon so `disposeIsolatedHome` finds every
+ * bridge it started. `prefix` has at most 4 chars, which keeps the sockets
+ * within budget under a `TMPDIR` of up to 11 bytes (`/var/tmp` has 8).
  */
 export function isolatedHome(prefix: string): string {
+  if (prefix.length > 4) {
+    throw new Error(`isolated home prefix "${prefix}" has at most 4 chars (socket path budget)`);
+  }
   const home = scratchDir(`${prefix}-`);
-  mkdirSync(join(home, 'run'));
+  try {
+    checkSocketBudget(home);
+  } catch (err) {
+    rmSync(home, { recursive: true, force: true });
+    throw err;
+  }
   return home;
 }
 
-export const runtimeEnv = (home: string) => ({ XDG_RUNTIME_DIR: join(home, 'run') });
+export const runtimeEnv = (home: string) => ({ XDG_RUNTIME_DIR: home });
 
 /** The bridge sockets under a runtime dir: `<dir>/homeshell-<hash>/<target>.sock`. */
 export function bridgeSockets(runtimeDir: string): string[] {
@@ -89,7 +117,7 @@ export async function disposeIsolatedHome(
   child?: ChildProcess,
 ): Promise<void> {
   try {
-    await stopBridges(join(home, 'run'));
+    await stopBridges(home);
   } finally {
     try {
       await stopDaemonAt(home, child);
@@ -146,7 +174,11 @@ async function stopDaemonAt(home: string, child?: ChildProcess): Promise<void> {
   const alive = () =>
     child ? child.exitCode === null && child.signalCode === null : isAlive(pid);
   if (await waitFor(() => !alive(), 10_000)) return;
-  process.kill(pid, 'SIGKILL');
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    return; // Gone meanwhile, or a reused pid that is not ours (EPERM).
+  }
   await waitFor(() => !alive(), 5_000);
 }
 

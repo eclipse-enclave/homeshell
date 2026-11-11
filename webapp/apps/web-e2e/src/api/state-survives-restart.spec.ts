@@ -52,7 +52,7 @@ test.describe('persisted state survives a restart', () => {
   let daemon: IsolatedDaemon;
 
   test.beforeAll(() => {
-    daemon = isolatedDaemon('restart');
+    daemon = isolatedDaemon('rst');
   });
 
   test.afterAll(() => daemon.dispose());

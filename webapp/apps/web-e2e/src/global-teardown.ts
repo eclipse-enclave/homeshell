@@ -1,8 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { isAlive } from './dir-lock';
 import { e2eRoot, scratchRoot, sharedRuntimeDir } from './e2e-env';
 import { stopBridges } from './isolated-daemon';
+import { holdsRunLock, releaseRunLock } from './run-lock';
 
 /**
  * Runs while both web servers are still up, after every worker has finished.
@@ -13,8 +15,21 @@ import { stopBridges } from './isolated-daemon';
  *    one a spec failed to tear down (see `disposeIsolatedHome`). They are
  *    killed, and the run fails naming them.
  * 3. Deletes every isolated home and fixture dir.
+ * 4. Releases the run lock.
+ *
+ * Does nothing in a run that does not hold the run lock: one that globalSetup
+ * refused because another run uses this checkout's root.
  */
 export default async function globalTeardown(): Promise<void> {
+  if (!(await holdsRunLock())) return;
+  try {
+    await cleanUp();
+  } finally {
+    await releaseRunLock();
+  }
+}
+
+async function cleanUp(): Promise<void> {
   await stopBridges(sharedRuntimeDir);
   const leaked = leftoverProcesses([scratchRoot, sharedRuntimeDir]);
   if (leaked.length) await kill(leaked.map((p) => p.pid));
@@ -68,15 +83,6 @@ function leftoverProcesses(paths: string[]): Proc[] {
       );
     });
 }
-
-const isAlive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
 
 /** SIGTERM, then SIGKILL whatever is still alive after 2 s. */
 async function kill(pids: number[]): Promise<void> {

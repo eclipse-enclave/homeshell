@@ -36,8 +36,11 @@ export const ATTEMPT_TIMEOUT_MS = 10_000;
 /** How often the host's interfaces are compared during an attempt. */
 export const INTERFACE_SAMPLE_MS = 250;
 
-/** Annotation type each retry adds to the test. */
+/** Annotation type each network-change retry adds to the test. */
 export const NETWORK_CHANGED_ANNOTATION = 'network-changed-retry';
+
+/** Annotation type of the one uncapped retry after a timeout with no network change seen. */
+export const SLOW_LOAD_ANNOTATION = 'slow-load-retry';
 
 const NETWORK_CHANGED = 'net::ERR_NETWORK_CHANGED';
 
@@ -66,8 +69,8 @@ export function interfaceFingerprint(): string {
 export type RequestFailedSource = Pick<Page, 'on' | 'off'>;
 
 export interface RetryOptions {
-  /** Gets one description per retry. */
-  annotate: (description: string) => void;
+  /** Gets one annotation type and description per retry. */
+  annotate: (type: string, description: string) => void;
   fingerprint?: () => string;
   pause?: (attempt: number) => number;
   sampleMs?: number;
@@ -82,7 +85,10 @@ function isTimeout(error: unknown): boolean {
  * more times, {@link retryPauseMs} apart) when a network change broke it:
  * the document or a script was aborted, or the attempt timed out while the
  * host's interfaces changed or some request failed with a network change.
- * `navigate` gets the timeout to use when its caller set none.
+ * A timeout with no network change seen is retried once more, with no cap
+ * (timeout 0, so the test timeout bounds it). Why: a cold Vite load on a slow
+ * runner can pass the cap, and the second load starts with the module cache
+ * warm. `navigate` gets the timeout to use when its caller set none.
  */
 export async function retryOnNetworkChange<T>(
   page: RequestFailedSource,
@@ -94,6 +100,8 @@ export async function retryOnNetworkChange<T>(
     sampleMs = INTERFACE_SAMPLE_MS,
   }: RetryOptions,
 ): Promise<T> {
+  let slowRetried = false;
+  let uncapped = false;
   for (let attempt = 1; ; attempt++) {
     const aborted: string[] = [];
     let changed = false;
@@ -112,7 +120,7 @@ export async function retryOnNetworkChange<T>(
     let error: unknown;
     let failed = false;
     try {
-      result = await navigate(ATTEMPT_TIMEOUT_MS);
+      result = await navigate(uncapped ? 0 : ATTEMPT_TIMEOUT_MS);
     } catch (e) {
       error = e;
       failed = true;
@@ -121,12 +129,29 @@ export async function retryOnNetworkChange<T>(
       clearInterval(sampler);
     }
     if (fingerprint() !== last) changed = true;
-    const stalled = failed && isTimeout(error) && changed;
-    if ((aborted.length === 0 && !stalled) || attempt > MAX_NETWORK_CHANGED_RETRIES) {
+    const timedOut = failed && isTimeout(error);
+    const stalled = timedOut && changed;
+    if (aborted.length === 0 && !stalled) {
+      if (timedOut && !changed && !uncapped && !slowRetried) {
+        slowRetried = true;
+        uncapped = true;
+        annotate(
+          SLOW_LOAD_ANNOTATION,
+          `attempt ${attempt} timed out after ${ATTEMPT_TIMEOUT_MS / 1000} s with no network change; ` +
+            'loading again without the cap',
+        );
+        continue;
+      }
       if (failed) throw error;
       return result as T;
     }
+    if (attempt - (slowRetried ? 1 : 0) > MAX_NETWORK_CHANGED_RETRIES) {
+      if (failed) throw error;
+      return result as T;
+    }
+    uncapped = false;
     annotate(
+      NETWORK_CHANGED_ANNOTATION,
       aborted.length > 0
         ? `attempt ${attempt} aborted by ${NETWORK_CHANGED}: ${aborted.join(', ')}`
         : `attempt ${attempt} timed out during a network change`,

@@ -193,8 +193,12 @@ flowchart LR
   worktrees can run the suite at once without sharing a server, a lock or a binary.
 - The root holds `bin/` (the run's one daemon build), `h/` (isolated daemon homes and fixture
   dirs), `run/` (the shared daemon's `XDG_RUNTIME_DIR`, where its bridge sockets go) and
-  `settings.lock`. Keep it short: bridge sockets sit a few levels below it, and a socket path
-  has about 107 bytes.
+  `settings.lock`.
+- Socket budget: a unix socket path has at most 107 bytes. An isolated home is its own
+  `XDG_RUNTIME_DIR`, so its bridge sockets end `<home>/homeshell-<12 hex>/hs-<uuid>.sock`.
+  `isolatedHome` (`src/isolated-daemon.ts`) takes a prefix of at most 4 chars and throws when
+  that path would pass 107 bytes. Under the default root this leaves room for a `TMPDIR` of up
+  to 11 bytes (`/var/tmp` has 8); otherwise set a shorter `HOMESHELL_E2E_ROOT`.
 - The daemon web server builds `bin/homeshell` and runs it; every spec and helper runs that same
   binary. `src/global-setup.ts` rebuilds it only when a reused daemon skipped the build. Why: web
   servers start before `globalSetup`, and one build per run instead of one per worker.
@@ -210,6 +214,9 @@ flowchart LR
 - `src/global-teardown.ts` stops the shared daemon's bridges, kills and reports any process
   still running from the root (bridges, isolated daemons, fixture scripts), and deletes `h/`.
   A leftover process fails the run.
+- One run per checkout: `src/global-setup.ts` takes the root's `run.lock` (`src/run-lock.ts`)
+  and fails a second run with the first one's pid; a lock left by a run that died is taken
+  over. Why: the teardown acts on the whole root. To run two at once, use another worktree.
 - Locally 4 workers; with `CI` set, Playwright's default. With `CI` set, Playwright also never
   reuses a running server, forbids `test.only`, retries failures twice and writes
   `test-output/results.json`, which the CI job turns into its list of failed and flaky tests.
@@ -241,11 +248,16 @@ Writing e2e specs:
 - A raw `fetch` uses the `baseURL` fixture. Why: `HOMESHELL_DAEMON_URL` is not set in the test
   process, so a local fallback constant points at the wrong port.
 - A ui spec imports `test` and `expect` from `src/fixtures.ts`, not `@playwright/test`. Its
-  `page.goto` and `page.reload` then load the page again (at most 4 times, after a growing, jittered pause) when a host
-  network change aborted the document or a script, or stalled the load past 10 s
-  (`src/page-load-retry.ts`). Why: any Docker network or address change makes Chromium abort
-  in-flight requests, `127.0.0.1` included, and the app never mounts. Pages a spec opens itself
-  (`browser.newContext`) don't get the retry.
+  `page.goto` and `page.reload` then load the page again (`src/page-load-retry.ts`):
+  - at most 4 times, after a growing, jittered pause, when a host network change aborted the
+    document or a script, or stalled the load past 10 s. Why: any Docker network or address
+    change makes Chromium abort in-flight requests, `127.0.0.1` included, and the app never
+    mounts.
+  - once, with only the test timeout as its limit, when a load passed 10 s with no network
+    change seen. Why: a cold Vite load on a slow runner can take that long; the second load
+    finds the module cache warm.
+
+  Pages a spec opens itself (`browser.newContext`) don't get the retry.
 
 When e2e fails strangely:
 
@@ -258,6 +270,9 @@ When e2e fails strangely:
 - **A `network-changed-retry` annotation on a test:** a host network change aborted its page
   load and the fixture loaded the page again. A test that still fails with
   `net::ERR_NETWORK_CHANGED` hit it mid-test or on 5 loads in a row; that is not retried.
+- **A `slow-load-retry` annotation on a test:** its first page load passed 10 s with no network
+  change seen and the fixture loaded the page again. Often seen on a cold start; a test that
+  shows it on every run points at a slow page.
 
 ### Dev-target gate
 

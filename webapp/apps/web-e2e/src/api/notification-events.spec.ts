@@ -26,7 +26,7 @@ import {
  * kinds arrive without any action.
  */
 
-const homeDir = isolatedHome('notify');
+const homeDir = isolatedHome('ntf');
 const stateFile = join(homeDir, 'daemon.json');
 
 /** The sound the seeded settings choose, so a stamped sound is unambiguous. */

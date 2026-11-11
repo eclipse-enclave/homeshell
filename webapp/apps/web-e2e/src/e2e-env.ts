@@ -20,11 +20,12 @@ const hash = createHash('sha256').update(repoRoot).digest();
 
 /**
  * The per-checkout temp root. Kept short: bridge sockets of isolated daemons
- * live a few levels below it and a unix socket path has ~107 bytes.
+ * live a few levels below it and a unix socket path has at most 107 bytes
+ * (`checkSocketBudget` in isolated-daemon.ts).
  */
 export const e2eRoot =
   process.env.HOMESHELL_E2E_ROOT ||
-  join(tmpdir(), `hs-e2e-${hash.toString('hex').slice(0, 8)}`);
+  join(tmpdir(), `hs-e2e-${hash.toString('hex').slice(0, 6)}`);
 
 /** The one daemon build every server and helper of a run uses. */
 export const homeshellBin =

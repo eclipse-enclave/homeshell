@@ -20,7 +20,7 @@ import {
  */
 const execFileAsync = promisify(execFile);
 let binary = homeshellBin;
-const homeDir = isolatedHome('ensure');
+const homeDir = isolatedHome('ens');
 
 // -addr=127.0.0.1:0 asks the spawned daemon to bind an ephemeral port so this
 // spec never collides with the fixed :8420 default (or another instance).

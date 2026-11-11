@@ -46,7 +46,7 @@ test.describe('a failed self-update', () => {
       'self-update',
       `-X main.version=0.0.0-gaaaaaaa -X main.commit=${'a'.repeat(40)} -X main.channel=rolling`,
     );
-    daemon = isolatedDaemon('update', {
+    daemon = isolatedDaemon('upd', {
       binary,
       env: { HOMESHELL_UPDATE_BASE_URL: `http://127.0.0.1:${port}` },
     });
