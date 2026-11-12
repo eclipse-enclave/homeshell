@@ -17,6 +17,10 @@ One line of work in a project: a working directory plus the sessions running in 
 inside a container.
 _Avoid_: workspace, environment, task
 
+**Default workstream**:
+The workstream every project is added with: in place, in the project folder, on the branch
+checked out there and, until renamed, named after it.
+
 **Session**:
 One agent conversation running inside a workstream. A workstream holds any number of sessions,
 which may run different agents.
@@ -79,8 +83,12 @@ _Avoid_: path, worktree (unless it is one), checkout
 
 **Filesystem strategy**:
 How a workstream gets its working directory: **in place** (the project directory itself), a
-**copy** of the project directory, or a git **worktree**.
+**copy** of the project directory, or a git **worktree**. The UI shows *copy* as **folder**.
 _Avoid_: isolation mode
+
+**Separate folder**:
+A workstream's working directory when it is a **worktree** or a **folder** (copy), not the project
+directory itself.
 
 **Note**:
 A Markdown file a workstream keeps in its working directory, readable by the user and by the
@@ -114,10 +122,15 @@ A session whose teardown would interrupt live work: running, waiting or starting
 Removing a workstream with a busy session needs to be forced.
 
 **Terminal state**:
-A session state that means the session has ended: done, stopped or error. Sessions in a terminal
-state do not count towards a provider's concurrency cap.
+A session state in which the session is no longer running: done, stopped or error. Sessions in a
+terminal state do not count towards a provider's concurrency cap. An error is terminal but not an
+**ended session**.
 Not to be confused with the terminal a session runs in.
 _Avoid_: finished, inactive
+
+**Ended session**:
+A session that is stopped or done, a terminal state other than error. It is kept until removed
+and can be continued.
 
 **Detection**:
 The derivation of a session's state from its rendered terminal screen.

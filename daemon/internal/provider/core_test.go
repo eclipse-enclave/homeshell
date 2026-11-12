@@ -23,45 +23,51 @@ func TestParseCoreConfig(t *testing.T) {
 	tests := []struct {
 		name                            string
 		config                          string
+		gitBacked                       bool
 		strategy, branch, baseRef, dest string
 	}{
-		{"empty defaults to in-place", "", "in-place", "", "", ""},
-		{"strategy only", `{"strategy":"copy"}`, "copy", "", "", ""},
-		{"all fields", `{"strategy":"worktree","branch":"feat","baseRef":"origin/main","path":"/tmp/x"}`, "worktree", "feat", "origin/main", "/tmp/x"},
-		{"unparseable falls back", `not json`, "in-place", "", "", ""},
-		{"branch dropped in place", `{"strategy":"in-place","branch":"feat","baseRef":"main"}`, "in-place", "", "", ""},
-		{"branch dropped for copy", `{"strategy":"copy","branch":"feat","baseRef":"main","path":"/tmp/x"}`, "copy", "", "", "/tmp/x"},
-		{"branch dropped with no strategy", `{"branch":"feat"}`, "in-place", "", "", ""},
+		{"empty defaults to in-place", "", false, "in-place", "", "", ""},
+		{"empty defaults to a worktree in git", "", true, "worktree", "", "", ""},
+		{"strategy only", `{"strategy":"copy"}`, true, "copy", "", "", ""},
+		{"all fields", `{"strategy":"worktree","branch":"feat","baseRef":"origin/main","path":"/tmp/x"}`, true, "worktree", "feat", "origin/main", "/tmp/x"},
+		{"unparseable falls back", `not json`, false, "in-place", "", "", ""},
+		{"branch dropped in place", `{"strategy":"in-place","branch":"feat","baseRef":"main"}`, true, "in-place", "", "", ""},
+		{"branch dropped for copy", `{"strategy":"copy","branch":"feat","baseRef":"main","path":"/tmp/x"}`, true, "copy", "", "", "/tmp/x"},
+		{"branch dropped with no strategy outside git", `{"branch":"feat"}`, false, "in-place", "", "", ""},
+		{"branch kept with no strategy in git", `{"branch":"feat"}`, true, "worktree", "feat", "", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s, b, br, d := parseCoreConfig([]byte(tc.config))
+			s, b, br, d := parseCoreConfig([]byte(tc.config), tc.gitBacked)
 			if s != tc.strategy || b != tc.branch || br != tc.baseRef || d != tc.dest {
-				t.Errorf("parseCoreConfig(%q) = (%q,%q,%q,%q); want (%q,%q,%q,%q)",
-					tc.config, s, b, br, d, tc.strategy, tc.branch, tc.baseRef, tc.dest)
+				t.Errorf("parseCoreConfig(%q, %v) = (%q,%q,%q,%q); want (%q,%q,%q,%q)",
+					tc.config, tc.gitBacked, s, b, br, d, tc.strategy, tc.branch, tc.baseRef, tc.dest)
 			}
 		})
 	}
 }
 
 func TestCoreWorkstreamName(t *testing.T) {
-	if got := coreWorkstreamName("/home/me/proj", "feature/x", "worktree"); got != "feature/x" {
-		t.Errorf("worktree name = %q, want the branch", got)
+	if got := coreWorkstreamName("/home/me/proj", "feature/x"); got != "feature/x" {
+		t.Errorf("name = %q, want the branch", got)
 	}
-	if got := coreWorkstreamName("/home/me/proj", "", "in-place"); got != "proj" {
-		t.Errorf("in-place name = %q, want the project basename", got)
+	if got := coreWorkstreamName("/home/me/proj", ""); got != "proj" {
+		t.Errorf("name without a branch = %q, want the project basename", got)
 	}
-	if got := coreWorkstreamName("/", "", "copy"); got != "workstream" {
+	if got := coreWorkstreamName("/", ""); got != "workstream" {
 		t.Errorf("degenerate path name = %q, want the fallback", got)
 	}
 }
 
 func TestStrategyLabel(t *testing.T) {
-	if got := domain.StrategyLabel("in-place"); got != "in place" {
-		t.Errorf("in-place label = %q, want %q", got, "in place")
+	tests := []struct{ strategyID, want string }{
+		{"in-place", "in place"},
+		{"copy", "folder"},
 	}
-	if got := domain.StrategyLabel("worktree"); got != "worktree" {
-		t.Errorf("worktree label = %q, want unchanged", got)
+	for _, tt := range tests {
+		if got := domain.StrategyLabel(tt.strategyID); got != tt.want {
+			t.Errorf("StrategyLabel(%q) = %q, want %q", tt.strategyID, got, tt.want)
+		}
 	}
 }
 
@@ -193,15 +199,48 @@ func TestCoreSchema(t *testing.T) {
 	})
 }
 
+// A folder holds one workstream: once the project folder is taken, the form
+// stops offering in place, and a plain project defaults to copy instead.
+func TestCoreSchemaStrategies(t *testing.T) {
+	tests := []struct {
+		name        string
+		gitBacked   bool
+		folderTaken bool
+		wantIDs     []any
+		wantLabels  []any
+		wantDefault string
+	}{
+		{"git project, folder free", true, false, []any{"in-place", "worktree", "copy"},
+			[]any{"In place", "Worktree", "Folder: a copy of the project"}, "worktree"},
+		{"git project, folder taken", true, true, []any{"worktree", "copy"},
+			[]any{"Worktree", "Folder: a copy of the project"}, "worktree"},
+		{"plain project, folder free", false, false, []any{"in-place", "copy"},
+			[]any{"In place", "Folder: a copy of the project"}, "in-place"},
+		{"plain project, folder taken", false, true, []any{"copy"},
+			[]any{"Folder: a copy of the project"}, "copy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project := ProjectRef{Path: t.TempDir(), GitBacked: tt.gitBacked, FolderTaken: tt.folderTaken}
+			strategy := schemaProperties(t, newCore().Schema(context.Background(), project))["strategy"]
+			if !reflect.DeepEqual(strategy["enum"], tt.wantIDs) || !reflect.DeepEqual(strategy["enumNames"], tt.wantLabels) ||
+				strategy["default"] != tt.wantDefault {
+				t.Errorf("strategy = %v, want enum %v, enumNames %v, default %q",
+					strategy, tt.wantIDs, tt.wantLabels, tt.wantDefault)
+			}
+		})
+	}
+}
+
 func TestGitSchemaSuggestsTheDefaultBase(t *testing.T) {
 	// A default base missing from the listed refs (cut by the cap, say) is
 	// suggested anyway, first.
-	props := schemaProperties(t, gitSchemaSuggesting([]git.Ref{{Name: "feature", Branch: "feature"}}, "origin/main"))
+	props := schemaProperties(t, gitSchemaSuggesting(false, []git.Ref{{Name: "feature", Branch: "feature"}}, "origin/main"))
 	if got := props["baseRef"]["examples"]; !reflect.DeepEqual(got, []any{"origin/main", "feature"}) {
 		t.Errorf("baseRef examples = %v, want the default base, then the refs", got)
 	}
 	// Listed already, it is not repeated.
-	props = schemaProperties(t, gitSchemaSuggesting([]git.Ref{{Name: "main", Branch: "main"}}, "main"))
+	props = schemaProperties(t, gitSchemaSuggesting(false, []git.Ref{{Name: "main", Branch: "main"}}, "main"))
 	if got := props["baseRef"]["examples"]; !reflect.DeepEqual(got, []any{"main"}) {
 		t.Errorf("baseRef examples = %v, want main once", got)
 	}
@@ -210,7 +249,7 @@ func TestGitSchemaSuggestsTheDefaultBase(t *testing.T) {
 // A branch is suggested by its own name, and as a base by the name git reads
 // as that branch alone; one checked out in a worktree cannot be reused.
 func TestGitSchemaSuggestsBranches(t *testing.T) {
-	props := schemaProperties(t, gitSchemaSuggesting([]git.Ref{
+	props := schemaProperties(t, gitSchemaSuggesting(false, []git.Ref{
 		{Name: "heads/main", Branch: "main"},
 		{Name: "feature", Branch: "feature", CheckedOut: true},
 		{Name: "tags/main"},
@@ -493,6 +532,7 @@ func TestCoreCreateWorktreeDerivesTheBranch(t *testing.T) {
 
 // A name left empty is numbered past the names the project already has, and a
 // worktree's past the branches too, so the same blank form can be sent again.
+// The project folder has "feature" checked out.
 func TestCoreNameAndBranchNumbersADefaultName(t *testing.T) {
 	repo := gitProject(t)
 	project := filepath.Join(filepath.Dir(repo), "My Repo")
@@ -513,8 +553,9 @@ func TestCoreNameAndBranchNumbersADefaultName(t *testing.T) {
 		wantName   string
 		wantBranch string
 	}{
-		{name: "a free name", strategy: "in-place", wantName: "My Repo"},
-		{name: "a taken name", strategy: "in-place", nameTaken: taken("My Repo", "My Repo-2"), wantName: "My Repo-3"},
+		// In place, the workstream is on the branch checked out in the project.
+		{name: "a free name", strategy: "in-place", wantName: "feature", wantBranch: "feature"},
+		{name: "a taken name", strategy: "in-place", nameTaken: taken("feature", "feature-2"), wantName: "feature-3", wantBranch: "feature"},
 		{name: "an existing branch", strategy: "worktree", wantName: "My Repo-2", wantBranch: "my-repo-2"},
 		{name: "a taken name and branch", strategy: "worktree", nameTaken: taken("My Repo-2"), wantName: "My Repo-3", wantBranch: "my-repo-3"},
 		{name: "a name the branch gives", strategy: "worktree", branch: "topic", nameTaken: taken("topic"), wantName: "topic-2", wantBranch: "topic"},

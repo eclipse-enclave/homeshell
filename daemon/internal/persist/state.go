@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"time"
 
 	"github.com/eclipsesource/homeshell/daemon/internal/domain"
 )
@@ -65,6 +66,7 @@ type SessionRecord struct {
 	Agent        string          `json:"agent"`
 	Provider     string          `json:"provider,omitempty"`
 	ProviderData json.RawMessage `json:"providerData,omitempty"`
+	EndedAt      *time.Time      `json:"endedAt,omitempty"`
 }
 
 // CustomTitle is a user-chosen display title for a session, with the project it
@@ -217,6 +219,7 @@ func (s Snapshot) DomainProjects() []domain.Project {
 					Provider:     sessionRecord.Provider,
 					ProviderData: sessionRecord.ProviderData,
 					State:        domain.SessionIdle,
+					EndedAt:      sessionRecord.EndedAt,
 				})
 			}
 			project.Workstreams = append(project.Workstreams, workstream)
@@ -262,5 +265,6 @@ func RecordSession(session domain.Session) SessionRecord {
 		Agent:        session.Agent,
 		Provider:     session.Provider,
 		ProviderData: session.ProviderData,
+		EndedAt:      session.EndedAt,
 	}
 }

@@ -69,7 +69,14 @@ func addProjectHandler(deps Deps) http.HandlerFunc {
 			State:       domain.SessionIdle,
 			Workstreams: []domain.Workstream{},
 		}
-		if err := deps.Store.AddProject(&project); err != nil {
+		// The provider service, when there is one, gives the project its default
+		// workstream.
+		if deps.Providers != nil {
+			err = deps.Providers.AddProject(request.Context(), &project)
+		} else {
+			err = deps.Store.AddProject(&project)
+		}
+		if err != nil {
 			jsonError(writer, err.Error(), http.StatusConflict)
 			return
 		}

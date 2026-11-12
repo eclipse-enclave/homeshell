@@ -228,7 +228,9 @@ Paths are under `/api`. Endpoints without a response listed answer `204` with no
 | `POST /projects/{id}/refresh` | | |
 
 - **Add.** `path` is resolved (`~` expands) and must be an existing directory; `name` defaults to
-  its base name. A path already added is `409`.
+  its base name. A path already added is `409`. The project comes with its
+  [default workstream](../CONTEXT.md#core-entities) already in its `workstreams`; if that cannot
+  be made, the project is added without it (logged).
 - **Remove** stops tracking the project. Its sessions are left running; in-flight creates and
   restarts for it are cancelled.
 - **Refresh** re-detects whether the project is a git repository.
@@ -242,6 +244,7 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
 | `GET /workstream-providers` | | Providers that can create here (see [Providers](#providers)) |
 | `POST /workstream-draft` | `{providerId, name?, config}` | `{name, config}` |
 | `POST /workstreams` | `{providerId, name?, config}` | `201`, the `creating` placeholder |
+| `POST /default-workstream` | | `201`, the default workstream |
 | `PATCH {ws}` | `{name}` | |
 | `DELETE {ws}` | `{keepFiles?, force?}`, or `?force=true` | |
 | `DELETE {ws}/status` | | |
@@ -250,7 +253,23 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
 | `POST {ws}/note` | | `{path, created}` |
 
 - **Create.** `config` follows the provider's `workstreamSchema`. A blank `name` is derived.
-  Invalid config is `400` with `fields`; a name already in use is `409`.
+  Invalid config is `400` with `fields`; a name already in use is `409`. A directory another
+  workstream works in is invalid config. The project folder is taken while any workstream is in it
+  (`inProjectFolder`), a pending or failed in-place create included; removing that one frees it.
+- **Default workstream** gives the project the workstream a new one comes with: core, in place,
+  named like a blank create. It is created at once, with no placeholder. `409` while the project
+  folder is taken.
+- **Strategies offered.** The core provider's `strategy` property has `enum` and a parallel
+  `enumNames` of display names: `in-place` "In place", `worktree` "Worktree", `copy` "Folder: a
+  copy of the project". While the project folder is taken, `in-place` and its name
+  are left out, and in a project outside git `default` becomes `copy`. Create still validates as
+  above. Why: the form should not offer what create would refuse.
+- **Strategy display.** A workstream's `strategy` is a label, not the stored value: "in place",
+  "worktree", or "folder" for `strategyId: "copy"`. Clients send and compare `strategyId`.
+- **In the project folder.** `inProjectFolder: true` marks the workstream whose `workingDir` is
+  the project folder and an in-place create's placeholder, pending or failed, which has no
+  `workingDir` yet; it is absent on every other. These are what take the folder (see Create). Why: clients group by
+  it without re-deriving the daemon's rule.
 - **Draft** answers what a create with the same body would derive for its blanks (name, branch,
   path) and creates nothing.
 - **Remove** ([Workstream lifecycle](ARCHITECTURE.md#workstream-lifecycle)): `keepFiles` keeps
@@ -286,10 +305,17 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
 - **Schemas** list the session types each session provider offers in this workstream; `schema`
   is a JSON Schema the UI renders as the create form. Read per request, so catalog edits apply
   at once.
+- **Start** continues a session in a terminal state (`stopped`, `done` or `error`) where its
+  provider can; the Enclave provider does so as a restart.
 - **Restart** without a body reuses the last launch config; `fresh` starts a new conversation
   instead of continuing. `409` while the session is `starting`, or for one that cannot restart.
 - **Launch config** is what the session was last started with, plus the option's schema, so a
   restart form opens pre-filled. `continueRefusal` says why the conversation cannot be continued.
+- **Ended sessions** (`done`, `stopped`; see [CONTEXT.md](../CONTEXT.md)) stay listed until removed,
+  as do sessions in `error`. The session object carries `endedAt` (RFC 3339) once the daemon has
+  seen it end: set when a live session turns terminal, kept while it stays terminal, dropped when
+  it runs again. A session first seen already terminal has it only if its provider reports when
+  it ended. A daemon restart keeps it ([Persistence](ARCHITECTURE.md#persistence)).
 - **Prompt** sends one line of text; body at most 64 KiB (`413`).
 - **Key** sends one of `up`, `down`, `left`, `right`, `enter`, `escape`, `tab`, for navigating
   an agent's menu (`provider.SessionKeys`); another key is `400`.

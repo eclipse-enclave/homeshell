@@ -70,6 +70,8 @@ Capabilities are what clients gate on. Two kinds:
 | `ConfigValidator` | Workstream | Checks a create synchronously, before anything is reserved |
 | `ValidationSchemer` | Workstream | A cheaper schema to validate against than the form's |
 | `DraftResolver` | Workstream | Names and fills what a blank create would derive |
+| `StrategyTeller` | Workstream | A create's strategy, for its placeholder to carry |
+| `Refresher` | Workstream | Brings a workstream up to date on each projection, e.g. its branch |
 | `WorkstreamStartStopper` | Workstream | Only the fake has it and the daemon never calls it; `startStop` is false |
 
 - Why `ConfigValidator`: JSON Schema cannot state git's branch-name rules, and a rule checked in
@@ -162,6 +164,20 @@ The one production workstream provider. It prepares a directory with one of the 
 strategies ([CONTEXT.md](../CONTEXT.md#working-directory)) through `provider/workstream`
 (`Prepare`, `Discard`).
 
+- **Default strategy:** `worktree` in a git-backed project, else `in-place` (the schema's
+  default, also for a config naming none) or, in the form once a workstream holds the project
+  folder, `copy` (see [API.md](API.md#workstreams)).
+- **Default workstream:** `provider.Service.AddProject` creates one `in-place` workstream with
+  every new project, synchronously (nothing to materialize).
+- **Branch follows checkouts.** A workstream's branch is the one checked out in its folder; an
+  `in-place` workstream is named after it when given no name. A `copy`, made without `.git`, has
+  none. Core is a `Refresher`: each projection re-reads that branch (in place `git.CurrentBranch`;
+  elsewhere `git.HeadBranch`, which reads the folder's own HEAD file. Why: it runs for every
+  workstream on each tick, and must not find a repository above a copy), and a watch loop at the
+  refresh interval re-projects when it moved, as nothing else notices a switch with no session
+  running. Only an `in-place` workstream's name follows the branch, while it is still the one the
+  core gave (`coreCreatorData.NameFromBranch`) and no other workstream in the project has it; a
+  renamed workstream keeps its name. A detached HEAD clears the branch and keeps the name.
 - Removing an `in-place` workstream never deletes the project directory; `worktree` needs a
   git-backed project.
 - Managed worktree and copy directories go under the `workstreams.location` setting, read live,
@@ -194,7 +210,8 @@ container is Enclave's to manage.
 - **Available** when `enclave` is on `PATH` and meets the provider's CLI contract, and the
   session bridge can run (as for [Local System](#local-system)).
 - `OpenShell` opens a shell inside the container.
-- **Start** of a stopped session is an `enclave continue`, run by the service as a restart.
+- **Start** of a stopped, done or error session is an `enclave continue`, run by the service as a
+  restart.
 - **CLI gaps** that limit it are in `provider/enclave/gaps.go`: no container event stream, `stop`
   also removes, no `start`, no published-port URL (so no web-IDE link), no `logs`.
 

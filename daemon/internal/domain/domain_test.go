@@ -227,6 +227,30 @@ func TestRecomputeEffectiveDefaultsToSessionState(t *testing.T) {
 	}
 }
 
+func TestRecomputeInProjectFolder(t *testing.T) {
+	tests := []struct {
+		name       string
+		strategyID string
+		workingDir string
+		want       bool
+	}{
+		{"the project folder", "", "/work/app", true},
+		{"the project folder, spelt differently", "", "/work/app/", true},
+		{"a separate folder", "worktree", "/work/app-feature", false},
+		{"an in-place create still being made", "in-place", "", true},
+		{"another create still being made", "worktree", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project := Project{Path: "/work/app", Workstreams: []Workstream{{StrategyID: tt.strategyID, WorkingDir: tt.workingDir}}}
+			project.Recompute()
+			if got := project.Workstreams[0].InProjectFolder; got != tt.want {
+				t.Errorf("InProjectFolder = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSessionStateValid(t *testing.T) {
 	for _, s := range []SessionState{SessionIdle, SessionRunning, SessionWaiting, SessionStarting, SessionUnknown, SessionStopped, SessionDone, SessionError} {
 		if !s.Valid() {

@@ -770,11 +770,12 @@ func (p *Provider) StopSession(ctx context.Context, ref provider.SessionRef) err
 	return err
 }
 
-// StartSession only checks the session is stopped. Starting it is an `enclave
-// continue` with the recorded launch config, which the service runs as a restart.
+// StartSession only checks the session has ended (stopped, done or error). Starting it
+// is an `enclave continue` with the recorded launch config, which the service runs as
+// a restart.
 func (p *Provider) StartSession(_ context.Context, ref provider.SessionRef) error {
-	if record, ok := p.bridgeRecordFor(ref.SessionID); !ok || record.State != domain.SessionStopped {
-		return fmt.Errorf("enclave session is not stopped")
+	if record, ok := p.bridgeRecordFor(ref.SessionID); !ok || !record.State.Terminal() {
+		return fmt.Errorf("enclave session has not ended")
 	}
 	return provider.ErrStartIsRestart
 }

@@ -10,11 +10,11 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/eclipsesource/homeshell/daemon/internal/domain"
 	"github.com/eclipsesource/homeshell/daemon/internal/git"
@@ -168,6 +168,12 @@ type Store struct {
 	// dropping it — and a session what it was started with, a workstream the name
 	// it holds; the swap after that decides.
 	unprojectedPromotions map[string]string
+	// now is the clock that stamps Session.EndedAt; tests replace it.
+	now func() time.Time
+	// unobserved are the IDs of sessions restored from disk that no projection has
+	// reported on yet. Their restored state is a placeholder (idle), so the first
+	// observation says nothing about when they ended (stampEndedAtLocked).
+	unobserved map[string]bool
 }
 
 // New creates a store with the given initial projects, persisting through saver.
@@ -184,6 +190,8 @@ func New(projects []domain.Project, saver persist.Saver, opts ...Option) *Store 
 		sessionTitles:         map[string]persist.CustomTitle{},
 		launchConfigs:         map[string]persist.LaunchConfig{},
 		unprojectedPromotions: map[string]string{},
+		now:                   time.Now,
+		unobserved:            map[string]bool{},
 	}
 	for _, o := range opts {
 		o(s)
@@ -208,6 +216,9 @@ func Restore(snapshot persist.Snapshot, saver persist.Saver, opts ...Option) *St
 	for i := range restored.projects {
 		for j := range restored.projects[i].Workstreams {
 			restored.applyTitlesLocked(restored.projects[i].Workstreams[j].Sessions)
+			for _, session := range restored.projects[i].Workstreams[j].Sessions {
+				restored.unobserved[session.ID] = true
+			}
 		}
 	}
 	return restored
@@ -419,7 +430,9 @@ func (s *Store) ReplaceWorkstreams(projectID string, workstreams []domain.Workst
 			s.applyTitlesLocked(workstreams[j].Sessions)
 		}
 		keepPlaceholderLinks(s.projects[i].Workstreams, workstreams)
+		s.stampEndedAtLocked(s.projects[i].Workstreams, workstreams)
 		listed := sessionIDsIn(workstreams)
+		s.forgetUnobservedLocked(s.projects[i].Workstreams, listed)
 		pruned := s.pruneTitlesLocked(projectID, listed)
 		pruned = s.pruneLaunchConfigsLocked(projectID, listed) || pruned
 		// Held for the change check below. Recompute normalizes derived fields, so
@@ -439,6 +452,71 @@ func (s *Store) ReplaceWorkstreams(projectID string, workstreams []domain.Workst
 		return nil
 	}
 	return fmt.Errorf("project %q not found", projectID)
+}
+
+// stampEndedAtLocked sets Session.EndedAt on the incoming sessions from what the
+// previous projection knew of them. A session that was live and is now terminal
+// ended just now; one that stays terminal keeps its recorded time; a live one has
+// none. A session not in the previous projection, or restored from disk and not
+// yet observed, was first seen in this state, so no end is claimed for it beyond
+// the persisted one.
+//
+// A restored session stays unobserved until a projection brings it changed: the
+// reconciler carries a session its provider did not report over as the stored
+// copy, which is still the restored idle placeholder and says nothing about it.
+func (s *Store) stampEndedAtLocked(previous, incoming []domain.Workstream) {
+	before := map[string]domain.Session{}
+	for _, workstream := range previous {
+		for _, session := range workstream.Sessions {
+			before[session.ID] = session
+		}
+	}
+	now := s.now()
+	for _, workstream := range incoming {
+		for j := range workstream.Sessions {
+			session := &workstream.Sessions[j]
+			prev, known := before[session.ID]
+			first := s.unobserved[session.ID]
+			if first && known && sameReport(prev, *session) {
+				continue
+			}
+			delete(s.unobserved, session.ID)
+			var endedAt *time.Time
+			switch {
+			case !session.State.Terminal():
+			case !known:
+				// First seen already ended: a time the provider reports stands.
+				endedAt = session.EndedAt
+			case first || prev.EndedAt != nil:
+				// After a restart the persisted time (nil if none) stands: the first
+				// look cannot tell when the session ended, and now() would be a lie.
+				endedAt = prev.EndedAt
+			case !prev.State.Terminal():
+				stamp := now
+				endedAt = &stamp
+			}
+			session.EndedAt = endedAt
+		}
+	}
+}
+
+// forgetUnobservedLocked drops the restored sessions of previous that are no
+// longer listed from the unobserved set: one that comes back is first seen anew.
+func (s *Store) forgetUnobservedLocked(previous []domain.Workstream, listed map[string]bool) {
+	for _, workstream := range previous {
+		for _, session := range workstream.Sessions {
+			if !listed[session.ID] {
+				delete(s.unobserved, session.ID)
+			}
+		}
+	}
+}
+
+// sameReport reports whether incoming is the stored session carried over as is,
+// ignoring Restartable, which the projection derives anew each cycle.
+func sameReport(stored, incoming domain.Session) bool {
+	stored.Restartable, incoming.Restartable = false, false
+	return reflect.DeepEqual(stored, incoming)
 }
 
 // retainInFlightLocked re-attaches the daemon's own creation bookkeeping —
@@ -758,7 +836,8 @@ func (s *Store) NameUser(projectID, name string, exceptIDs ...string) string {
 }
 
 // WorkingDirUser names the workstream in the project already working in dir, or
-// returns "" — the rule AddWorkstream and PromoteWorkstream enforce.
+// returns "" — the rule AddWorkstream and PromoteWorkstream enforce, and what
+// the creation form and an in-place create are checked against.
 func (s *Store) WorkingDirUser(projectID, dir string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -772,17 +851,16 @@ func (s *Store) WorkingDirUser(projectID, dir string) string {
 }
 
 // workingDirTakenLocked reports the workstream in project already working in
-// dir, ignoring exceptIDs. An empty dir — a placeholder's — never collides.
+// dir, ignoring exceptIDs. An empty dir — a placeholder's — never collides. The
+// project folder is taken by any workstream shown in it (InProjectFolder), so a
+// pending or failed in-place create, which has no folder yet, holds it too.
 func workingDirTakenLocked(project *domain.Project, dir string, exceptIDs ...string) (domain.Workstream, bool) {
-	if dir == "" {
-		return domain.Workstream{}, false
-	}
-	want := filepath.Clean(dir)
+	projectFolder := domain.SameFolder(dir, project.Path)
 	for _, existing := range project.Workstreams {
-		if slices.Contains(exceptIDs, existing.ID) || existing.WorkingDir == "" {
+		if slices.Contains(exceptIDs, existing.ID) {
 			continue
 		}
-		if filepath.Clean(existing.WorkingDir) == want {
+		if domain.SameFolder(existing.WorkingDir, dir) || projectFolder && existing.InProjectFolder {
 			return existing, true
 		}
 	}

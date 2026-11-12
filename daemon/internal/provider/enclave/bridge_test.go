@@ -402,6 +402,34 @@ func TestHostBridgeStopStartUsesLaunchConfigAndSensitiveDir(t *testing.T) {
 		t.Fatalf("restart opts=%+v", cli.runCalls)
 	}
 }
+
+// A session that ended on its own starts again the way a stopped one does (see
+// TestHostBridgeStopStartUsesLaunchConfigAndSensitiveDir); a live one is refused.
+func TestHostBridgeStartsADoneOrErrorSessionByRestart(t *testing.T) {
+	for _, tt := range []struct {
+		state   domain.SessionState
+		restart bool
+	}{
+		{domain.SessionDone, true},
+		{domain.SessionError, true},
+		{domain.SessionRunning, false},
+	} {
+		t.Run(string(tt.state), func(t *testing.T) {
+			p, _, _, project := bridgeProvider(t)
+			created := createBridge(t, p, project)
+			p.bridges.mu.Lock()
+			record := p.bridges.records[created.ID]
+			record.State = tt.state
+			p.bridges.records[created.ID] = record
+			p.bridges.mu.Unlock()
+			err := p.StartSession(context.Background(), provider.SessionRef{ProjectID: project.ID, SessionID: created.ID})
+			if err == nil || errors.Is(err, provider.ErrStartIsRestart) != tt.restart {
+				t.Errorf("StartSession err = %v, want restart %v", err, tt.restart)
+			}
+		})
+	}
+}
+
 func TestHostBridgePersistenceFailureCleansCreatedContainer(t *testing.T) {
 	p, cli, _, project := bridgeProvider(t)
 	p.bridges.path = t.TempDir() // atomic rename cannot replace a directory

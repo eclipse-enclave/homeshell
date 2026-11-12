@@ -44,6 +44,9 @@ const coreProviderLabel = "Default"
 // claimed holds the managed directories of creates in flight, which may not
 // exist on disk yet.
 type core struct {
+	// SettingsHolder supplies the refresh interval the reconciler follows
+	// in-place workstreams' branches at (Refresher).
+	SettingsHolder
 	root     string
 	location func() string
 
@@ -56,15 +59,19 @@ var (
 	_ SettingsAware      = (*core)(nil)
 	_ ConfigValidator    = (*core)(nil)
 	_ DraftResolver      = (*core)(nil)
+	_ StrategyTeller     = (*core)(nil)
 	_ ValidationSchemer  = (*core)(nil)
+	_ Refresher          = (*core)(nil)
 )
 
 // suggestTimeout bounds all of a form's git queries together.
 const suggestTimeout = 2 * time.Second
 
 // SetSettings wires the settings store so the managed-directory root can honor
-// the configured workstreams.location, read live at each create.
+// the configured workstreams.location, read live at each create, and branches
+// are followed at the configured refresh interval.
 func (c *core) SetSettings(s *settings.Store) {
+	c.SettingsHolder.SetSettings(s)
 	c.location = func() string { return s.Get().Workstreams.Location }
 }
 
@@ -101,24 +108,59 @@ func (c *core) CanCreate(context.Context, ProjectRef) bool { return true }
 
 // Schema returns the core's creation form. Only a git-backed project offers the
 // worktree strategy, and its form suggests the repository's refs; a failing git
-// query drops the suggestions, not the form.
+// query drops the suggestions, not the form. A folder holds one workstream, so
+// once the project folder is taken the form does not offer in place.
 func (c *core) Schema(ctx context.Context, project ProjectRef) json.RawMessage {
 	if !project.GitBacked {
-		return json.RawMessage(plainSchema)
+		return plainSchemaFor(project.FolderTaken)
 	}
 	ctx, cancel := context.WithTimeout(ctx, suggestTimeout)
 	defer cancel()
 	refs, defaultBase := gitRefSuggestions(ctx, project.Path)
-	return gitSchemaSuggesting(refs, defaultBase)
+	return gitSchemaSuggesting(project.FolderTaken, refs, defaultBase)
 }
 
 // ValidationSchema is Schema without the suggestions, which validation ignores:
-// a create need not wait on git for them.
+// a create need not wait on git for them. It keeps in place either way, so
+// ValidateCreate's refusal can name the workstream that holds the folder.
 func (c *core) ValidationSchema(_ context.Context, project ProjectRef) json.RawMessage {
 	if !project.GitBacked {
-		return json.RawMessage(plainSchema)
+		return plainSchemaFor(false)
 	}
-	return gitSchemaSuggesting(nil, "")
+	return gitSchemaSuggesting(false, nil, "")
+}
+
+// strategyProperty renders the form's strategy property: in place unless the
+// project folder is taken, worktree on a git project, and copy. A git project
+// defaults to worktree, a plain one to its first choice.
+func strategyProperty(gitBacked, folderTaken bool) string {
+	ids, labels := []string{}, []string{}
+	offer := func(id, label string) { ids, labels = append(ids, id), append(labels, label) }
+	if !folderTaken {
+		offer("in-place", "In place")
+	}
+	if gitBacked {
+		offer("worktree", "Worktree")
+	}
+	offer("copy", "Folder: a copy of the project")
+	defaultID := ids[0]
+	if gitBacked {
+		defaultID = "worktree"
+	}
+	return fmt.Sprintf(`{
+      "type": "string",
+      "enum": %s,
+      "enumNames": %s,
+      "default": %s,
+      "title": "Filesystem strategy",
+      "description": "How the working directory is set up."
+    }`, schemaValue(ids), schemaValue(labels), schemaValue(defaultID))
+}
+
+// plainSchemaFor renders plainSchema, leaving in place out of the strategies
+// when folderTaken.
+func plainSchemaFor(folderTaken bool) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(plainSchema, strategyProperty(false, folderTaken)))
 }
 
 // gitRefSuggestions lists the refs of the repository at dir and resolves its
@@ -133,7 +175,7 @@ func gitRefSuggestions(ctx context.Context, dir string) ([]git.Ref, string) {
 
 // gitSchemaSuggesting renders gitSchema suggesting refs, with defaultBase as the
 // base ref's default and among its suggestions.
-func gitSchemaSuggesting(refs []git.Ref, defaultBase string) json.RawMessage {
+func gitSchemaSuggesting(folderTaken bool, refs []git.Ref, defaultBase string) json.RawMessage {
 	branches, refNames := []string{}, []string{}
 	for _, ref := range refs {
 		refNames = append(refNames, ref.Name)
@@ -144,7 +186,7 @@ func gitSchemaSuggesting(refs []git.Ref, defaultBase string) json.RawMessage {
 	if defaultBase != "" && !slices.Contains(refNames, defaultBase) {
 		refNames = append([]string{defaultBase}, refNames...)
 	}
-	return json.RawMessage(fmt.Sprintf(gitSchema,
+	return json.RawMessage(fmt.Sprintf(gitSchema, strategyProperty(true, folderTaken),
 		schemaValue(branches), schemaValue(defaultBase), schemaValue(refNames)))
 }
 
@@ -155,18 +197,13 @@ func schemaValue(value any) string {
 }
 
 // gitSchema is the form for a git-backed project. Its verbs take, in order, the
-// branch suggestions, the base ref's default and the base ref's suggestions.
+// strategy property, the branch suggestions, the base ref's default and the base
+// ref's suggestions.
 const gitSchema = `{
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "strategy": {
-      "type": "string",
-      "enum": ["in-place", "worktree", "copy"],
-      "default": "in-place",
-      "title": "Filesystem strategy",
-      "description": "How the working directory is set up."
-    },
+    "strategy": %s,
     "branch": {
       "type": "string",
       "title": "Branch",
@@ -188,18 +225,13 @@ const gitSchema = `{
   }
 }`
 
-// plainSchema is the form for a project that is not git-backed.
+// plainSchema is the form for a project that is not git-backed. Its verb takes
+// the strategy property.
 const plainSchema = `{
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "strategy": {
-      "type": "string",
-      "enum": ["in-place", "copy"],
-      "default": "in-place",
-      "title": "Filesystem strategy",
-      "description": "How the working directory is set up."
-    },
+    "strategy": %s,
     "path": {
       "type": "string",
       "title": "Destination path",
@@ -218,7 +250,7 @@ const plainSchema = `{
 // about the repository as it is now: asked here so the answer comes on the form,
 // and again by Prepare, which materializes against the repository as it is then.
 func (c *core) ValidateCreate(ctx context.Context, req CreateRequest) error {
-	strategy, branch, baseRef, destDir := parseCoreConfig(req.Config)
+	strategy, branch, baseRef, destDir := parseCoreConfig(req.Config, req.Project.GitBacked)
 	fields := map[string]string{}
 	if wsfs.Strategy(strategy) == wsfs.Worktree {
 		name, derived := coreNameAndBranch(ctx, req, strategy, branch)
@@ -269,7 +301,7 @@ func (c *core) ValidateCreate(ctx context.Context, req CreateRequest) error {
 // managed directory under a root that cannot be resolved is left blank, as is
 // a copy's under a root inside the project, which Create refuses.
 func (c *core) ResolveDraft(ctx context.Context, req CreateRequest) Draft {
-	strategy, branch, _, destDir := parseCoreConfig(req.Config)
+	strategy, branch, _, destDir := parseCoreConfig(req.Config, req.Project.GitBacked)
 	name, branch := coreNameAndBranch(ctx, req, strategy, branch)
 	if destDir == "" && wsfs.Strategy(strategy) != wsfs.InPlace {
 		root, err := c.resolveRoot(req.Project.Path)
@@ -280,6 +312,12 @@ func (c *core) ResolveDraft(ctx context.Context, req CreateRequest) Draft {
 		}
 	}
 	return Draft{Name: name, Config: map[string]string{"branch": branch, "path": destDir}}
+}
+
+// CreateStrategy says the strategy Create would use for req (see StrategyTeller).
+func (c *core) CreateStrategy(req CreateRequest) string {
+	strategy, _, _, _ := parseCoreConfig(req.Config, req.Project.GitBacked)
+	return strategy
 }
 
 // workingDirUser names the workstream already working in dir, or "".
@@ -325,7 +363,7 @@ func worktreeRefusals(ctx context.Context, dir, branch, baseRef string, fromName
 // Name, Strategy, Branch, WorkingDir, and CreatorData populated. The daemon
 // assigns the ID and stamps Provider.
 func (c *core) Create(ctx context.Context, req CreateRequest) (domain.Workstream, error) {
-	strategy, branch, baseRef, destDir := parseCoreConfig(req.Config)
+	strategy, branch, baseRef, destDir := parseCoreConfig(req.Config, req.Project.GitBacked)
 	name, branch := coreNameAndBranch(ctx, req, strategy, branch)
 	// Resolve a user-supplied destination path (tilde expansion, reject relative).
 	if destDir != "" {
@@ -354,14 +392,62 @@ func (c *core) Create(ctx context.Context, req CreateRequest) (domain.Workstream
 	if err != nil {
 		return domain.Workstream{}, err
 	}
+	creatorData := coreCreatorData{Strategy: strategy}
+	if wsfs.Strategy(strategy) == wsfs.InPlace && branch != "" && name == branch {
+		creatorData.NameFromBranch = name
+	}
 	return domain.Workstream{
 		Name:        name,
 		StrategyID:  strategy,
 		Branch:      branch,
 		WorkingDir:  dir,
-		CreatorData: marshalCreatorData(coreCreatorData{Strategy: strategy}),
+		CreatorData: marshalCreatorData(creatorData),
 		Sessions:    []domain.Session{},
 	}, nil
+}
+
+// Refresh follows the branch checked out in a workstream's folder, which the
+// user switches outside HomeShell: the workstream's branch is the one checked
+// out now. An in-place workstream's name follows too while it still wears the
+// one the core gave it from the branch — a rename keeps the user's name. A
+// detached HEAD has no branch, and leaves the name as it was. A folder git does
+// not answer for changes nothing.
+func (c *core) Refresh(ctx context.Context, project ProjectRef, workstream domain.Workstream) domain.Workstream {
+	creatorData := parseCreatorData(workstream)
+	branch, ok := checkedOutBranch(ctx, project, workstream, creatorData)
+	if !ok {
+		return workstream
+	}
+	workstream.Branch = branch
+	if branch != "" && creatorData.NameFromBranch != "" && workstream.Name == creatorData.NameFromBranch {
+		workstream.Name = branch
+		creatorData.NameFromBranch = branch
+		workstream.CreatorData = marshalCreatorData(creatorData)
+	}
+	return workstream
+}
+
+// checkedOutBranch is the branch checked out in a workstream's folder, "" on a
+// detached HEAD, and false where there is none to read: a project outside git,
+// or a git that does not answer. In place it is the project's branch, which git
+// finds from a project folder below the repository's root too. A separate
+// folder has one only as a repository or worktree of its own, read from its
+// HEAD file: every one is polled at the refresh interval, and a copy, made
+// without .git, must not take the branch of a repository around it.
+func checkedOutBranch(ctx context.Context, project ProjectRef, workstream domain.Workstream, creatorData coreCreatorData) (string, bool) {
+	if !project.GitBacked {
+		return "", false
+	}
+	dir, read := workstream.WorkingDir, git.HeadBranch
+	if wsfs.Strategy(creatorData.Strategy) == wsfs.InPlace {
+		dir, read = project.Path, git.CurrentBranch
+	}
+	branch, err := read(ctx, dir)
+	if err != nil {
+		slog.Debug("core: reading the branch failed", "path", dir, "error", err)
+		return "", false
+	}
+	return branch, true
 }
 
 // Remove discards the working directory the core materialized unless
@@ -371,14 +457,11 @@ func (c *core) Remove(_ context.Context, project ProjectRef, ws domain.Workstrea
 	if opts.KeepFiles {
 		return nil
 	}
-	var cd coreCreatorData
-	if len(ws.CreatorData) > 0 {
-		_ = json.Unmarshal(ws.CreatorData, &cd)
-	}
-	if cd.Strategy == "" || cd.Strategy == string(wsfs.InPlace) || ws.WorkingDir == "" {
+	creatorData := parseCreatorData(ws)
+	if creatorData.Strategy == "" || creatorData.Strategy == string(wsfs.InPlace) || ws.WorkingDir == "" {
 		return nil
 	}
-	return wsfs.Discard(wsfs.Strategy(cd.Strategy), project.Path, ws.WorkingDir)
+	return wsfs.Discard(wsfs.Strategy(creatorData.Strategy), project.Path, ws.WorkingDir)
 }
 
 // claimManagedDir is the managed directory a Create prepares, held from other
@@ -491,8 +574,23 @@ func (c *core) configuredLocation() string {
 // coreCreatorData is the core provider's private teardown bookkeeping stored in
 // domain.Workstream.CreatorData. Only the core reads it. The materialized
 // directory itself lives in the public WorkingDir field.
+//
+// NameFromBranch is the name an in-place workstream was last given from the
+// branch checked out in its folder; while the workstream still wears it, the
+// name follows the branch (Refresh). Empty for one named anything else.
 type coreCreatorData struct {
-	Strategy string `json:"strategy"`
+	Strategy       string `json:"strategy"`
+	NameFromBranch string `json:"nameFromBranch,omitempty"`
+}
+
+// parseCreatorData reads the core's bookkeeping off workstream; unreadable or
+// absent data reads as zero.
+func parseCreatorData(workstream domain.Workstream) coreCreatorData {
+	var creatorData coreCreatorData
+	if len(workstream.CreatorData) > 0 {
+		_ = json.Unmarshal(workstream.CreatorData, &creatorData)
+	}
+	return creatorData
 }
 
 func marshalCreatorData(cd coreCreatorData) json.RawMessage {
@@ -503,9 +601,13 @@ func marshalCreatorData(cd coreCreatorData) json.RawMessage {
 // parseCoreConfig reads a core config. The branch and base ref only mean
 // anything to the worktree strategy, so under any other they come back empty:
 // a form may send them regardless, and a workstream must not claim a branch it
-// is not on.
-func parseCoreConfig(config []byte) (strategy, branch, baseRef, destDir string) {
+// is not on. A config naming no strategy takes the schema's default: a
+// worktree for a git-backed project, else in place.
+func parseCoreConfig(config []byte, gitBacked bool) (strategy, branch, baseRef, destDir string) {
 	strategy = string(wsfs.InPlace)
+	if gitBacked {
+		strategy = string(wsfs.Worktree)
+	}
 	if len(config) == 0 {
 		return
 	}
@@ -531,12 +633,16 @@ func parseCoreConfig(config []byte) (strategy, branch, baseRef, destDir string) 
 // follows the branch, else the project, numbered past the names the project's
 // workstreams already take — and, when the name is to give the branch too, past
 // the branches the repository already has. A worktree's empty branch is derived
-// from the name, capped like a managed directory.
+// from the name, capped like a managed directory; an in-place workstream's is
+// the one checked out in the project folder.
 func coreNameAndBranch(ctx context.Context, req CreateRequest, strategy, branch string) (string, string) {
 	worktree := wsfs.Strategy(strategy) == wsfs.Worktree
+	if wsfs.Strategy(strategy) == wsfs.InPlace && req.Project.GitBacked {
+		branch, _ = git.CurrentBranch(ctx, req.Project.Path)
+	}
 	name := req.Name
 	if name == "" {
-		base := coreWorkstreamName(req.Project.Path, branch, strategy)
+		base := coreWorkstreamName(req.Project.Path, branch)
 		name = base
 		for number := 2; !coreNameFree(ctx, req, name, worktree && branch == ""); number++ {
 			name = fmt.Sprintf("%s-%d", base, number)
@@ -564,8 +670,10 @@ func coreNameFree(ctx context.Context, req CreateRequest, name string, namesBran
 	return err != nil || !exists
 }
 
-func coreWorkstreamName(projectDir, branch, strategy string) string {
-	if strategy == "worktree" && branch != "" {
+// coreWorkstreamName is the name a workstream given none starts from: its
+// branch, else the project folder's name.
+func coreWorkstreamName(projectDir, branch string) string {
+	if branch != "" {
 		return branch
 	}
 	if base := filepath.Base(projectDir); base != "" && base != "." && base != string(filepath.Separator) {

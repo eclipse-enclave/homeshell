@@ -1,6 +1,10 @@
 package store
 
-import "github.com/eclipsesource/homeshell/daemon/internal/domain"
+import (
+	"time"
+
+	"github.com/eclipsesource/homeshell/daemon/internal/domain"
+)
 
 // The workstream the demo simulator (the fake provider under `serve -demo`)
 // cycles a session through so the UI shows live SSE updates.
@@ -51,7 +55,13 @@ func Seed() []domain.Project {
 					WorkingDir:   "~/Git/homeshell",
 					RuntimeState: domain.RuntimeRunning,
 					Sessions: []domain.Session{
-						{ID: "sess-hs-docs", Title: "Review architecture document", Agent: "Codex", State: domain.SessionDone},
+						{ID: "sess-hs-docs-live", Title: "Update the API reference", Agent: "Claude Code", State: domain.SessionRunning},
+						{ID: "sess-hs-docs-ask", Title: "Review glossary changes", Agent: "Claude Code", State: domain.SessionWaiting},
+						{ID: "sess-hs-docs", Title: "Review architecture document", Agent: "Codex", State: domain.SessionDone, EndedAt: agoAt(12 * time.Minute)},
+						{ID: "sess-hs-docs-lint", Title: "Fix docs lint", Agent: "Claude Code", State: domain.SessionStopped, EndedAt: agoAt(time.Hour)},
+						{ID: "sess-hs-docs-links", Title: "Check broken links", Agent: "Claude Code", State: domain.SessionStopped, EndedAt: agoAt(26 * time.Hour)},
+						{ID: "sess-hs-docs-toc", Title: "Rebuild the table of contents", Agent: "Claude Code", State: domain.SessionDone, EndedAt: agoAt(3 * 24 * time.Hour)},
+						{ID: "sess-hs-docs-typos", Title: "Proofread the README", Agent: "Claude Code", State: domain.SessionDone, EndedAt: agoAt(9 * 24 * time.Hour)},
 					},
 				},
 			},
@@ -137,4 +147,10 @@ func Seed() []domain.Project {
 			Workstreams: []domain.Workstream{},
 		},
 	}
+}
+
+// agoAt is the time elapsed before now, for the demo's ended sessions.
+func agoAt(elapsed time.Duration) *time.Time {
+	endedAt := time.Now().Add(-elapsed)
+	return &endedAt
 }

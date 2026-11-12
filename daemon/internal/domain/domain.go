@@ -6,7 +6,9 @@ package domain
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ---------- Session states ----------
@@ -211,6 +213,11 @@ type Session struct {
 	// persisted because the reconciler routes and retains by it.
 	Provider string       `json:"provider,omitempty"`
 	State    SessionState `json:"state"`
+	// EndedAt is when the daemon saw the session become terminal (done, stopped or
+	// error). It is nil while the session is live, and for one first seen already
+	// ended, whose real end the daemon cannot know. Persisted, so a restart does not
+	// restamp it.
+	EndedAt *time.Time `json:"endedAt,omitempty"`
 	// Preview is a plain-text tail of the session's terminal output, surfaced for
 	// the UI. It is live, ephemeral state (recomputed on each capture, never
 	// persisted), so it is omitted when empty.
@@ -264,18 +271,22 @@ type Workstream struct {
 	// adopted workstream, its session provider's); empty for the core provider
 	// and for an ID no registered provider answers to. Derived during
 	// projection like OpenModes.
-	ProviderLabel string          `json:"providerLabel,omitempty"`
-	StrategyID    string          `json:"strategyId"`
-	Strategy      string          `json:"strategy"`
-	Branch        string          `json:"branch,omitempty"`
-	WorkingDir    string          `json:"workingDir,omitempty"`
-	State         SessionState    `json:"state"`
-	RuntimeState  RuntimeState    `json:"runtimeState"`
-	Effective     string          `json:"effectiveState"`
-	StatusMessage string          `json:"statusMessage,omitempty"`
-	ProviderData  json.RawMessage `json:"providerData,omitempty"`
-	CreatorData   json.RawMessage `json:"creatorData,omitempty"`
-	OpenModes     []OpenMode      `json:"openModes"`
+	ProviderLabel string `json:"providerLabel,omitempty"`
+	StrategyID    string `json:"strategyId"`
+	Strategy      string `json:"strategy"`
+	Branch        string `json:"branch,omitempty"`
+	WorkingDir    string `json:"workingDir,omitempty"`
+	// InProjectFolder says the workstream works, or will once created, in the
+	// project's own folder, the one folder a project's workstreams can share only
+	// one at a time. Derived by Recompute; not persisted.
+	InProjectFolder bool            `json:"inProjectFolder,omitempty"`
+	State           SessionState    `json:"state"`
+	RuntimeState    RuntimeState    `json:"runtimeState"`
+	Effective       string          `json:"effectiveState"`
+	StatusMessage   string          `json:"statusMessage,omitempty"`
+	ProviderData    json.RawMessage `json:"providerData,omitempty"`
+	CreatorData     json.RawMessage `json:"creatorData,omitempty"`
+	OpenModes       []OpenMode      `json:"openModes"`
 	// Actions are the workstream-level actions available right now, derived
 	// during projection like OpenModes and for the same reason: whether one is
 	// possible can depend on the daemon's filesystem, which a client cannot see.
@@ -406,22 +417,35 @@ type Project struct {
 // StrategyLabel returns the human-readable display label for a raw strategy ID.
 // The label is derived at runtime; only the ID is persisted.
 func StrategyLabel(strategyID string) string {
-	if strategyID == "in-place" {
+	switch strategyID {
+	case "in-place":
 		return "in place"
+	case "copy":
+		return "folder"
 	}
 	return strategyID
 }
 
-// Recompute derives the workstream states from their session states, the
-// effective display state from the runtime and session aggregates, and the
-// project-level aggregates from the workstream values. Call it after every
-// mutation.
+// SameFolder reports whether two working directories name the same folder. An
+// empty one (a placeholder's) is no folder and matches nothing. It is the one
+// test behind both the rule that a folder holds one workstream and
+// Workstream.InProjectFolder.
+func SameFolder(dir, other string) bool {
+	return dir != "" && other != "" && filepath.Clean(dir) == filepath.Clean(other)
+}
+
+// Recompute derives the workstream states from their session states, whether
+// each works in the project folder, the effective display state from the
+// runtime and session aggregates, and the project-level aggregates from the
+// workstream values. Call it after every mutation.
 func (p *Project) Recompute() {
 	workstreamStates := make([]SessionState, len(p.Workstreams))
 	workstreamRuntimeStates := make([]RuntimeState, len(p.Workstreams))
 	for i := range p.Workstreams {
 		w := &p.Workstreams[i]
 		w.Strategy = StrategyLabel(w.StrategyID)
+		// An in-place create's placeholder has no folder yet, only its strategy.
+		w.InProjectFolder = w.StrategyID == "in-place" || SameFolder(w.WorkingDir, p.Path)
 		// Persistence and provider projection do not set a runtime state, so the
 		// zero value means "unknown".
 		if w.RuntimeState == "" {

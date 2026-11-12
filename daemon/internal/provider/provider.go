@@ -147,6 +147,28 @@ type DraftResolver interface {
 	ResolveDraft(ctx context.Context, req CreateRequest) Draft
 }
 
+// StrategyTeller is a workstream provider that can say a create's strategy
+// (domain.Workstream.StrategyID) before the create runs. The create's
+// placeholder carries it, so an in-place create is listed in the project folder
+// from the start.
+type StrategyTeller interface {
+	CreateStrategy(req CreateRequest) string
+}
+
+// Refresher is a workstream provider whose workstreams change under it between
+// creates, outside HomeShell (a branch switched in the folder). The reconciler
+// asks it on every projection cycle for the workstream as it is now; it must
+// stay cheap, and return ws unchanged when it cannot tell. A name it gives is
+// kept only if no other workstream in the project answers to it.
+//
+// Nothing else notices a branch switched with no session running, so the
+// reconciler also asks every RefreshInterval (falling back to its own period
+// when that is 0) whether a workstream's branch moved, and re-projects if so.
+type Refresher interface {
+	Refresh(ctx context.Context, project ProjectRef, ws domain.Workstream) domain.Workstream
+	RefreshInterval() time.Duration
+}
+
 // Draft is a create as the provider would carry it out.
 type Draft struct {
 	Name   string            `json:"name"`
@@ -332,6 +354,10 @@ type ProjectRef struct {
 	ID        string
 	Path      string
 	GitBacked bool
+	// FolderTaken says a workstream already works in the project folder. Set only
+	// for the creation form (Service.WorkstreamProvidersFor), so a form can leave
+	// out what a create there would refuse.
+	FolderTaken bool
 }
 
 // WorkstreamRef identifies a workstream within a project.

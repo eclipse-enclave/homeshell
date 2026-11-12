@@ -356,6 +356,7 @@ func (s *Service) WorkstreamProvidersFor(ctx context.Context, projectID string) 
 	if !ok {
 		return nil, ErrProjectNotFound
 	}
+	ref.FolderTaken = s.store.WorkingDirUser(projectID, ref.Path) != ""
 	var out []ProviderDescriptor
 	for _, p := range s.registry.WorkstreamProviders() {
 		available, err := p.Available(ctx)
@@ -438,6 +439,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Workstream
 		StatusMessage: "Setting up workstream\u2026",
 		Sessions:      []domain.Session{},
 	}
+	if teller, ok := wp.(StrategyTeller); ok {
+		placeholder.StrategyID = teller.CreateStrategy(request)
+	}
 	if err := s.store.AddWorkstream(in.ProjectID, placeholder); err != nil {
 		return domain.Workstream{}, err
 	}
@@ -450,6 +454,93 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Workstream
 		return projected, nil
 	}
 	return placeholder, nil
+}
+
+// AddProject adds a project with its default workstream: one in place, in the
+// project folder and named after the branch checked out there, so sessions can
+// start as soon as the project exists. The project is echoed back as stored,
+// default workstream included. A default workstream that cannot be made is
+// logged and the project added without one: the user can still create one.
+func (s *Service) AddProject(ctx context.Context, project *domain.Project) error {
+	if err := s.store.AddProject(project); err != nil {
+		return err
+	}
+	defaultWorkstream, err := s.AddDefaultWorkstream(ctx, project.ID)
+	if err != nil {
+		slog.Warn("adding the default workstream failed", "project", project.ID, "error", err)
+		return nil
+	}
+	project.Workstreams = []domain.Workstream{defaultWorkstream}
+	project.Recompute()
+	return nil
+}
+
+// defaultWorkstreamConfig is the core create the default workstream is.
+const defaultWorkstreamConfig = `{"strategy":"in-place"}`
+
+// AddDefaultWorkstream creates a project's default workstream through the core
+// provider and returns it. In place nothing is materialized, so it is created
+// synchronously, with no placeholder in between. While another workstream is in
+// the project folder, a pending or failed in-place create included, it is
+// refused with store.ErrDuplicateWorkingDir.
+func (s *Service) AddDefaultWorkstream(ctx context.Context, projectID string) (domain.Workstream, error) {
+	project, ok := s.projectRef(projectID)
+	if !ok {
+		return domain.Workstream{}, ErrProjectNotFound
+	}
+	workstreamProvider, ok := s.registry.WorkstreamProvider(CoreProviderID)
+	if !ok {
+		return domain.Workstream{}, ErrProviderNotFound
+	}
+	created, err := s.addDefaultWorkstream(ctx, projectID, project, workstreamProvider)
+	if err != nil {
+		return domain.Workstream{}, err
+	}
+	// AddWorkstream does not persist; a projection pass does, and attaches any
+	// session already running in the project folder. The workstream exists
+	// either way, so a failed pass is logged and left to the next.
+	if err := s.reconciler.ReconcileProject(ctx, projectID); err != nil {
+		slog.Warn("reconciling after adding the default workstream failed",
+			"project", projectID, "error", err)
+	}
+	return s.store.Workstream(projectID, created.ID)
+}
+
+// addDefaultWorkstream creates and stores the default workstream under
+// createMu, so an in-place create cannot pass its check against the project
+// folder in between.
+func (s *Service) addDefaultWorkstream(ctx context.Context, projectID string, project ProjectRef, workstreamProvider WorkstreamProvider) (domain.Workstream, error) {
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
+	created, err := workstreamProvider.Create(ctx, s.createRequest(CreateInput{
+		ProjectID: projectID, Config: []byte(defaultWorkstreamConfig),
+	}, project))
+	if err != nil {
+		return domain.Workstream{}, err
+	}
+	created, err = stampCreated(created, workstreamProvider.ID())
+	if err != nil {
+		return domain.Workstream{}, err
+	}
+	if err := s.store.AddWorkstream(projectID, created); err != nil {
+		return domain.Workstream{}, err
+	}
+	return created, nil
+}
+
+// stampCreated gives a workstream a provider created what the daemon assigns:
+// its ID and its provider.
+func stampCreated(created domain.Workstream, providerID string) (domain.Workstream, error) {
+	workstreamID, err := generateWorkstreamID()
+	if err != nil {
+		return domain.Workstream{}, fmt.Errorf("generating workstream ID: %w", err)
+	}
+	created.ID = workstreamID
+	created.Provider = providerID
+	if created.Sessions == nil {
+		created.Sessions = []domain.Session{}
+	}
+	return created, nil
 }
 
 // ResolveDraft says what Create would derive for what input leaves blank,
@@ -521,19 +612,14 @@ func (s *Service) finishCreate(ctx context.Context, in CreateInput, ref ProjectR
 	if err != nil {
 		slog.Warn("workstream creation failed",
 			"project", in.ProjectID, "placeholder", placeholderID, "error", err)
-		s.failCreate(in, wp, placeholderID, err)
+		s.failCreate(in, placeholderID, err)
 		return
 	}
 
-	wsID, err := generateWorkstreamID()
+	created, err = stampCreated(created, wp.ID())
 	if err != nil {
 		slog.Warn("failed to generate workstream ID", "error", err)
 		return
-	}
-	created.ID = wsID
-	created.Provider = wp.ID()
-	if created.Sessions == nil {
-		created.Sessions = []domain.Session{}
 	}
 
 	// Swap the placeholder for the real workstream in one mutation; the store
@@ -548,7 +634,7 @@ func (s *Service) finishCreate(ctx context.Context, in CreateInput, ref ProjectR
 			slog.Warn("discarding rejected workstream directory failed",
 				"project", in.ProjectID, "dir", created.WorkingDir, "error", rerr)
 		}
-		s.failCreate(in, wp, placeholderID, err)
+		s.failCreate(in, placeholderID, err)
 		return
 	}
 	// PromoteWorkstream saves and broadcasts the real workstream. Reconcile so its
@@ -570,21 +656,18 @@ func validationSchema(ctx context.Context, wp WorkstreamProvider, project Projec
 
 // failCreate leaves the placeholder in error state, saying why the create
 // failed, so the user sees it and can dispose of it.
-func (s *Service) failCreate(in CreateInput, wp WorkstreamProvider, placeholderID string, cause error) {
-	name := in.Name
-	if name == "" {
-		name = defaultPlaceholderName
+func (s *Service) failCreate(in CreateInput, placeholderID string, cause error) {
+	// The placeholder as it is, so the failure keeps what it was listed by (its
+	// name, provider and strategy) and stays where it was shown.
+	failed, err := s.store.Workstream(in.ProjectID, placeholderID)
+	if err != nil {
+		slog.Warn("the failed create's placeholder is gone",
+			"project", in.ProjectID, "placeholder", placeholderID, "error", err)
+		return
 	}
-	failed := domain.Workstream{
-		ID:            placeholderID,
-		Name:          name,
-		Provider:      wp.ID(),
-		ProviderLabel: providerLabel(wp.ID(), s.registry),
-		RuntimeState:  domain.RuntimeError,
-		StatusMessage: cause.Error(),
-		CreateFailed:  true,
-		Sessions:      []domain.Session{},
-	}
+	failed.RuntimeState = domain.RuntimeError
+	failed.StatusMessage = cause.Error()
+	failed.CreateFailed = true
 	if err := s.store.UpdateWorkstream(in.ProjectID, failed); err != nil {
 		slog.Warn("failed to update placeholder to error state",
 			"project", in.ProjectID, "placeholder", placeholderID, "error", err)
