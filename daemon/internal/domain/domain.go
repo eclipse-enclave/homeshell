@@ -96,11 +96,11 @@ func (s SessionState) Ended() bool {
 	return s == SessionDone || s == SessionStopped
 }
 
-// LiveCount is the number of sessions that have not ended (Terminal).
+// LiveCount is the number of sessions that have not ended (SessionState.Ended).
 func LiveCount(sessions []Session) int {
 	live := 0
 	for _, session := range sessions {
-		if !session.State.Terminal() {
+		if !session.State.Ended() {
 			live++
 		}
 	}

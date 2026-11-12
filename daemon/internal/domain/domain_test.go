@@ -352,9 +352,10 @@ func TestRecomputeCountsLiveSessionsOnUntrackedWorktrees(t *testing.T) {
 		want   int
 	}{
 		{"none", nil, 0},
-		{"only ended", []SessionState{SessionDone, SessionStopped, SessionError}, 0},
+		{"only ended", []SessionState{SessionDone, SessionStopped}, 0},
+		{"a failed one, which has not ended", []SessionState{SessionError}, 1},
 		{"live and ended", []SessionState{
-			SessionRunning, SessionWaiting, SessionDone, SessionStopped, SessionError,
+			SessionRunning, SessionWaiting, SessionDone, SessionStopped,
 		}, 2},
 	}
 	for _, test := range tests {
