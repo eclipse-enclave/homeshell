@@ -15,6 +15,7 @@ const ended = (id: string, minutes?: number): Session => ({
   title: `Ended ${id}`,
   agent: 'Claude Code',
   state: 'stopped',
+  ended: true,
   endedAt:
     minutes === undefined
       ? undefined

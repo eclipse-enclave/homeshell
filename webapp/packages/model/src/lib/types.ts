@@ -71,14 +71,6 @@ export function isSessionTerminal(state: SessionState): boolean {
 }
 
 /**
- * A session that has finished or been stopped, by its raw state (not the
- * display overlay): terminal, but not a failed start, which stays in view.
- */
-export function isSessionEnded(session: Session): boolean {
-  return session.state === 'stopped' || session.state === 'done';
-}
-
-/**
  * Runtime state of a workspace container as reported by a provider. Orthogonal
  * to session states.
  */
@@ -166,6 +158,11 @@ export interface Session {
    * started, and a restart applies the change.
    */
   outdatedSettings?: string[];
+  /**
+   * Whether the session has ended (stopped or done, not a failed start), as the
+   * daemon decides: it is listed under Ended and counted as ended.
+   */
+  ended?: boolean;
   /** When the session ended (RFC 3339); omitted when the daemon does not know. */
   endedAt?: string;
 }

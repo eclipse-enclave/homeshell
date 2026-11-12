@@ -90,6 +90,12 @@ func (s SessionState) Terminal() bool {
 	return s == SessionDone || s == SessionStopped || s == SessionError
 }
 
+// Ended reports whether a session in this state has ended: done or stopped, a
+// terminal state other than error. A failed start stays in view instead.
+func (s SessionState) Ended() bool {
+	return s == SessionDone || s == SessionStopped
+}
+
 // statePrecedence is attention-first: error > waiting > unknown > running >
 // starting > idle > stopped. "Done" only surfaces once every child is terminal.
 // Starting ranks below running because a workstream that already has a live agent
@@ -218,6 +224,10 @@ type Session struct {
 	// ended, whose real end the daemon cannot know. Persisted, so a restart does not
 	// restamp it.
 	EndedAt *time.Time `json:"endedAt,omitempty"`
+	// Ended says the session has ended (SessionState.Ended), so clients list and
+	// count it apart from the live ones. Derived by Recompute from State; not
+	// persisted.
+	Ended bool `json:"ended"`
 	// Preview is a plain-text tail of the session's terminal output, surfaced for
 	// the UI. It is live, ephemeral state (recomputed on each capture, never
 	// persisted), so it is omitted when empty.
@@ -434,7 +444,8 @@ func SameFolder(dir, other string) bool {
 	return dir != "" && other != "" && filepath.Clean(dir) == filepath.Clean(other)
 }
 
-// Recompute derives the workstream states from their session states, whether
+// Recompute derives the workstream states from their session states (and
+// whether each session has ended), whether
 // each works in the project folder, the effective display state from the
 // runtime and session aggregates, and the project-level aggregates from the
 // workstream values. Call it after every mutation.
@@ -461,8 +472,9 @@ func (p *Project) Recompute() {
 			w.Actions = []Action{}
 		}
 		sessionStates := make([]SessionState, len(w.Sessions))
-		for j, session := range w.Sessions {
-			sessionStates[j] = session.State
+		for j := range w.Sessions {
+			sessionStates[j] = w.Sessions[j].State
+			w.Sessions[j].Ended = w.Sessions[j].State.Ended()
 		}
 		w.State = Aggregate(sessionStates)
 		w.Effective = EffectiveState(w.RuntimeState, w.State)

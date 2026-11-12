@@ -13,11 +13,13 @@ import { createRef } from 'react';
 import { useMnemonics } from './mnemonic';
 import { SessionRow, type SessionRowHandle } from './session-row';
 
+/** A session in `state`, marked ended where the daemon would mark it. */
 const session = (state: Session['state']): Session => ({
   id: 'sess-1',
   title: 'Implement self-update',
   agent: 'Claude Code',
   state,
+  ended: state === 'stopped' || state === 'done',
 });
 
 const renderRow = (props: Parameters<typeof SessionRow>[0]) =>

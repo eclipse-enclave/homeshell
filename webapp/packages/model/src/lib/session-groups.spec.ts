@@ -7,15 +7,17 @@ import {
 } from './session-groups';
 import type { Session, SessionState } from './types';
 
-const session = (
-  id: string,
-  state: SessionState,
-  endedAt?: string,
-): Session => ({
+const session = (id: string, state: SessionState): Session => ({
   id,
   title: id,
   agent: 'Claude Code',
   state,
+});
+
+/** A session the daemon marks ended, at `endedAt` if it knows when. */
+const endedSession = (id: string, state: SessionState, endedAt?: string): Session => ({
+  ...session(id, state),
+  ended: true,
   endedAt,
 });
 
@@ -23,11 +25,11 @@ describe('splitSessions', () => {
   it('keeps live in input order and sorts ended newest first, undated last', () => {
     const { live, ended } = splitSessions([
       session('a', 'running'),
-      session('old', 'stopped', '2026-11-10T08:00:00Z'),
-      session('undated1', 'done'),
+      endedSession('old', 'stopped', '2026-11-10T08:00:00Z'),
+      endedSession('undated1', 'done'),
       session('b', 'idle'),
-      session('new', 'done', '2026-11-10T09:00:00Z'),
-      session('undated2', 'stopped'),
+      endedSession('new', 'done', '2026-11-10T09:00:00Z'),
+      endedSession('undated2', 'stopped'),
     ]);
     expect(live.map((s) => s.id)).toEqual(['a', 'b']);
     expect(ended.map((s) => s.id)).toEqual([
@@ -48,9 +50,9 @@ describe('sessionCounts', () => {
         session('3', 'running'),
         session('4', 'waiting'),
         session('5', 'error'),
-        session('6', 'stopped'),
+        endedSession('6', 'stopped'),
         session('7', 'idle'),
-        session('8', 'done'),
+        endedSession('8', 'done'),
       ],
       // The unseen-idle overlay: an ended session counts as ended whatever it shows.
       (s) => (s.state === 'idle' ? 'done' : s.state),
@@ -99,8 +101,8 @@ describe('a missing or unparseable end time', () => {
     expect(endedAgo(undefined, new Date())).toBeUndefined();
     expect(endedAgo('not a date', new Date())).toBeUndefined();
     const { ended } = splitSessions([
-      session('bad', 'stopped', 'not a date'),
-      session('dated', 'stopped', '2026-11-10T08:00:00Z'),
+      endedSession('bad', 'stopped', 'not a date'),
+      endedSession('dated', 'stopped', '2026-11-10T08:00:00Z'),
     ]);
     expect(ended.map((s) => s.id)).toEqual(['dated', 'bad']);
   });

@@ -1665,6 +1665,7 @@ describe('WorkstreamCard rows in a list', () => {
     title: `Ended ${id}`,
     agent: 'Claude Code',
     state: 'stopped',
+    ended: true,
     endedAt: new Date(Date.now() - minutes * 60_000).toISOString(),
   });
   const rowTitles = () =>
@@ -1717,6 +1718,7 @@ describe('WorkstreamCard rows in a list', () => {
     const stopped = {
       ...live('l1'),
       state: 'stopped' as const,
+      ended: true,
       endedAt: new Date().toISOString(),
     };
     rerender(<List current={[stopped, live('l2'), ended('e1', 5)]} />);

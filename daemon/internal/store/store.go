@@ -515,9 +515,10 @@ func (s *Store) forgetUnobservedLocked(previous []domain.Workstream, listed map[
 }
 
 // sameReport reports whether incoming is the stored session carried over as is,
-// ignoring Restartable, which the projection derives anew each cycle.
+// ignoring Restartable and Ended, which the projection and Recompute derive anew.
 func sameReport(stored, incoming domain.Session) bool {
 	stored.Restartable, incoming.Restartable = false, false
+	stored.Ended, incoming.Ended = false, false
 	return reflect.DeepEqual(stored, incoming)
 }
 

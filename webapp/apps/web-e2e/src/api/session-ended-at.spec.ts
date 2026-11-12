@@ -10,7 +10,8 @@ import {
 /**
  * The daemon stamps `endedAt` on a session when it sees it become terminal
  * (done, stopped, error), keeps the row and the stamp while it stays ended, and
- * clears the stamp when the session runs again.
+ * clears the stamp when the session runs again. It marks the session `ended`
+ * while it is, which is what clients list and count it by.
  */
 
 const TERMINAL = ['done', 'stopped', 'error'];
@@ -42,6 +43,7 @@ test('a stopped session keeps its row and end time until it starts again', async
   await new Promise((resolve) => setTimeout(resolve, 3000));
   expect(await listed()).toMatchObject({
     state: 'stopped',
+    ended: true,
     endedAt: stopped.endedAt,
   });
 
@@ -53,4 +55,5 @@ test('a stopped session keeps its row and end time until it starts again', async
     return current && !TERMINAL.includes(current.state) ? current : undefined;
   });
   expect(live.endedAt).toBeUndefined();
+  expect(live.ended).toBe(false);
 });

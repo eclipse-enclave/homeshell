@@ -1,6 +1,5 @@
 import { dotStateLabel } from './labels';
 import type { Session, SessionState } from './types';
-import { isSessionEnded } from './types';
 
 const COUNT_ORDER = [
   'waiting',
@@ -31,10 +30,10 @@ export function splitSessions(sessions: readonly Session[]): {
   live: Session[];
   ended: Session[];
 } {
-  const live = sessions.filter((s) => !isSessionEnded(s));
+  const live = sessions.filter((s) => !s.ended);
   // Array.prototype.sort is stable, so equal end times (and undated ones) keep input order.
   const ended = sessions
-    .filter(isSessionEnded)
+    .filter((s) => s.ended)
     .map((session) => ({ session, time: parseEndedAt(session.endedAt) }))
     .sort((a, b) => {
       if (a.time === b.time) return 0;
@@ -53,7 +52,7 @@ export function sessionCounts(
 ): SessionCount[] {
   const totals = new Map<CountKind, number>();
   for (const s of sessions) {
-    const kind = isSessionEnded(s) ? 'ended' : countKind(displayState(s));
+    const kind = s.ended ? 'ended' : countKind(displayState(s));
     totals.set(kind, (totals.get(kind) ?? 0) + 1);
   }
   return COUNT_ORDER.filter((kind) => totals.has(kind)).map((kind) => ({

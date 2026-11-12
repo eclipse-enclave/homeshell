@@ -207,6 +207,8 @@ export interface ListedSession {
   placeholderId?: string;
   restartable?: boolean;
   outdatedSettings?: string[];
+  /** Whether the session has ended: stopped or done, not a failed start. */
+  ended: boolean;
   /** When the daemon saw the session end; absent while it is live. */
   endedAt?: string;
 }

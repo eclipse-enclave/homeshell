@@ -312,10 +312,11 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
 - **Launch config** is what the session was last started with, plus the option's schema, so a
   restart form opens pre-filled. `continueRefusal` says why the conversation cannot be continued.
 - **Ended sessions** (`done`, `stopped`; see [CONTEXT.md](../CONTEXT.md)) stay listed until removed,
-  as do sessions in `error`. The session object carries `endedAt` (RFC 3339) once the daemon has
-  seen it end: set when a live session turns terminal, kept while it stays terminal, dropped when
-  it runs again. A session first seen already terminal has it only if its provider reports when
-  it ended. A daemon restart keeps it ([Persistence](ARCHITECTURE.md#persistence)).
+  as do sessions in `error`. The session object says so in `ended`, which clients list and count
+  by, and carries `endedAt` (RFC 3339) once the daemon has seen it end: set when a live session
+  turns terminal, kept while it stays terminal, dropped when it runs again. A session first seen
+  already terminal has it only if its provider reports when it ended. A daemon restart keeps it
+  ([Persistence](ARCHITECTURE.md#persistence)).
 - **Prompt** sends one line of text; body at most 64 KiB (`413`).
 - **Key** sends one of `up`, `down`, `left`, `right`, `enter`, `escape`, `tab`, for navigating
   an agent's menu (`provider.SessionKeys`); another key is `400`.
