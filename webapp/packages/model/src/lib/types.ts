@@ -44,19 +44,24 @@ export function displaySessionState(
 
 /**
  * Whether a session is actively working or waiting for input. Used to reset the
- * `seen` flag (fresh activity means the next idle is again "unseen") and to gate
- * removal in the UI.
- *
- * `starting` is deliberately not active: there is no runtime behind it yet, so
- * the actions this gates (Stop above all) would be sent against a session the
- * provider cannot find. It is not terminal either — see
- * {@link isSessionTerminal} — so it sits outside both, which is what a session
- * that has not begun should do. Note the daemon's `SessionState.Busy()` *does*
- * count starting; that answers a different question (would removing the
- * workstream interrupt work), not "is there something live to drive".
+ * `seen` flag: fresh activity means the next idle is again "unseen".
  */
 export function isSessionActive(state: SessionState): boolean {
   return state === 'running' || state === 'waiting';
+}
+
+/**
+ * Whether a session has a runtime behind it to stop, open or type into: any
+ * state but a placeholder still starting and a terminal one. Idle and unknown
+ * count — whatever the agent is doing, its runtime still runs.
+ *
+ * `starting` has no runtime yet, so an action on it would be sent against a
+ * session the provider cannot find. Note the daemon's `SessionState.Busy()`
+ * *does* count starting; that answers a different question (would removing the
+ * workstream interrupt work).
+ */
+export function hasSessionRuntime(state: SessionState): boolean {
+  return state !== 'starting' && !isSessionTerminal(state);
 }
 
 /**
@@ -121,6 +126,27 @@ export const EFFECTIVE_STATES: readonly EffectiveState[] = [
 /** What a status dot can show: an effective state, or a session that ended. */
 export type DotState = EffectiveState | 'ended';
 
+/**
+ * What HomeShell can do with a session beyond the provider's defaults; absent
+ * means a live session HomeShell sees and types into, with nothing to warn of.
+ * Clients gate on these, never on the provider's ID.
+ */
+export interface SessionCapabilities {
+  /** Whether HomeShell sees the session's screen and can send it text. */
+  live: boolean;
+  /** Whether a bare restart ends the session where it runs and continues it here. */
+  takeOver: boolean;
+  /** What stopping or deleting the session costs, shown before it is done. */
+  stopWarning?: string;
+}
+
+/** A session's capabilities with the defaults filled in: live, no take-over, no warning. */
+export function sessionCapabilities(
+  session: Pick<Session, 'capabilities'>,
+): SessionCapabilities {
+  return { live: true, takeOver: false, ...session.capabilities };
+}
+
 /** A single agent conversation running inside a workstream. */
 export interface Session {
   id: string;
@@ -152,6 +178,8 @@ export interface Session {
    * session starting or restarting, and for one its provider cannot restart.
    */
   restartable?: boolean;
+  /** What HomeShell can do with the session; see {@link SessionCapabilities}. */
+  capabilities?: SessionCapabilities;
   /**
    * The provider settings whose value differs from what the session would start
    * with now, in the provider's own names: its config changed since the session

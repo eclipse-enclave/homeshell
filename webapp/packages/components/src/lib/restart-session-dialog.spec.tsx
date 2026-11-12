@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 
 import { RestartSessionDialog } from './restart-session-dialog';
 
@@ -279,5 +285,15 @@ describe('RestartSessionDialog', () => {
     expect(restart.getAttribute('aria-disabled')).toBe('true');
     fireEvent.click(restart);
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('says a restart ends the session in its terminal only when it does', () => {
+    const warning =
+      'This ends the session in its terminal and continues its conversation in HomeShell.';
+    renderDialog({ takesOver: true });
+    expect(screen.getByRole('dialog').textContent).toContain(warning);
+    cleanup();
+    renderDialog();
+    expect(screen.getByRole('dialog').textContent).not.toContain(warning);
   });
 });

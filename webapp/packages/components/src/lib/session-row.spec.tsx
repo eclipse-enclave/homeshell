@@ -58,13 +58,22 @@ describe('SessionRow', () => {
     expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
   });
 
-  it('offers Stop as an icon button for an active session with a handler', () => {
+  it('offers Stop as an icon button for a running session with a handler', () => {
     const onStop = vi.fn();
     renderRow({ session: session('running'), onStop });
     const stop = screen.getByRole('button', { name: 'Stop' });
     expect(stop.textContent).toBe('');
     fireEvent.click(stop);
     expect(onStop).toHaveBeenCalled();
+  });
+
+  // Stop goes with a live runtime, not with whether the agent is busy.
+  it.each([
+    ['an idle session shown as Done', session('idle'), 'done' as const],
+    ['a session whose state is unknown', session('unknown'), undefined],
+  ])('offers Stop for %s', (_, s, displayState) => {
+    renderRow({ session: s, displayState, onStop: vi.fn() });
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
   });
 
   it('does not offer Stop without a handler (capability absent)', () => {
@@ -508,36 +517,56 @@ describe('SessionRow that failed to start', () => {
   });
 });
 
-// A starting or failed placeholder has no runtime to stop or continue, and the
-// daemon deletes it itself. Deleting a starting one cancels a build that may
-// have run for minutes, so it asks first; a failed one has nothing to lose.
+// A starting or failed placeholder the daemon deletes itself. Deleting a
+// starting one cancels a build that may have run for minutes, so it asks first;
+// a failed one has nothing to lose.
 it.each([
   ['starting', true],
   ['error', false],
-] as const)(
-  'offers a %s placeholder no Stop or Continue; its Delete confirms: %s',
-  (state, confirms) => {
-    const onRemove = vi.fn();
-    renderRow({
-      session: { ...session(state), id: 'starting-abc' },
-      onStop: vi.fn(),
-      onStart: vi.fn(),
-      onRemove,
-    });
-    expect(
-      screen.queryByRole('button', { name: /^(Stop|Continue)$/ }),
-    ).toBeNull();
+] as const)('deletes a %s placeholder; Delete confirms: %s', (state, confirms) => {
+  const onRemove = vi.fn();
+  renderRow({ session: { ...session(state), id: 'starting-abc' }, onRemove });
 
-    openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-    const dialog = screen.queryByRole('dialog');
-    expect(dialog !== null).toBe(confirms);
-    if (dialog) {
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
-    }
-    expect(onRemove).toHaveBeenCalledTimes(1);
-  },
-);
+  openMenu();
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+  const dialog = screen.queryByRole('dialog');
+  expect(dialog !== null).toBe(confirms);
+  if (dialog) {
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+  }
+  expect(onRemove).toHaveBeenCalledTimes(1);
+});
+
+// Stop on a session still starting cancels its build, which takes the row:
+// there is nothing yet to continue. As Delete does, it asks first.
+it('stops a starting session by cancelling it, after a confirmation', () => {
+  const props = { onStop: vi.fn(), onStart: vi.fn(), onRemove: vi.fn() };
+  renderRow({ session: { ...session('starting'), id: 'starting-abc' }, ...props });
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+  const dialog = screen.getByRole('dialog', { name: /Stop starting/ });
+  expect(props.onRemove).not.toHaveBeenCalled();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Stop' }));
+  expect(props.onRemove).toHaveBeenCalledTimes(1);
+  expect(props.onStop).not.toHaveBeenCalled();
+});
+
+// A failed one has nothing to stop; a starting one, where its provider cannot
+// stop sessions, would lose Stop again once it runs.
+it.each([
+  ['a failed placeholder', 'error', { onStop: vi.fn() }],
+  ['a starting one its provider cannot stop', 'starting', {}],
+] as const)('offers %s no Stop or Continue', (_, state, stop) => {
+  renderRow({
+    session: { ...session(state), id: 'starting-abc' },
+    onStart: vi.fn(),
+    onRemove: vi.fn(),
+    ...stop,
+  });
+  expect(
+    screen.queryByRole('button', { name: /^(Stop|Continue)$/ }),
+  ).toBeNull();
+});
 
 // Ended (stopped, or done by the daemon): recessed, and continued from Continue.
 describe('SessionRow of an ended session', () => {
@@ -1563,5 +1592,127 @@ describe('SessionRow outdated settings', () => {
   it('says nothing for a session that is up to date', () => {
     renderRow({ session: session('running') });
     expect(screen.queryByTestId('session-outdated')).toBeNull();
+  });
+});
+
+describe('SessionRow running in a terminal', () => {
+  const warning =
+    'It runs in a terminal; stopping it ends the session there too.';
+  const terminal: Session = {
+    ...session('running'),
+    restartable: true,
+    capabilities: { live: false, takeOver: true, stopWarning: warning },
+  };
+
+  it('says a session running in a terminal is outside HomeShell', () => {
+    renderRow({ session: terminal });
+    expect(screen.getByTestId('session-outside').textContent).toBe(
+      'Running in a terminal. HomeShell cannot show its screen or send it text.',
+    );
+  });
+
+  it('offers no send box for a session HomeShell cannot type into', () => {
+    renderRow({ session: terminal, onPrompt: vi.fn() });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Toggle session details' }),
+    );
+    expect(
+      screen.queryByRole('textbox', { name: 'Send text to session' }),
+    ).toBeNull();
+  });
+
+  it('confirms Stop with the session warning', () => {
+    const onStop = vi.fn();
+    renderRow({ session: terminal, onStop });
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    const dialog = screen.getByRole('dialog', {
+      name: 'Stop "Implement self-update"?',
+    });
+    expect(within(dialog).getByText(warning)).toBeTruthy();
+    expect(onStop).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: /Stop/ }));
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it('stops at once without a warning', () => {
+    const onStop = vi.fn();
+    renderRow({ session: session('running'), onStop });
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it('warns on delete that the session ends in its terminal too', () => {
+    renderRow({ session: terminal, onRemove: vi.fn() });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Delete/ }));
+    const dialog = screen.getByRole('dialog', {
+      name: 'Delete "Implement self-update"?',
+    });
+    expect(within(dialog).getByText(warning)).toBeTruthy();
+  });
+
+  it('confirms Restart in HomeShell first', () => {
+    const onTakeOver = vi.fn();
+    renderRow({ session: terminal, onTakeOver });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Restart in HomeShell' }),
+    );
+    const dialog = screen.getByRole('dialog', {
+      name: 'Restart "Implement self-update" in HomeShell?',
+    });
+    expect(
+      within(dialog).getByText(
+        'This ends the session in its terminal and continues its conversation in HomeShell.',
+      ),
+    ).toBeTruthy();
+    expect(onTakeOver).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Restart in HomeShell' }),
+    );
+    expect(onTakeOver).toHaveBeenCalledOnce();
+  });
+
+  it('does not offer Restart in HomeShell unless the session allows a take-over', () => {
+    renderRow({
+      session: { ...terminal, capabilities: { live: false, takeOver: false } },
+      onTakeOver: vi.fn(),
+    });
+    expect(
+      screen.queryByRole('button', { name: 'Restart in HomeShell' }),
+    ).toBeNull();
+  });
+
+  it('stays busy while Restart in HomeShell runs, so it cannot be posted twice', async () => {
+    let finish: () => void = () => undefined;
+    const onTakeOver = vi.fn(
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    renderRow({ session: terminal, onTakeOver });
+    const restart = () =>
+      screen.getByRole('button', { name: 'Restart in HomeShell' });
+    fireEvent.click(restart());
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', {
+        name: 'Restart in HomeShell',
+      }),
+    );
+    expect(restart().getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(restart());
+    expect(screen.queryByRole('dialog')).toBeNull();
+    finish();
+    await waitFor(() =>
+      expect(restart().getAttribute('aria-disabled')).not.toBe('true'),
+    );
+    expect(onTakeOver).toHaveBeenCalledOnce();
+  });
+
+  it('does not repeat the warning when deleting an ended row', () => {
+    renderRow({
+      session: { ...terminal, state: 'stopped' },
+      onRemove: vi.fn(),
+    });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Delete/ }));
+    expect(within(screen.getByRole('dialog')).queryByText(warning)).toBeNull();
   });
 });

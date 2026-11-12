@@ -16,14 +16,18 @@ import {
 } from './schema-form';
 import { sentence } from './sentence';
 
+/** What restarting a session that runs in a terminal costs, said before it is done. */
+export const TAKE_OVER_WARNING =
+  'This ends the session in its terminal and continues its conversation in HomeShell.';
+
 export interface RestartSessionData {
   /**
    * The settings to start it with; absent when the schema has no fields, so
    * the session starts with what it was last started with.
    */
   config?: Record<string, unknown>;
-  /** Start the agent on a new conversation rather than continuing its last. */
-  fresh: boolean;
+  /** Start the agent on a new conversation rather than continuing its last (default: continue). */
+  fresh?: boolean;
 }
 
 export interface RestartSessionDialogProps {
@@ -45,6 +49,11 @@ export interface RestartSessionDialogProps {
    */
   continueRefusal?: string;
   /**
+   * Whether the restart ends the session where it runs (its capabilities'
+   * takeOver): the dialog says so before it is done.
+   */
+  takesOver?: boolean;
+  /**
    * Where focus goes on close when what it came from has left the page, such
    * as the session's row once the session is gone.
    */
@@ -65,6 +74,7 @@ export function RestartSessionDialog({
   onCancel,
   disabledReason,
   continueRefusal,
+  takesOver,
   fallbackFocus,
 }: RestartSessionDialogProps) {
   const formId = useId();
@@ -128,6 +138,7 @@ export function RestartSessionDialog({
         onSubmit={handleSubmit}
         aria-label="Restart settings"
       >
+        {takesOver && <p>{TAKE_OVER_WARNING}</p>}
         {fields.map(({ key, prop, required }) => (
           <SchemaField
             key={key}

@@ -2,8 +2,9 @@ import type { Session, SessionState } from '@homeshell/model';
 import {
   dotStateLabel,
   endedAgo,
-  isSessionActive,
+  hasSessionRuntime,
   isSessionTerminal,
+  sessionCapabilities,
   stateLabel,
 } from '@homeshell/model';
 import type {
@@ -19,8 +20,8 @@ import {
   useRef,
   useState,
 } from 'react';
+import { ActionConfirm } from './action-confirm';
 import { Button } from './button';
-import { ConfirmDialog } from './confirm-dialog';
 import { useReturnFocus } from './focus-return';
 import { PlayIcon, SquareIcon, TerminalIcon } from './icons';
 import { type ItemAction, runAction, useActionsMenu } from './item-actions';
@@ -33,6 +34,7 @@ import {
   useMnemonicHandler,
 } from './mnemonic';
 import { renameInputClass, useRenamableTitle } from './renamable-title';
+import { TAKE_OVER_WARNING } from './restart-session-dialog';
 import controls from './controls.module.css';
 import { cx } from './cx';
 import a11y from './a11y.module.css';
@@ -96,8 +98,18 @@ export interface SessionRowProps {
    * restartable.
    */
   onRestartWithSettings?: () => void;
-  /** Stops a running/waiting session. Shown (for an active session) only when set. */
+  /**
+   * Stops a session with a runtime behind it; offered only when set. A session
+   * still starting stops through onRemove instead.
+   */
   onStop?: () => void;
+  /**
+   * Restarts, in HomeShell, a session running outside it, ending it where it
+   * runs. Offered as Restart in HomeShell, after a confirmation, for a
+   * restartable session whose capabilities allow a take-over; busy until the
+   * returned promise settles.
+   */
+  onTakeOver?: () => void | Promise<void>;
   /**
    * Continues an ended session (stopped, or done by the daemon). Shown, as
    * Continue, only when set.
@@ -214,6 +226,7 @@ export function SessionRow({
   displayState,
   onOpen,
   onStop,
+  onTakeOver,
   onStart,
   onRestartWithSettings,
   onRemove,
@@ -227,7 +240,11 @@ export function SessionRow({
   selected,
   ref,
 }: SessionRowProps) {
-  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const [confirming, setConfirming] = useState<
+    'remove' | 'stop' | 'takeOver' | null
+  >(null);
+  // Whether Restart in HomeShell is under way, so a second click cannot post it again.
+  const [takingOver, setTakingOver] = useState(false);
   const [renaming, setRenaming] = useState(false);
   // Why a rename was refused, shown against this row. Cleared the moment the user
   // starts editing again — a warning about a value they have since changed is
@@ -259,7 +276,7 @@ export function SessionRow({
   const expandedBeforeClick = useRef<boolean | null>(null);
   const [draft, setDraft] = useState('');
   const shown = displayState ?? session.state;
-  const active = isSessionActive(session.state);
+  const hasRuntime = hasSessionRuntime(session.state);
   // Stopped, or done by the daemon: what is left is to continue it. Not the
   // UI's own Done (idle, unseen), which is live, nor an error, which needs a
   // look first.
@@ -280,7 +297,23 @@ export function SessionRow({
   // "Mark seen" only matters while the done overlay is showing; on any other
   // state the click is a no-op, so don't render the button affordance.
   const seenable = onSeen && shown === 'done';
-  const stoppable = active && onStop;
+  // A session still starting stops by cancelling its build, which is removing
+  // its placeholder: no provider has heard of it yet, and nothing is left to
+  // continue. Offered where Stop will be, once it runs.
+  const cancellable = Boolean(starting && onStop && onRemove);
+  const stoppable = Boolean(hasRuntime && onStop) || cancellable;
+  // A session HomeShell neither shows nor types into, and what stopping it costs.
+  const {
+    live,
+    stopWarning,
+    takeOver: canTakeOver,
+  } = sessionCapabilities(session);
+  const takeOverable = onTakeOver && canTakeOver && session.restartable;
+  // The warning is about ending a running session; an ended one has nothing to end.
+  const liveWarning = isSessionTerminal(session.state)
+    ? undefined
+    : stopWarning;
+  const promptable = live && onPrompt && hasRuntime;
   const startable = ended && onStart;
   // Removal is offered in every state, the two placeholder ones included: the
   // daemon recognizes its own bookkeeping rows and never routes them to a
@@ -299,10 +332,7 @@ export function SessionRow({
   // carries one fewer control and the name is what you act on. A tint on hover
   // and the name's tooltip say so.
   const canRename = renamable && !blocked && !renaming;
-  // Open depends on a live terminal, not on whether detection could classify
-  // what the agent is doing. `unknown` is therefore openable; only a starting
-  // placeholder or a terminal state has nothing to attach to.
-  const openable = onOpen && !starting && !isSessionTerminal(session.state);
+  const openable = onOpen && hasRuntime;
   const preview = session.preview ?? '';
   // The tail teaser is only its last line; the full capture lives in the panel.
   const allPreviewLines = preview.split('\n');
@@ -544,7 +574,7 @@ export function SessionRow({
   };
 
   const requestRemove = () =>
-    confirmsRemoval ? setConfirmingRemove(true) : onRemove?.();
+    confirmsRemoval ? setConfirming('remove') : onRemove?.();
 
   // The one account of what the row offers: its buttons, its keys and its
   // actions menu all read it.
@@ -554,12 +584,34 @@ export function SessionRow({
     run: () => onOpen?.(),
     disabled: !openable || blocked,
   };
-  const startStop: ItemAction | undefined =
-    startable || stoppable
+  // Cancelling a start asks first, as Delete does on a starting row: the build
+  // may have run for minutes.
+  const requestStop = () =>
+    cancellable || stopWarning ? setConfirming('stop') : onStop?.();
+  const takeOverNow = async () => {
+    setTakingOver(true);
+    try {
+      await onTakeOver?.();
+    } finally {
+      setTakingOver(false);
+    }
+  };
+  const startStop: (ItemAction & { title: string }) | undefined = startable
+    ? {
+        id: 'startStop',
+        label: 'Continue',
+        title: 'Continue this session',
+        run: () => onStart?.(),
+        disabled: blocked,
+      }
+    : stoppable
       ? {
           id: 'startStop',
-          label: startable ? 'Continue' : 'Stop',
-          run: () => (startable ? onStart : onStop)?.(),
+          label: 'Stop',
+          title: cancellable
+            ? 'Cancel starting this session'
+            : 'Stop this session',
+          run: requestStop,
           disabled: blocked,
         }
       : undefined;
@@ -591,14 +643,28 @@ export function SessionRow({
         disabled: blocked,
       }
     : undefined;
+  const takeOver: ItemAction | undefined = takeOverable
+    ? {
+        id: 'takeOver',
+        label: 'Restart in HomeShell',
+        run: () => setConfirming('takeOver'),
+        disabled: blocked || takingOver,
+      }
+    : undefined;
   const details: ItemAction = {
     id: 'details',
     label: expanded ? 'Hide details' : 'Show details',
     run: toggleExpanded,
   };
-  const actions = [open, startStop, restart, rename, details, remove].filter(
-    (entry) => entry !== undefined,
-  );
+  const actions = [
+    open,
+    startStop,
+    takeOver,
+    restart,
+    rename,
+    details,
+    remove,
+  ].filter((entry) => entry !== undefined);
   useImperativeHandle(ref, () => ({ actions: () => actions }));
   const actionsMenu = useActionsMenu(
     `Actions for session ${session.title}`,
@@ -760,11 +826,22 @@ export function SessionRow({
               }}
               aria-disabled={startStop.disabled}
               aria-label={startStop.label}
+              title={disabledReason ?? startStop.title}
+            />
+          )}
+          {takeOver && (
+            <Button
+              className={controls.compact}
+              onClick={takeOver.run}
+              tabIndex={controlTabIndex}
+              aria-disabled={takeOver.disabled}
               title={
                 disabledReason ??
-                (startable ? 'Continue this session' : 'Stop this session')
+                'End this session in its terminal and continue it in HomeShell'
               }
-            />
+            >
+              {takeOver.label}
+            </Button>
           )}
           {actionsMenu.moreActionsButton({
             tabIndex: controlTabIndex,
@@ -790,35 +867,48 @@ export function SessionRow({
         </span>
       </div>
       {actionsMenu.menu}
-      {confirmingRemove && onRemove && (
-        <ConfirmDialog
-          title={`Delete "${session.title}"?`}
-          onClose={() => setConfirmingRemove(false)}
-          actions={
-            <>
-              {/* Delete then Enter must not delete a running session. */}
-              <Button
-                onClick={() => setConfirmingRemove(false)}
-                mnemonic={MNEMONICS.cancel}
-                data-initial-focus
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                mnemonic={MNEMONICS.delete}
-                onClick={() => {
-                  setConfirmingRemove(false);
-                  onRemove();
-                }}
-              >
-                Delete
-              </Button>
-            </>
+      {confirming === 'stop' && onStop && (
+        <ActionConfirm
+          title={
+            cancellable
+              ? `Stop starting "${session.title}"?`
+              : `Stop "${session.title}"?`
           }
+          confirmLabel="Stop"
+          danger
+          mnemonic={MNEMONICS.startStop}
+          onConfirm={cancellable ? () => onRemove?.() : onStop}
+          onClose={() => setConfirming(null)}
+        >
+          <p>
+            {cancellable
+              ? 'Its startup is cancelled, and the session goes.'
+              : stopWarning}
+          </p>
+        </ActionConfirm>
+      )}
+      {confirming === 'takeOver' && onTakeOver && (
+        <ActionConfirm
+          title={`Restart "${session.title}" in HomeShell?`}
+          confirmLabel="Restart in HomeShell"
+          onConfirm={takeOverNow}
+          onClose={() => setConfirming(null)}
+        >
+          <p>{TAKE_OVER_WARNING}</p>
+        </ActionConfirm>
+      )}
+      {confirming === 'remove' && onRemove && (
+        <ActionConfirm
+          title={`Delete "${session.title}"?`}
+          confirmLabel="Delete"
+          danger
+          mnemonic={MNEMONICS.delete}
+          onConfirm={onRemove}
+          onClose={() => setConfirming(null)}
         >
           <p>This will delete the session from the workstream.</p>
-        </ConfirmDialog>
+          {liveWarning && <p>{liveWarning}</p>}
+        </ActionConfirm>
       )}
       {renameWarning && (
         <p
@@ -842,6 +932,12 @@ export function SessionRow({
           role="alert"
         >
           {session.error}
+        </p>
+      )}
+      {!live && (
+        <p className={styles.rowNote} data-testid="session-outside">
+          Running in a terminal. HomeShell cannot show its screen or send it
+          text.
         </p>
       )}
       {session.outdatedSettings?.length ? (
@@ -895,7 +991,7 @@ export function SessionRow({
            * No send box while starting: there is no agent listening yet, so the
            * daemon would refuse the text (and the arrow keys behind it).
            */}
-          {onPrompt && !starting && !isSessionTerminal(session.state) && (
+          {promptable && (
             <>
               <form className={styles.promptForm} onSubmit={submitPrompt}>
                 <input
