@@ -869,11 +869,12 @@ func (s *Service) CreateSession(ctx context.Context, in CreateSessionInput) (dom
 	// session replaces the row with the provider's naming of itself.
 	agent := agentLabel(options, in.OptionID)
 	placeholder := domain.Session{
-		ID:       generateStartingID(),
-		Title:    agent + " session",
-		Agent:    agent,
-		Provider: p.ID(),
-		State:    domain.SessionStarting,
+		ID:          generateStartingID(),
+		Title:       agent + " session",
+		Agent:       agent,
+		Provider:    p.ID(),
+		State:       domain.SessionStarting,
+		Placeholder: true,
 	}
 	s.clearStaleStatus(in.ProjectID, in.WorkstreamID)
 

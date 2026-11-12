@@ -320,6 +320,9 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
 - **Schemas** list the session types each session provider offers in this workstream; `schema`
   is a JSON Schema the UI renders as the create form. Read per request, so catalog edits apply
   at once.
+- **Placeholders** carry `placeholder: true`: the daemon's own row for a session create in
+  flight, or one that failed. Deleting one cancels its create. A session restarting is `starting`
+  too, but carries no flag.
 - **Start** continues a session in a terminal state (`stopped`, `done` or `error`) where its
   provider can; the Enclave provider does so as a restart.
 - **Restart** without a body reuses the last launch config; `fresh` starts a new conversation

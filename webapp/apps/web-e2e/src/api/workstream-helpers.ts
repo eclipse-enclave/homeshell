@@ -212,6 +212,8 @@ export interface ListedSession {
   error?: string;
   provider?: string;
   placeholderId?: string;
+  /** Set on the daemon's own row for a session create in flight or failed. */
+  placeholder?: boolean;
   restartable?: boolean;
   outdatedSettings?: string[];
   /** Whether the session has ended: stopped or done, not a failed start. */

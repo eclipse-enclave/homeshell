@@ -541,7 +541,10 @@ it.each([
 // there is nothing yet to continue. As Delete does, it asks first.
 it('stops a starting session by cancelling it, after a confirmation', () => {
   const props = { onStop: vi.fn(), onStart: vi.fn(), onRemove: vi.fn() };
-  renderRow({ session: { ...session('starting'), id: 'starting-abc' }, ...props });
+  renderRow({
+    session: { ...session('starting'), id: 'starting-abc', placeholder: true },
+    ...props,
+  });
 
   fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
   const dialog = screen.getByRole('dialog', { name: /Stop starting/ });
@@ -552,13 +555,15 @@ it('stops a starting session by cancelling it, after a confirmation', () => {
 });
 
 // A failed one has nothing to stop; a starting one, where its provider cannot
-// stop sessions, would lose Stop again once it runs.
+// stop sessions, would lose Stop again once it runs. A session restarting is
+// starting too, but no placeholder: deleting it would delete the session.
 it.each([
-  ['a failed placeholder', 'error', { onStop: vi.fn() }],
-  ['a starting one its provider cannot stop', 'starting', {}],
-] as const)('offers %s no Stop or Continue', (_, state, stop) => {
+  ['a failed placeholder', 'error', true, { onStop: vi.fn() }],
+  ['a starting one its provider cannot stop', 'starting', true, {}],
+  ['a session restarting', 'starting', false, { onStop: vi.fn() }],
+] as const)('offers %s no Stop or Continue', (_, state, placeholder, stop) => {
   renderRow({
-    session: { ...session(state), id: 'starting-abc' },
+    session: { ...session(state), id: 'sess-1', placeholder },
     onStart: vi.fn(),
     onRemove: vi.fn(),
     ...stop,

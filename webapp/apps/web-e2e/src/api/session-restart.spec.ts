@@ -294,7 +294,10 @@ test.describe('session restart API', () => {
       data: { config: created },
     });
     expect(first.status()).toBe(202);
-    expect((await first.json()).state).toBe('starting');
+    const restarting = await first.json();
+    expect(restarting.state).toBe('starting');
+    // Starting, but no placeholder: stopping it is not deleting it.
+    expect(restarting.placeholder).toBeUndefined();
     // Nor do its settings open for one, as the UI offers none (restartable).
     const settings = await request.get(`${sessionPath}/launch-config`);
     expect(settings.status()).toBe(409);

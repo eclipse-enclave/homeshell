@@ -173,6 +173,12 @@ export interface Session {
   /** ID of the starting placeholder this session replaced, if it replaced one. */
   placeholderId?: string;
   /**
+   * Set on the daemon's own row for a session create in flight, or one that
+   * failed: stopping it is deleting it, which cancels the create. A session
+   * restarting is `starting` too, but no placeholder.
+   */
+  placeholder?: boolean;
+  /**
    * Whether the session can be restarted with settings, as far as the daemon
    * can tell up front: false for a placeholder or a failed create, for a
    * session starting or restarting, and for one its provider cannot restart.

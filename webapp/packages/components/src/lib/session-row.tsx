@@ -297,10 +297,13 @@ export function SessionRow({
   // "Mark seen" only matters while the done overlay is showing; on any other
   // state the click is a no-op, so don't render the button affordance.
   const seenable = onSeen && shown === 'done';
-  // A session still starting stops by cancelling its build, which is removing
-  // its placeholder: no provider has heard of it yet, and nothing is left to
-  // continue. Offered where Stop will be, once it runs.
-  const cancellable = Boolean(starting && onStop && onRemove);
+  // A placeholder still starting stops by cancelling its build, which is
+  // removing it: no provider has heard of it yet, and nothing is left to
+  // continue. Offered where Stop will be, once it runs. Not a session starting
+  // because it restarts: deleting that one would delete the session.
+  const cancellable = Boolean(
+    starting && session.placeholder && onStop && onRemove,
+  );
   const stoppable = Boolean(hasRuntime && onStop) || cancellable;
   // A session HomeShell neither shows nor types into, and what stopping it costs.
   const {

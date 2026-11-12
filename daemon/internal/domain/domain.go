@@ -268,6 +268,11 @@ type Session struct {
 	// so the client that asked for it can tell which row is its own. Not
 	// persisted.
 	PlaceholderID string `json:"placeholderId,omitempty"`
+	// Placeholder marks the daemon's own row for a session create in flight, or
+	// one that failed: no provider has heard of it, so stopping it is removing it,
+	// which cancels the create. A session restarting is starting too, but is not
+	// one. Not persisted, as placeholders are not.
+	Placeholder bool `json:"placeholder,omitempty"`
 	// Restartable is whether the session can be restarted with settings, as far
 	// as the daemon can tell without asking its provider anything costly. Derived
 	// during projection like Workstream.OpenModes; not persisted.

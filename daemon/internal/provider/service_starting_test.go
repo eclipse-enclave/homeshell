@@ -162,6 +162,9 @@ func TestCreateSessionShowsAStartingPlaceholder(t *testing.T) {
 	if !IsStartingPlaceholder(placeholder) {
 		t.Errorf("session ID = %q, want the %q prefix", placeholder.ID, StartingIDPrefix)
 	}
+	if !placeholder.Placeholder {
+		t.Error("the placeholder does not say it is one")
+	}
 	if placeholder.State != domain.SessionStarting {
 		t.Errorf("state = %q, want %q", placeholder.State, domain.SessionStarting)
 	}
@@ -358,7 +361,7 @@ func TestSuccessfulCreatePromotesThePlaceholder(t *testing.T) {
 	if len(sessions) != 1 {
 		t.Fatalf("sessions = %d, want exactly the real one", len(sessions))
 	}
-	if IsStartingPlaceholder(sessions[0]) {
+	if IsStartingPlaceholder(sessions[0]) || sessions[0].Placeholder {
 		t.Error("the placeholder outlived the create")
 	}
 	if sessions[0].Provider != "slow" {
