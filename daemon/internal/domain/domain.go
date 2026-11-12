@@ -305,6 +305,11 @@ type SessionCapabilities struct {
 	TakeOver bool `json:"takeOver"`
 	// StopWarning is what a confirmation before stopping or deleting says.
 	StopWarning string `json:"stopWarning,omitempty"`
+	// TakeOverWarning is what a confirmation before a take-over says.
+	TakeOverWarning string `json:"takeOverWarning,omitempty"`
+	// Note is what the session's row says about where it runs, such as why
+	// HomeShell neither shows nor types into it.
+	Note string `json:"note,omitempty"`
 }
 
 // LaunchConfig is what a session was last (re)started with: its provider, the

@@ -34,7 +34,6 @@ import {
   useMnemonicHandler,
 } from './mnemonic';
 import { renameInputClass, useRenamableTitle } from './renamable-title';
-import { TAKE_OVER_WARNING } from './restart-session-dialog';
 import controls from './controls.module.css';
 import { cx } from './cx';
 import a11y from './a11y.module.css';
@@ -310,6 +309,8 @@ export function SessionRow({
     live,
     stopWarning,
     takeOver: canTakeOver,
+    takeOverWarning,
+    note,
   } = sessionCapabilities(session);
   const takeOverable = onTakeOver && canTakeOver && session.restartable;
   // The warning is about ending a running session; an ended one has nothing to end.
@@ -840,7 +841,7 @@ export function SessionRow({
               aria-disabled={takeOver.disabled}
               title={
                 disabledReason ??
-                'End this session in its terminal and continue it in HomeShell'
+                'End this session where it runs and continue it in HomeShell'
               }
             >
               {takeOver.label}
@@ -897,7 +898,7 @@ export function SessionRow({
           onConfirm={takeOverNow}
           onClose={() => setConfirming(null)}
         >
-          <p>{TAKE_OVER_WARNING}</p>
+          {takeOverWarning && <p>{takeOverWarning}</p>}
         </ActionConfirm>
       )}
       {confirming === 'remove' && onRemove && (
@@ -937,10 +938,9 @@ export function SessionRow({
           {session.error}
         </p>
       )}
-      {!live && (
-        <p className={styles.rowNote} data-testid="session-outside">
-          Running in a terminal. HomeShell cannot show its screen or send it
-          text.
+      {note && (
+        <p className={styles.rowNote} data-testid="session-note">
+          {note}
         </p>
       )}
       {session.outdatedSettings?.length ? (

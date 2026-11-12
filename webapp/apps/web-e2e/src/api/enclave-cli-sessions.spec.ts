@@ -89,6 +89,9 @@ test.describe('Enclave sessions started with the CLI', () => {
         takeOver: true,
         stopWarning:
           'It runs in a terminal; stopping it ends the session there too.',
+        takeOverWarning:
+          'This ends the session in its terminal and continues its conversation in HomeShell.',
+        note: 'Running in a terminal. HomeShell cannot show its screen or send it text.',
       });
       expect(attaches(daemon.fixture)).toEqual([]);
 

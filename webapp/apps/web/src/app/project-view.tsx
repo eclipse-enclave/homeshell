@@ -32,7 +32,6 @@ import {
 } from '@homeshell/components';
 import {
   NOTE_ACTION_ID,
-  sessionCapabilities,
   type BusySession,
   type Capabilities,
   type Project,
@@ -855,9 +854,7 @@ export function ProjectView({
           schema={restarting.schema}
           config={restarting.config}
           continueRefusal={restarting.continueRefusal}
-          takesOver={Boolean(
-            restartingSession && sessionCapabilities(restartingSession).takeOver,
-          )}
+          takeOverWarning={restartingSession?.capabilities?.takeOverWarning}
           onSubmit={handleRestartSubmit}
           onCancel={() => setRestarting(null)}
           disabledReason={disabledReason}

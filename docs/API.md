@@ -337,10 +337,12 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
   turns terminal, kept while it stays terminal, dropped when it runs again. A session first seen
   already terminal has it only if its provider reports when it ended. A daemon restart keeps it
   ([Persistence](ARCHITECTURE.md#persistence)).
-- **Capabilities** (`capabilities: {live, takeOver, stopWarning?}`) are what a client may do with
-  one session. Absent means the session is live (HomeShell sees and types into it), offers no
-  take-over and needs no stop warning. Derived, never persisted. Providers' own capabilities are
-  in [PROVIDERS.md](PROVIDERS.md#capabilities).
+- **Capabilities** (`capabilities: {live, takeOver, stopWarning?, takeOverWarning?, note?}`) are
+  what a client may do with one session. Absent means the session is live (HomeShell sees and
+  types into it), offers no take-over and needs no warning. The provider authors the text: the
+  warnings a client shows before a stop or delete and before a take-over, and the `note` it shows
+  on the session's row. Derived, never persisted. Providers' own capabilities are in
+  [PROVIDERS.md](PROVIDERS.md#capabilities).
 - **Prompt** sends one line of text; body at most 64 KiB (`413`).
 - **Key** sends one of `up`, `down`, `left`, `right`, `enter`, `escape`, `tab`, for navigating
   an agent's menu (`provider.SessionKeys`); another key is `400`.

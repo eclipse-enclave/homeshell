@@ -138,6 +138,10 @@ export interface SessionCapabilities {
   takeOver: boolean;
   /** What stopping or deleting the session costs, shown before it is done. */
   stopWarning?: string;
+  /** What a take-over costs, shown before it is done. */
+  takeOverWarning?: string;
+  /** What the row says about where the session runs, e.g. why it is not live. */
+  note?: string;
 }
 
 /** A session's capabilities with the defaults filled in: live, no take-over, no warning. */

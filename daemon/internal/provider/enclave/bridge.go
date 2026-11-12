@@ -415,10 +415,12 @@ func (p *Provider) bridgeSession(record bridgeRecord) domain.Session {
 }
 
 // foregroundCapabilities are a live foreground session's, shared by every one of them and never mutated.
-var foregroundCapabilities = domain.SessionCapabilities{TakeOver: true, StopWarning: foregroundStopWarning}
-
-// foregroundStopWarning is what a confirmation before stopping a foreground session says.
-const foregroundStopWarning = "It runs in a terminal; stopping it ends the session there too."
+var foregroundCapabilities = domain.SessionCapabilities{
+	TakeOver:        true,
+	StopWarning:     "It runs in a terminal; stopping it ends the session there too.",
+	TakeOverWarning: "This ends the session in its terminal and continues its conversation in HomeShell.",
+	Note:            "Running in a terminal. HomeShell cannot show its screen or send it text.",
+}
 
 // sampleBridge captures outside the metadata lock. A stopped, removed or
 // restarted target rejects any old observation before classification/publication.

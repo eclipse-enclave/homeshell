@@ -287,10 +287,9 @@ describe('RestartSessionDialog', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it('says a restart ends the session in its terminal only when it does', () => {
-    const warning =
-      'This ends the session in its terminal and continues its conversation in HomeShell.';
-    renderDialog({ takesOver: true });
+  it('says what a take-over costs only when the restart is one', () => {
+    const warning = 'This ends it there and continues it here.';
+    renderDialog({ takeOverWarning: warning });
     expect(screen.getByRole('dialog').textContent).toContain(warning);
     cleanup();
     renderDialog();

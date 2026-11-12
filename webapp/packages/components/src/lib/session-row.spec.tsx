@@ -1,6 +1,7 @@
 import type { Session } from '@homeshell/model';
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -1601,19 +1602,27 @@ describe('SessionRow outdated settings', () => {
 });
 
 describe('SessionRow running in a terminal', () => {
-  const warning =
-    'It runs in a terminal; stopping it ends the session there too.';
+  const warning = 'Stopping it ends the session there too.';
+  const takeOverWarning = 'This ends it there and continues it here.';
+  const note = 'Running elsewhere.';
   const terminal: Session = {
     ...session('running'),
     restartable: true,
-    capabilities: { live: false, takeOver: true, stopWarning: warning },
+    capabilities: {
+      live: false,
+      takeOver: true,
+      stopWarning: warning,
+      takeOverWarning,
+      note,
+    },
   };
 
-  it('says a session running in a terminal is outside HomeShell', () => {
+  it('shows the note its provider sends', () => {
     renderRow({ session: terminal });
-    expect(screen.getByTestId('session-outside').textContent).toBe(
-      'Running in a terminal. HomeShell cannot show its screen or send it text.',
-    );
+    expect(screen.getByTestId('session-note').textContent).toBe(note);
+    cleanup();
+    renderRow({ session: session('running') });
+    expect(screen.queryByTestId('session-note')).toBeNull();
   });
 
   it('offers no send box for a session HomeShell cannot type into', () => {
@@ -1665,11 +1674,7 @@ describe('SessionRow running in a terminal', () => {
     const dialog = screen.getByRole('dialog', {
       name: 'Restart "Implement self-update" in HomeShell?',
     });
-    expect(
-      within(dialog).getByText(
-        'This ends the session in its terminal and continues its conversation in HomeShell.',
-      ),
-    ).toBeTruthy();
+    expect(within(dialog).getByText(takeOverWarning)).toBeTruthy();
     expect(onTakeOver).not.toHaveBeenCalled();
     fireEvent.click(
       within(dialog).getByRole('button', { name: 'Restart in HomeShell' }),

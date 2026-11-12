@@ -579,7 +579,7 @@ func TestReadoptionRefusesWhileTheRecordedBridgeAnswers(t *testing.T) {
 }
 
 func TestForegroundSessionCapabilities(t *testing.T) {
-	want := &domain.SessionCapabilities{Live: false, TakeOver: true, StopWarning: foregroundStopWarning}
+	want := &foregroundCapabilities
 	tests := []struct {
 		name   string
 		record bridgeRecord

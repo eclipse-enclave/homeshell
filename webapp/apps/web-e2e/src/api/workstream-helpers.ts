@@ -221,7 +221,13 @@ export interface ListedSession {
   /** When the daemon saw the session end; absent while it is live. */
   endedAt?: string;
   /** What a client may do with the session; absent for one HomeShell sees and types into. */
-  capabilities?: { live: boolean; takeOver: boolean; stopWarning?: string };
+  capabilities?: {
+    live: boolean;
+    takeOver: boolean;
+    stopWarning?: string;
+    takeOverWarning?: string;
+    note?: string;
+  };
 }
 
 /** The workstream's sessions as GET /api/projects lists them right now. */
