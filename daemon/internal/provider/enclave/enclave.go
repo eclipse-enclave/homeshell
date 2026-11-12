@@ -370,8 +370,9 @@ func (p *Provider) Open(ctx context.Context, ref provider.SessionRef, mode strin
 		return provider.OpenResult{}, fmt.Errorf("unsupported open mode %q", mode)
 	}
 	record, err := p.liveBridgeRecord(ref.SessionID)
-	if record.takeOver() {
-		// Nothing of a session in the user's terminal can be attached; a shell in its container is what opens.
+	if errors.Is(err, provider.ErrCapabilityUnsupported) && record.takeOver() {
+		// Nothing of a session in the user's terminal can be attached; a shell in its container is what opens. Not
+		// while it restarts: its container is being stopped and run again.
 		return p.OpenShell(ctx, ref)
 	}
 	if err != nil {

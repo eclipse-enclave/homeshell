@@ -577,6 +577,23 @@ func TestForegroundSessionOpensAShell(t *testing.T) {
 	}
 }
 
+func TestForegroundSessionOpensNoShellWhileItRestarts(t *testing.T) {
+	p, _, _, _, ref := adoptedForeground(t)
+	launcher := &fakeLauncher{}
+	p.term = launcher
+	_, done, err := p.beginRestart(context.Background(), restartProjection{session: domain.Session{ID: cliSessionName}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done()
+	if _, err := p.Open(context.Background(), ref, "terminal"); !errors.Is(err, provider.ErrSessionStopped) {
+		t.Errorf("error = %v, want ErrSessionStopped", err)
+	}
+	if len(launcher.launched) != 0 {
+		t.Errorf("launched %q into a container being restarted", launcher.launched)
+	}
+}
+
 func TestForegroundSessionRefusesInput(t *testing.T) {
 	p, _, bridge, _, ref := adoptedForeground(t)
 	for name, err := range map[string]error{
