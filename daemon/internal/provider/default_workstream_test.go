@@ -381,6 +381,61 @@ func TestServiceAddDefaultWorkstream(t *testing.T) {
 	}
 }
 
+// blockedDiscovery is a session provider whose discovery waits for release.
+type blockedDiscovery struct {
+	stubSessionProvider
+	release chan struct{}
+}
+
+func (p *blockedDiscovery) DiscoverSessions(ctx context.Context, project ProjectRef) ([]DiscoveredSession, error) {
+	<-p.release
+	return p.stubSessionProvider.DiscoverSessions(ctx, project)
+}
+
+// The default workstream is answered before session discovery, which can be
+// slow, and the session already running in the project folder is attached after.
+func TestServiceAddDefaultWorkstreamAttachesSessionsAfterAnswering(t *testing.T) {
+	dir := t.TempDir()
+	st := store.NewTestStore(t, []domain.Project{{ID: "p1", Name: "p", Path: dir}})
+	reg := NewRegistry()
+	sessions := &blockedDiscovery{release: make(chan struct{}), stubSessionProvider: stubSessionProvider{
+		id: "prov", available: true, discovered: map[string][]DiscoveredSession{
+			"p1": {ds(dir, "s1", domain.SessionRunning)},
+		},
+	}}
+	if err := reg.RegisterSessionProvider(sessions); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(st, reg, 0)
+	t.Cleanup(func() { svc.Shutdown(context.Background()) })
+
+	answered := make(chan domain.Workstream, 1)
+	go func() {
+		created, err := svc.AddDefaultWorkstream(context.Background(), "p1")
+		if err != nil {
+			t.Errorf("AddDefaultWorkstream: %v", err)
+		}
+		answered <- created
+	}()
+	var created domain.Workstream
+	select {
+	case created = <-answered:
+	case <-time.After(5 * time.Second):
+		close(sessions.release)
+		t.Fatal("AddDefaultWorkstream waited for session discovery")
+	}
+	close(sessions.release)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if ws, err := st.Workstream("p1", created.ID); err == nil && len(ws.Sessions) == 1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Error("the session running in the project folder was not attached to the default workstream")
+}
+
 // inPlaceStub is a workstream provider whose creates are in place.
 type inPlaceStub struct{ stubWorkstreamProvider }
 

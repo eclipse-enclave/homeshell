@@ -496,13 +496,16 @@ func (s *Service) AddDefaultWorkstream(ctx context.Context, projectID string) (d
 	if err != nil {
 		return domain.Workstream{}, err
 	}
-	// AddWorkstream does not persist; a projection pass does, and attaches any
-	// session already running in the project folder. The workstream exists
-	// either way, so a failed pass is logged and left to the next.
-	if err := s.reconciler.ReconcileProject(ctx, projectID); err != nil {
-		slog.Warn("reconciling after adding the default workstream failed",
-			"project", projectID, "error", err)
-	}
+	// A projection pass attaches any session already running in the project
+	// folder. It asks every session provider, so it runs after the request, as
+	// finishCreate's does; a failed pass is left to the next.
+	reconcileCtx := context.WithoutCancel(ctx)
+	s.goBackground(func() {
+		if err := s.reconciler.ReconcileProject(reconcileCtx, projectID); err != nil {
+			slog.Warn("reconciling after adding the default workstream failed",
+				"project", projectID, "error", err)
+		}
+	})
 	return s.store.Workstream(projectID, created.ID)
 }
 

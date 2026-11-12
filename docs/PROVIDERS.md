@@ -168,7 +168,8 @@ strategies ([CONTEXT.md](../CONTEXT.md#working-directory)) through `provider/wor
   default, also for a config naming none) or, in the form once a workstream holds the project
   folder, `copy` (see [API.md](API.md#workstreams)).
 - **Default workstream:** `provider.Service.AddProject` creates one `in-place` workstream with
-  every new project, synchronously (nothing to materialize).
+  every new project, synchronously (nothing to materialize). Sessions already running in the
+  project folder attach in a projection pass after the request, as it asks every session provider.
 - **Branch follows checkouts.** A workstream's branch is the one checked out in its folder; an
   `in-place` workstream is named after it when given no name. A `copy`, made without `.git`, has
   none. Core is a `Refresher`: each projection re-reads that branch from a HEAD file, without
