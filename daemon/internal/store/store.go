@@ -65,8 +65,10 @@ func isStartingPlaceholder(sess domain.Session) bool {
 	return strings.HasPrefix(sess.ID, StartingIDPrefix)
 }
 
-// nameTakenLocked reports the workstream in project that already answers to
-// name, ignoring exceptID — the workstream being inserted or renamed.
+// NameTaken reports the workstream among workstreams, a project's, that already
+// answers to name, ignoring exceptIDs — the workstream being inserted or renamed.
+// It is the store's name rule, for callers that check a project's workstreams
+// before handing them to the store.
 //
 // A creation placeholder counts only while its create is still running, and that
 // is what makes this check a **reservation** rather than a snapshot. Two
@@ -78,12 +80,12 @@ func isStartingPlaceholder(sess domain.Session) bool {
 //
 // An empty name never collides: it is not a name yet, and the provider fills one
 // in during creation.
-func nameTakenLocked(project *domain.Project, name string, exceptIDs ...string) (domain.Workstream, bool) {
+func NameTaken(workstreams []domain.Workstream, name string, exceptIDs ...string) (domain.Workstream, bool) {
 	want := strings.TrimSpace(name)
 	if want == "" {
 		return domain.Workstream{}, false
 	}
-	for _, existing := range project.Workstreams {
+	for _, existing := range workstreams {
 		if slices.Contains(exceptIDs, existing.ID) {
 			continue
 		}
@@ -828,7 +830,7 @@ func (s *Store) NameUser(projectID, name string, exceptIDs ...string) string {
 	defer s.mu.Unlock()
 	for i := range s.projects {
 		if s.projects[i].ID == projectID {
-			existing, _ := nameTakenLocked(&s.projects[i], name, exceptIDs...)
+			existing, _ := NameTaken(s.projects[i].Workstreams, name, exceptIDs...)
 			return existing.Name
 		}
 	}
@@ -914,7 +916,7 @@ func uniqueLocked(project *domain.Project, workstream domain.Workstream, exceptI
 	if existing, taken := workingDirTakenLocked(project, workstream.WorkingDir, exceptIDs...); taken {
 		return fmt.Errorf("%w: %q already works in %s", ErrDuplicateWorkingDir, existing.Name, workstream.WorkingDir)
 	}
-	if clash, taken := nameTakenLocked(project, workstream.Name, exceptIDs...); taken {
+	if clash, taken := NameTaken(project.Workstreams, workstream.Name, exceptIDs...); taken {
 		// Quote the *existing* workstream's name rather than the requested one:
 		// they may differ only in case or padding, and seeing which name is
 		// already there is what tells the user that.
@@ -1035,7 +1037,7 @@ func (s *Store) UpdateWorkstream(projectID string, workstream domain.Workstream)
 					strings.TrimSpace(workstream.Name),
 				)
 				if renamed {
-					if clash, taken := nameTakenLocked(&s.projects[i], workstream.Name, workstream.ID); taken {
+					if clash, taken := NameTaken(s.projects[i].Workstreams, workstream.Name, workstream.ID); taken {
 						// Quote the *existing* workstream's name rather than the requested one:
 						// they may differ only in case or padding, and seeing which name is
 						// already there is what tells the user that.

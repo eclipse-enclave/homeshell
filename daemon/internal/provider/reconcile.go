@@ -295,7 +295,8 @@ func (r *Reconciler) reconcileProjectOnly(ctx context.Context, project domain.Pr
 
 // refresh has each workstream's provider bring it up to date (Refresher). A
 // name a refresh gives that another workstream in the project already answers
-// to is not taken: the workstream keeps the name it had.
+// to, by the store's rule (store.NameTaken), is not taken: the workstream keeps
+// the name it had.
 func (r *Reconciler) refresh(ctx context.Context, project ProjectRef, workstreams []domain.Workstream) {
 	for i, workstream := range workstreams {
 		if isPlaceholder(workstream) {
@@ -310,8 +311,10 @@ func (r *Reconciler) refresh(ctx context.Context, project ProjectRef, workstream
 			continue
 		}
 		refreshed := refresher.Refresh(ctx, project, workstream)
-		if refreshed.Name != workstream.Name && nameTakenIn(workstreams, refreshed.Name, workstream.ID) {
-			refreshed.Name, refreshed.CreatorData = workstream.Name, workstream.CreatorData
+		if refreshed.Name != workstream.Name {
+			if _, taken := store.NameTaken(workstreams, refreshed.Name, workstream.ID); taken {
+				refreshed.Name, refreshed.CreatorData = workstream.Name, workstream.CreatorData
+			}
 		}
 		workstreams[i] = refreshed
 	}
@@ -330,17 +333,6 @@ func (r *Reconciler) branchMoved(ctx context.Context, providerID string, refresh
 			if refresher.Refresh(ctx, ref, workstream).Branch != workstream.Branch {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-// nameTakenIn reports whether a workstream other than exceptID answers to name,
-// by the store's rule: trimmed and case-insensitive.
-func nameTakenIn(workstreams []domain.Workstream, name, exceptID string) bool {
-	for _, workstream := range workstreams {
-		if workstream.ID != exceptID && strings.EqualFold(strings.TrimSpace(workstream.Name), strings.TrimSpace(name)) {
-			return true
 		}
 	}
 	return false

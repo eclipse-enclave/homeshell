@@ -205,6 +205,38 @@ func TestReconcileRefreshesWorkstreamsButKeepsNamesUnique(t *testing.T) {
 	}
 }
 
+// A refresh follows the store's name rule: a create still running holds its
+// name, a failed one does not.
+func TestReconcileRefreshNamesFollowTheStoresRule(t *testing.T) {
+	tests := []struct {
+		name, to, wantName string
+	}{
+		{"a pending create holds its name", "pending", "old"},
+		{"a failed create does not", "failed", "failed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := store.NewTestStore(t, []domain.Project{{ID: "p1", Path: "/p1", Workstreams: []domain.Workstream{
+				{ID: "ws1", Name: "old", Provider: "renaming", WorkingDir: "/p1", Sessions: []domain.Session{}},
+				{ID: PlaceholderIDPrefix + "a", Name: "pending", Provider: "core",
+					RuntimeState: domain.RuntimeCreating, Sessions: []domain.Session{}},
+				{ID: PlaceholderIDPrefix + "b", Name: "failed", Provider: "core",
+					RuntimeState: domain.RuntimeError, CreateFailed: true, Sessions: []domain.Session{}},
+			}}})
+			reg := NewRegistry()
+			if err := reg.RegisterWorkstreamProvider(&renamingProvider{
+				stubWorkstreamProvider: stubWorkstreamProvider{id: "renaming"}, to: tt.to,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			NewReconciler(st, reg, 0).Reconcile(context.Background())
+			if got, err := st.Workstream("p1", "ws1"); err != nil || got.Name != tt.wantName {
+				t.Errorf("refreshed = %q, %v; want %q", got.Name, err, tt.wantName)
+			}
+		})
+	}
+}
+
 // A branch switched with nothing else going on is noticed: the reconciler
 // watches the branches a Refresher's workstreams are on.
 func TestReconcilerRunFollowsABranchSwitchedOutsideHomeShell(t *testing.T) {
