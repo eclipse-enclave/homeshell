@@ -1,9 +1,9 @@
 package enclave
 
 import (
-	"os"
 	"path/filepath"
 
+	"github.com/eclipsesource/homeshell/daemon/internal/envutil"
 	"github.com/eclipsesource/homeshell/daemon/internal/hostbridge"
 	"github.com/eclipsesource/homeshell/daemon/internal/persist"
 	"github.com/eclipsesource/homeshell/daemon/internal/provider"
@@ -20,7 +20,7 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		enclaveProvider.inventoryEvery = inventoryIntervalFrom(os.Getenv(inventoryIntervalEnv))
+		enclaveProvider.inventoryEvery = envutil.Milliseconds(inventoryIntervalEnv)
 		return enclaveProvider, nil
 	})
 }

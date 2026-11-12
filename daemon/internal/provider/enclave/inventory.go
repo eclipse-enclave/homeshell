@@ -3,7 +3,6 @@ package enclave
 import (
 	"context"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/eclipsesource/homeshell/daemon/internal/domain"
@@ -109,14 +108,4 @@ func (p *Provider) inventoryInterval() time.Duration {
 		return p.inventoryEvery
 	}
 	return driftCheckInterval
-}
-
-// inventoryIntervalFrom reads the interval from the environment's value in milliseconds; a missing or invalid
-// one is 0, which falls back to driftCheckInterval.
-func inventoryIntervalFrom(value string) time.Duration {
-	milliseconds, err := strconv.Atoi(value)
-	if err != nil || milliseconds <= 0 {
-		return 0
-	}
-	return time.Duration(milliseconds) * time.Millisecond
 }

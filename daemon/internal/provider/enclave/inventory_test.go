@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/eclipsesource/homeshell/daemon/internal/domain"
 	"github.com/eclipsesource/homeshell/daemon/internal/provider/enclave/sandboxschema"
@@ -81,12 +80,7 @@ func TestOutdatedSettingsOfASessionInACopyFolder(t *testing.T) {
 	}
 }
 
-func TestInventoryIntervalFromTheEnvironment(t *testing.T) {
-	for value, want := range map[string]time.Duration{"250": 250 * time.Millisecond, "": 0, "x": 0, "0": 0} {
-		if got := inventoryIntervalFrom(value); got != want {
-			t.Errorf("inventoryIntervalFrom(%q) = %v, want %v", value, got, want)
-		}
-	}
+func TestInventoryIntervalDefault(t *testing.T) {
 	enclaveProvider := &Provider{}
 	if got := enclaveProvider.inventoryInterval(); got != driftCheckInterval {
 		t.Errorf("default interval = %v, want %v", got, driftCheckInterval)
