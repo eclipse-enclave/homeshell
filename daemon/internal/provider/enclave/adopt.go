@@ -46,15 +46,9 @@ func sessionNameOf(container Container) string {
 }
 
 // adoptListed adopts the CLI sessions the inventory lists and ends the foreground ones it no longer lists,
-// reporting whether any record changed, and saves the records once. Without the agent tool profiles, which tell an
-// agent's container from others, nothing is adopted.
+// reporting whether any record changed, and saves the records once.
 func (p *Provider) adoptListed(ctx context.Context, listed inventory) bool {
-	attempted, adopted := false, false
-	if agentTools, err := p.agentTools(ctx); err != nil {
-		slog.Debug("not adopting enclave sessions started with the CLI: cannot list the tool profiles", "error", err)
-	} else {
-		attempted, adopted = p.adoptRunning(ctx, listed, agentTools)
-	}
+	attempted, adopted := p.adoptRunning(ctx, listed)
 	ended := p.endForeground(listed)
 	if attempted || ended {
 		p.bridges.mu.Lock()
@@ -68,8 +62,12 @@ func (p *Provider) adoptListed(ctx context.Context, listed inventory) bool {
 }
 
 // adoptRunning adopts each listed container that is due, once however many projects list it, reporting whether it
-// tried any and whether any was adopted.
-func (p *Provider) adoptRunning(ctx context.Context, listed inventory, agentTools []string) (attempted, adopted bool) {
+// tried any and whether any was adopted. The agent tool profiles, which tell an agent's container from others, are
+// listed once a running unrecorded container needs them; without them no such container is adopted.
+func (p *Provider) adoptRunning(ctx context.Context, listed inventory) (attempted, adopted bool) {
+	var agentTools []string
+	var toolsErr error
+	toolsListed := false
 	seen := map[string]bool{}
 	for _, listing := range listed.listings {
 		project := refOf(listing.project)
@@ -78,7 +76,15 @@ func (p *Provider) adoptRunning(ctx context.Context, listed inventory, agentTool
 				continue
 			}
 			seen[container.Name] = true
-			if record, recorded := p.bridgeRecordFor(container.Name); !adoptionDue(container, record, recorded, agentTools) {
+			record, recorded := p.bridgeRecordFor(container.Name)
+			if !recorded && !toolsListed && mayBeCLISession(container) {
+				toolsListed = true
+				if agentTools, toolsErr = p.agentTools(ctx); toolsErr != nil {
+					slog.Debug("not adopting enclave sessions started with the CLI: cannot list the tool profiles",
+						"error", toolsErr)
+				}
+			}
+			if !adoptionDue(container, record, recorded, agentTools) {
 				continue
 			}
 			attempted = true
@@ -94,16 +100,19 @@ func (p *Provider) adoptRunning(ctx context.Context, listed inventory, agentTool
 }
 
 // adoptionDue reports whether a running listed container is to be adopted: a recorded session that ended and runs
-// again, as a user does under the same name, or, without a record, a container of one of agentTools whose session
-// name does not mark it as one another HomeShell daemon started.
+// again, as a user does under the same name, or, without a record, a container of one of agentTools that may be a
+// CLI session.
 func adoptionDue(container Container, record bridgeRecord, recorded bool, agentTools []string) bool {
-	if container.Status != "running" {
-		return false
-	}
 	if recorded {
-		return record.State.Terminal()
+		return container.Status == "running" && record.State.Terminal()
 	}
-	return slices.Contains(agentTools, container.Tool) && !strings.HasPrefix(sessionNameOf(container), sessionNamePrefix)
+	return mayBeCLISession(container) && slices.Contains(agentTools, container.Tool)
+}
+
+// mayBeCLISession reports whether a container without a record may be a CLI session, before its tool profile is
+// known: it runs, and its session name does not mark it as one another HomeShell daemon started.
+func mayBeCLISession(container Container) bool {
+	return container.Status == "running" && !strings.HasPrefix(sessionNameOf(container), sessionNamePrefix)
 }
 
 // adoptContainer records a listed container as a session and attaches a bridge to a background one, leaving the

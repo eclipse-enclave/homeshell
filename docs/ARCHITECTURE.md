@@ -451,6 +451,8 @@ the agent's PTY and serves screen snapshots on a unix socket; the wire format is
   - an ended one listed running again is adopted again, unless its old bridge still answers at a
     socket this daemon no longer uses (as in recovery);
   - an `hs-` session name this daemon has no record of is another daemon's;
+  - the agent tool profiles (`enclave tools`) are listed only when a check finds a running
+    container without a record and without an `hs-` session name, at most once per check;
   - two daemons whose projects cover one folder may both attach one (GAP 10 in
     `provider/enclave/gaps.go`).
 - **Changed while listed.** Every write of a record bumps its generation, which the check takes

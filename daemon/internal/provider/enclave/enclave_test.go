@@ -106,6 +106,7 @@ type fakeCLI struct {
 	mu         sync.Mutex
 	listCalls  int
 	allCalls   int
+	toolCalls  int
 	runCalls   []runCall
 	execOutput map[string]string
 	execErr    error
@@ -246,6 +247,9 @@ func (f *fakeCLI) Features(ctx context.Context, _ string) ([]sandboxschema.Featu
 }
 
 func (f *fakeCLI) Tools(_ context.Context) ([]Tool, error) {
+	f.mu.Lock()
+	f.toolCalls++
+	f.mu.Unlock()
 	var tools []Tool
 	for _, name := range f.tools {
 		label := f.toolLabels[name]

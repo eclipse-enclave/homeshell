@@ -483,6 +483,55 @@ func TestInventoryReadoptsDespiteAnotherSessionRestartedDuringTheListing(t *test
 	}
 }
 
+// The tool profiles are listed only for a running container HomeShell has no record of, once a check.
+func TestInventoryListsToolProfilesOnlyForUnrecordedSessions(t *testing.T) {
+	tests := []struct {
+		name      string
+		arrange   func(t *testing.T, p *Provider, cli *fakeCLI, project provider.ProjectRef)
+		wantCalls int
+	}{
+		{"nothing listed", func(*testing.T, *Provider, *fakeCLI, provider.ProjectRef) {}, 0},
+		{"a recorded session", func(t *testing.T, p *Provider, cli *fakeCLI, project provider.ProjectRef) {
+			cli.runResult = cliSessionName
+			createBridge(t, p, project)
+			listed(cli, project, cliSession(project.Path, true))
+		}, 0},
+		{"another daemon's session", func(_ *testing.T, _ *Provider, cli *fakeCLI, project provider.ProjectRef) {
+			listed(cli, project, Container{Name: "enclave-codex-0123456789ab-hs-77", Tool: "codex",
+				Directory: project.Path, Status: "running", SessionName: "hs-77", Background: true})
+		}, 0},
+		{"two unrecorded sessions", func(_ *testing.T, _ *Provider, cli *fakeCLI, project provider.ProjectRef) {
+			other := Container{Name: "enclave-codex-fedcba987654-next", Tool: "codex", Directory: project.Path,
+				Status: "running", SessionName: "next"}
+			listed(cli, project, cliSession(project.Path, true), other)
+		}, 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			p, cli, _, project := bridgeProvider(t)
+			test.arrange(t, p, cli, project)
+			before := cli.toolCalls
+			p.checkInventory(context.Background())
+			if got := cli.toolCalls - before; got != test.wantCalls {
+				t.Errorf("listed the tool profiles %d times, want %d", got, test.wantCalls)
+			}
+		})
+	}
+}
+
+// An ended session started again under its name needs no tool profiles to be adopted again.
+func TestReadoptionWhenToolProfilesCannotBeListed(t *testing.T) {
+	p, cli, _, project := bridgeProvider(t)
+	cli.runResult = cliSessionName
+	stoppedSession(t, p, project)
+	cli.toolsErr = errors.New("enclave tools: exit status 1")
+	listed(cli, project, cliSession(project.Path, true))
+	p.checkInventory(context.Background())
+	if got := rows(t, p, project)[cliSessionName].State; got.Terminal() {
+		t.Errorf("state = %s; want the ended session adopted again", got)
+	}
+}
+
 // A session HomeShell once started, started again in a terminal under its name, runs with the terminal's options.
 func TestReadoptionDropsTheRecordedLaunchConfig(t *testing.T) {
 	for _, background := range []bool{true, false} {
