@@ -4,24 +4,17 @@ import {
   test,
   type APIRequestContext,
 } from '@playwright/test';
-import { execFile, execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { homeshellBin } from '../e2e-env';
 import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { promisify } from 'node:util';
+  disposeIsolatedDaemons,
+  isolatedHome,
+  runtimeEnv,
+  trackIsolatedHome,
+} from '../isolated-daemon';
 import { awaitRealWorkstream, pollFor, sessionsOf } from './workstream-helpers';
-
-const exec = promisify(execFile);
-const repo = resolve(__dirname, '../../../../..');
-const buildDir = mkdtempSync(join(tmpdir(), 'hs-poll-bin-'));
-const binary = join(buildDir, 'homeshell');
 
 type Daemon = Awaited<ReturnType<typeof startDaemon>>;
 
@@ -32,9 +25,7 @@ async function startDaemon({
   version = 1,
   interval,
 }: { version?: number; interval?: number } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'hs-poll-'));
-  const runtime = join(root, 'run');
-  mkdirSync(runtime);
+  const root = isolatedHome('poll');
   writeFileSync(
     join(root, 'settings.json'),
     JSON.stringify({
@@ -49,29 +40,26 @@ async function startDaemon({
     }),
   );
   const daemon = spawn(
-    binary,
+    homeshellBin,
     ['serve', '-demo=false', `-home-dir=${root}`, '-addr=127.0.0.1:0'],
     {
       stdio: 'ignore',
       env: {
         ...process.env,
-        PATH: `${buildDir}:/usr/bin:/bin`,
-        XDG_RUNTIME_DIR: runtime,
+        PATH: `${dirname(homeshellBin)}:/usr/bin:/bin`,
+        ...runtimeEnv(root),
         HOMESHELL_API_TOKEN: 'isolated-polling-test',
         HOMESHELL_UPDATE_BASE_URL: 'http://127.0.0.1:9/',
       },
     },
   );
   let api: APIRequestContext | undefined;
+  const dispose = trackIsolatedHome(root, () => daemon);
   const stop = async () => {
     try {
-      await exec(binary, ['stop', `-home-dir=${root}`], {
-        timeout: 15_000,
-      });
+      await dispose();
     } finally {
-      if (daemon.exitCode === null) daemon.kill('SIGKILL');
       await api?.dispose();
-      rmSync(root, { recursive: true, force: true });
     }
   };
   try {
@@ -282,16 +270,7 @@ test.describe('fast session polling', () => {
     'Local sessions require the Unix bridge',
   );
 
-  test.beforeAll(() => {
-    test.setTimeout(120_000);
-    execFileSync('go', ['build', '-o', binary, './cmd/homeshell'], {
-      cwd: join(repo, 'daemon'),
-    });
-  });
-
-  test.afterAll(() => {
-    rmSync(buildDir, { recursive: true, force: true });
-  });
+  test.afterEach(disposeIsolatedDaemons);
 
   test('migrates old defaults once and preserves custom and newly chosen intervals', async () => {
     test.setTimeout(60_000);

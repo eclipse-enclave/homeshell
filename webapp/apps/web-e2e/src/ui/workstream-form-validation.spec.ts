@@ -6,6 +6,7 @@ import {
 } from '@playwright/test';
 import { expect, test } from '../fixtures';
 import { gitProject } from '../git-repo';
+import { withSettingsLock } from '../settings-lock';
 import { textContrast, useTheme } from './contrast';
 import { loadApp } from './keyboard-helpers';
 import {
@@ -173,16 +174,24 @@ test('a second in-place workstream is refused on the strategy, with the form ope
   );
   // Only the refused choice is painted as refused, not the ones it points to:
   // they keep the border of a pill in a group nothing refused.
+  // Read once its transitions end: clicking "Default" fades it out of the
+  // checked look, and near the end of that fade its border reads as
+  // rgba(…, 1), which equals no settled border.
   const unrefused = await form
     .getByRole('radio', { name: 'Fake Provider' })
-    .evaluate(
-      (pill) =>
-        (
-          globalThis as unknown as {
-            getComputedStyle: (e: unknown) => { borderColor: string };
-          }
-        ).getComputedStyle(pill).borderColor,
-    );
+    .evaluate(async (pill) => {
+      const el = pill as unknown as {
+        getAnimations: () => { finished: Promise<unknown> }[];
+      };
+      for (let a = el.getAnimations(); a.length; a = el.getAnimations()) {
+        await Promise.allSettled(a.map((anim) => anim.finished));
+      }
+      return (
+        globalThis as unknown as {
+          getComputedStyle: (e: unknown) => { borderColor: string };
+        }
+      ).getComputedStyle(pill).borderColor;
+    });
   for (const name of ['worktree', 'copy']) {
     await expect(form.getByRole('radio', { name })).toHaveCSS(
       'border-color',
@@ -199,19 +208,27 @@ test('a second in-place workstream is refused on the strategy, with the form ope
   );
 });
 
+/**
+ * Creates a copy workstream, under the settings lock: where a copy goes is the
+ * workstreams.location setting, which other tests set to a folder inside the
+ * project, where copies are refused. Returns the response status.
+ */
+const createCopy = (request: APIRequestContext, projectId: string, name: string) =>
+  withSettingsLock(async () =>
+    (
+      await request.post(`/api/projects/${projectId}/workstreams`, {
+        data: { providerId: 'core', name, config: { strategy: 'copy' } },
+      })
+    ).status(),
+  );
+
 test('a name already in the project is refused on the name, with the form open', async ({
   page,
   request,
 }) => {
   const { dir, projectId } = await gitProject(request, 'hs-ui-dupname-');
   const taken = unique('copy one');
-  expect(
-    (
-      await request.post(`/api/projects/${projectId}/workstreams`, {
-        data: { providerId: 'core', name: taken, config: { strategy: 'copy' } },
-      })
-    ).status(),
-  ).toBe(201);
+  expect(await createCopy(request, projectId, taken)).toBe(201);
   await loadApp(page);
   await selectProject(page, basename(dir));
   await expect(
@@ -244,13 +261,7 @@ test('an inline rename to a taken name is refused in the words a create uses', a
   const taken = unique('Copy one');
   const other = unique('other');
   for (const name of [taken, other]) {
-    expect(
-      (
-        await request.post(`/api/projects/${projectId}/workstreams`, {
-          data: { providerId: 'core', name, config: { strategy: 'copy' } },
-        })
-      ).status(),
-    ).toBe(201);
+    expect(await createCopy(request, projectId, name)).toBe(201);
   }
   await loadApp(page);
   await selectProject(page, basename(dir));

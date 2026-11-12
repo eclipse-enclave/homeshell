@@ -1,8 +1,13 @@
 import { expect, test } from '@playwright/test';
-import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { spawn } from 'node:child_process';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { daemonDir, homeshellBin as binary } from '../e2e-env';
+import {
+  isolatedHome,
+  runtimeEnv,
+  trackIsolatedHome,
+} from '../isolated-daemon';
 
 /**
  * Black-box coverage of the per-event notification settings: which notify-worthy
@@ -21,9 +26,7 @@ import { join, resolve } from 'node:path';
  * kinds arrive without any action.
  */
 
-const daemonDir = resolve(__dirname, '../../../../../daemon');
-const binary = join(tmpdir(), 'homeshell-notify-events-e2e');
-const homeDir = mkdtempSync(join(tmpdir(), 'homeshell-notify-events-'));
+const homeDir = isolatedHome('ntf');
 const stateFile = join(homeDir, 'daemon.json');
 
 /** The sound the seeded settings choose, so a stamped sound is unambiguous. */
@@ -147,10 +150,7 @@ test.describe('per-event notification settings', () => {
   test.describe.configure({ mode: 'default' });
 
   test.beforeAll(async () => {
-    test.setTimeout(180_000);
-    execFileSync('go', ['build', '-o', binary, './cmd/homeshell'], {
-      cwd: daemonDir,
-    });
+    test.setTimeout(90_000);
     // Seed the settings before the daemon starts: in-app only (never the OS),
     // "waiting" audible, "finished" muted, and no quiet period — the cycler's
     // sessions are short-lived, and a window here would only add flakiness.
@@ -172,15 +172,17 @@ test.describe('per-event notification settings', () => {
     daemon = spawn(
       binary,
       ['serve', '-demo=true', `-home-dir=${homeDir}`, '-addr', '127.0.0.1:0'],
-      { cwd: daemonDir, stdio: 'ignore' },
+      {
+        cwd: daemonDir,
+        stdio: 'ignore',
+        env: { ...process.env, ...runtimeEnv(homeDir) },
+      },
     );
     expect(await waitFor(() => existsSync(stateFile), 60_000)).toBe(true);
     state = JSON.parse(readFileSync(stateFile, 'utf8')) as DaemonState;
   });
 
-  test.afterAll(() => {
-    if (daemon && daemon.exitCode === null) daemon.kill('SIGKILL');
-  });
+  test.afterAll(trackIsolatedHome(homeDir, () => daemon));
 
   test('stamps the configured sound per event, and silences a muted one', async () => {
     test.setTimeout(120_000);

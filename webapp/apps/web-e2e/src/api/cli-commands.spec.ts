@@ -1,11 +1,11 @@
-import { execFile, execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { execFile, spawn } from 'node:child_process';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { APIRequestContext } from '@playwright/test';
 import { expect, tempProjectDir, test } from '../fixtures';
 import { isPlaceholderSession } from '../placeholders';
+import { homeshellBin as binary, repoRoot, scratchDir } from '../e2e-env';
+import { withSettingsLock } from '../settings-lock';
 
 /**
  * Black-box coverage of the CLI's **data verbs** (`project`, `workstream`,
@@ -22,9 +22,6 @@ import { isPlaceholderSession } from '../placeholders';
  * exit code — and the exit codes are half of what is being asserted.
  */
 const execFileAsync = promisify(execFile);
-const repoRoot = resolve(__dirname, '../../../../..');
-const daemonDir = join(repoRoot, 'daemon');
-const binary = join(tmpdir(), 'homeshell-cli-commands-e2e');
 
 // The daemon under test publishes its state file here (see playwright.config.ts),
 // so this is how the CLI discovers it.
@@ -149,13 +146,6 @@ test.describe('homeshell data verbs', () => {
   // shared demo daemon to destabilize the *other* api specs. One at a time keeps
   // this spec's footprint to a single worker.
   test.describe.configure({ mode: 'serial' });
-
-  test.beforeAll(() => {
-    test.setTimeout(180_000);
-    execFileSync('go', ['build', '-o', binary, './cmd/homeshell'], {
-      cwd: daemonDir,
-    });
-  });
 
   test('project list prints a table and --json yields the API payload', async ({
     request,
@@ -481,7 +471,7 @@ test.describe('homeshell data verbs', () => {
 
   test('exit codes distinguish no daemon, a refusal and a bad invocation', async () => {
     // No daemon: an empty data directory has no state file to discover.
-    const elsewhere = mkdtempSync(join(tmpdir(), 'hs-cli-nodaemon-'));
+    const elsewhere = scratchDir('nodaemon-');
     const missing = await cli('project', 'list', `-home-dir=${elsewhere}`);
     expect(missing.code).toBe(EXIT.noDaemon);
     expect(missing.stderr).toContain('no daemon is running');
@@ -713,29 +703,36 @@ test.describe('homeshell data verbs', () => {
     request,
   }) => {
     // A setting the daemon owns: change it here, read it back over the API.
-    const original = (
-      await cliOk('settings', 'get', 'projects.confirmRemove', homeDirArg)
-    ).stdout.trim();
-    const flipped = original === 'true' ? 'false' : 'true';
+    // Under the settings lock: other tests write the whole document, and one
+    // that lands between the CLI's write and this read would undo it.
+    await withSettingsLock(async () => {
+      const original = (
+        await cliOk('settings', 'get', 'projects.confirmRemove', homeDirArg)
+      ).stdout.trim();
+      const flipped = original === 'true' ? 'false' : 'true';
 
-    await cliOk(
-      'settings',
-      'set',
-      'projects.confirmRemove',
-      flipped,
-      homeDirArg,
-    );
-    const overApi = (await (await request.get('/api/settings')).json()) as {
-      projects: { confirmRemove: boolean };
-    };
-    expect(String(overApi.projects.confirmRemove)).toBe(flipped);
-    await cliOk(
-      'settings',
-      'set',
-      'projects.confirmRemove',
-      original,
-      homeDirArg,
-    );
+      try {
+        await cliOk(
+          'settings',
+          'set',
+          'projects.confirmRemove',
+          flipped,
+          homeDirArg,
+        );
+        const overApi = (await (await request.get('/api/settings')).json()) as {
+          projects: { confirmRemove: boolean };
+        };
+        expect(String(overApi.projects.confirmRemove)).toBe(flipped);
+      } finally {
+        await cliOk(
+          'settings',
+          'set',
+          'projects.confirmRemove',
+          original,
+          homeDirArg,
+        );
+      }
+    });
 
     // A wrong type is caught before the daemon; a wrong value is the daemon's.
     const badType = await cli(
@@ -755,16 +752,23 @@ test.describe('homeshell data verbs', () => {
     );
     expect(badValue.code).toBe(EXIT.failed);
 
-    // The live log level is runtime config, not the settings document.
-    const level = (
-      await cliOk('config', 'get', 'logLevel', homeDirArg)
-    ).stdout.trim();
-    await cliOk('config', 'set', 'logLevel', 'debug', homeDirArg);
-    const live = (await (await request.get('/api/config')).json()) as {
-      logLevel: string;
-    };
-    expect(live.logLevel).toBe('debug');
-    await cliOk('config', 'set', 'logLevel', level, homeDirArg);
+    // The live log level is runtime config, not the settings document, but it
+    // is saved in the same file and `config.spec.ts` changes it too: under the
+    // lock, so neither reads back the other's level.
+    await withSettingsLock(async () => {
+      const level = (
+        await cliOk('config', 'get', 'logLevel', homeDirArg)
+      ).stdout.trim();
+      try {
+        await cliOk('config', 'set', 'logLevel', 'debug', homeDirArg);
+        const live = (await (await request.get('/api/config')).json()) as {
+          logLevel: string;
+        };
+        expect(live.logLevel).toBe('debug');
+      } finally {
+        await cliOk('config', 'set', 'logLevel', level, homeDirArg);
+      }
+    });
 
     const badLevel = await cli(
       'config',

@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { test as base, type APIRequestContext } from '@playwright/test';
+import { retryOnNetworkChange } from './page-load-retry';
 
 /**
  * Shared Playwright fixtures. Import `test`/`expect` from here instead of
@@ -44,6 +45,30 @@ async function removeProjectsAt(
 }
 
 export const test = base.extend<{ throwawayProjects: void }>({
+  // goto and reload load the page again when a host network change broke the
+  // load, or once when it timed out (src/page-load-retry.ts); each retry is a
+  // test annotation.
+  page: async ({ page }, use, testInfo) => {
+    const opts = {
+      annotate: (type: string, description: string) =>
+        testInfo.annotations.push({ type, description }),
+    };
+    const goto = page.goto.bind(page);
+    const reload = page.reload.bind(page);
+    page.goto = (url, options) =>
+      retryOnNetworkChange(
+        page,
+        (timeout) => goto(url, { ...options, timeout: options?.timeout ?? timeout }),
+        opts,
+      );
+    page.reload = (options) =>
+      retryOnNetworkChange(
+        page,
+        (timeout) => reload({ ...options, timeout: options?.timeout ?? timeout }),
+        opts,
+      );
+    await use(page);
+  },
   // Only what this test created: the other workers' projects are in the same
   // list, so a broader rule would pull rows out from under a parallel test.
   throwawayProjects: [

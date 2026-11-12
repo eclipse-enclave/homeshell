@@ -1,9 +1,14 @@
 import { expect, test } from '@playwright/test';
-import { execFile, execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { execFile, spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { daemonDir, homeshellBin as binary } from '../e2e-env';
+import {
+  isolatedHome,
+  runtimeEnv,
+  trackIsolatedHome,
+} from '../isolated-daemon';
 
 /**
  * Black-box coverage of the daemon lifecycle (Issue #1): the daemon publishes a
@@ -15,9 +20,7 @@ import { promisify } from 'node:util';
  * isolated state file, independent of the daemon playwright.config.ts starts.
  */
 const execFileAsync = promisify(execFile);
-const daemonDir = resolve(__dirname, '../../../../../daemon');
-const binary = join(tmpdir(), 'homeshell-lifecycle-e2e');
-const homeDir = mkdtempSync(join(tmpdir(), 'homeshell-lifecycle-'));
+const homeDir = isolatedHome('life');
 const stateFile = join(homeDir, 'daemon.json');
 
 interface CliResult {
@@ -68,17 +71,8 @@ const readState = (): DaemonState =>
 test.describe('daemon lifecycle', () => {
   let daemon: ReturnType<typeof spawn> | undefined;
 
-  test.beforeAll(() => {
-    test.setTimeout(120_000);
-    execFileSync('go', ['build', '-o', binary, './cmd/homeshell'], {
-      cwd: daemonDir,
-    });
-  });
-
-  test.afterAll(() => {
-    // Safety net: if a step failed before `stop`, don't leak the daemon.
-    if (daemon && daemon.exitCode === null) daemon.kill('SIGKILL');
-  });
+  // Safety net: if a step failed before `stop`, don't leak the daemon.
+  test.afterAll(trackIsolatedHome(homeDir, () => daemon));
 
   test('publishes a state file, refuses a second instance, and stops cleanly', async () => {
     // Nothing running yet.
@@ -94,6 +88,7 @@ test.describe('daemon lifecycle', () => {
       {
         cwd: daemonDir,
         stdio: ['ignore', 'pipe', 'ignore'],
+        env: { ...process.env, ...runtimeEnv(homeDir) },
       },
     );
     let serveStdout = '';

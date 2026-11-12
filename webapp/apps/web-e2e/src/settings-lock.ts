@@ -1,43 +1,40 @@
-import { mkdir, rm, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { type Page } from '@playwright/test';
+import { isAlive, type Owner, readOwner, release, takeOverFrom, tryAcquire } from './dir-lock';
+import { settingsLockDir } from './e2e-env';
 
 /**
- * A cross-worker mutex for the settings document. Workers are separate
- * processes, so the lock is a directory in the temp dir — mkdir is atomic.
+ * A cross-worker mutex for what the shared daemon saves in its settings file:
+ * the settings document and the live log level. Workers are separate
+ * processes, so it is a directory lock (dir-lock.ts).
+ *
+ * It lives under the checkout's e2e root, like the daemon it guards. A waiter
+ * takes the lock over only from a holder whose process is gone (a worker
+ * Playwright killed on a timeout); a live holder is waited for however long it
+ * holds, up to the wait budget.
  */
 
-const LOCK_DIR = join(tmpdir(), 'hs-e2e-settings-lock');
-
-/** Past this age the lock is a crashed worker's leftover and is stolen. */
-const STALE_MS = 60_000;
+const WAIT_MS = 120_000;
 
 /** Runs `fn` while holding the settings lock; every settings write needs it. */
 export async function withSettingsLock<T>(fn: () => Promise<T>): Promise<T> {
-  const deadline = Date.now() + 120_000;
-  for (;;) {
-    try {
-      await mkdir(LOCK_DIR);
-      break;
-    } catch {
-      const age = await stat(LOCK_DIR)
-        .then((s) => Date.now() - s.mtimeMs)
-        .catch(() => 0);
-      if (age > STALE_MS) {
-        await rm(LOCK_DIR, { recursive: true, force: true });
-        continue;
-      }
-      if (Date.now() > deadline) {
-        throw new Error('timed out waiting for the settings lock');
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
+  const owner: Owner = { pid: process.pid, token: randomUUID() };
+  const deadline = Date.now() + WAIT_MS;
+  while (!(await tryAcquire(settingsLockDir, owner))) {
+    const holder = await readOwner(settingsLockDir);
+    if (holder && !isAlive(holder.pid)) await takeOverFrom(settingsLockDir, holder);
+    if (Date.now() > deadline) {
+      const holder = await readOwner(settingsLockDir);
+      throw new Error(
+        `timed out waiting for the settings lock (held by pid ${holder?.pid ?? 'unknown'})`,
+      );
     }
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
   try {
     return await fn();
   } finally {
-    await rm(LOCK_DIR, { recursive: true, force: true });
+    await release(settingsLockDir, owner);
   }
 }
 

@@ -186,61 +186,67 @@ test('a very long name gets a worktree branch within git limits', async ({
   });
 });
 
+// These create workstreams too, which reads workstreams.location: a create
+// while another test has it set to a folder inside the project is refused.
 test('a worktree whose kept folder was removed by hand can be made again', async ({
   request,
 }) => {
-  const { projectId } = await gitProject(request, 'hs-draft-');
-  const input = {
-    providerId: 'core',
-    name: 'Again',
-    config: { strategy: 'worktree' },
-  };
-  const create = async () => {
-    const res = await request.post(`/api/projects/${projectId}/workstreams`, {
-      data: input,
-    });
-    expect(res.status(), await res.text()).toBe(201);
-    return awaitRealWorkstream(request, projectId, 20_000);
-  };
-  const first = await create();
-  const deleted = await request.delete(
-    `/api/projects/${projectId}/workstreams/${first.id}`,
-    { data: { keepFiles: true } },
-  );
-  expect(deleted.status()).toBe(204);
-  const dir = first.workingDir ?? '';
-  expect(dir).not.toBe('');
-  await rm(dir, { recursive: true, force: true });
+  await withSettingsLock(async () => {
+    const { projectId } = await gitProject(request, 'hs-draft-');
+    const input = {
+      providerId: 'core',
+      name: 'Again',
+      config: { strategy: 'worktree' },
+    };
+    const create = async () => {
+      const res = await request.post(`/api/projects/${projectId}/workstreams`, {
+        data: input,
+      });
+      expect(res.status(), await res.text()).toBe(201);
+      return awaitRealWorkstream(request, projectId, 20_000);
+    };
+    const first = await create();
+    const deleted = await request.delete(
+      `/api/projects/${projectId}/workstreams/${first.id}`,
+      { data: { keepFiles: true } },
+    );
+    expect(deleted.status()).toBe(204);
+    const dir = first.workingDir ?? '';
+    expect(dir).not.toBe('');
+    await rm(dir, { recursive: true, force: true });
 
-  expect((await create()).workingDir).toBe(dir);
+    expect((await create()).workingDir).toBe(dir);
+  });
 });
 
 test('a branch whose kept folder was removed by hand can be taken by another workstream', async ({
   request,
 }) => {
-  const { projectId } = await gitProject(request, 'hs-draft-');
-  const create = async (name: string) => {
-    const res = await request.post(`/api/projects/${projectId}/workstreams`, {
-      data: {
-        providerId: 'core',
-        name,
-        config: { strategy: 'worktree', branch: 'feat' },
-      },
-    });
-    expect(res.status(), await res.text()).toBe(201);
-    return awaitRealWorkstream(request, projectId, 20_000);
-  };
-  const first = await create('First');
-  const deleted = await request.delete(
-    `/api/projects/${projectId}/workstreams/${first.id}`,
-    { data: { keepFiles: true } },
-  );
-  expect(deleted.status()).toBe(204);
-  await rm(first.workingDir ?? '', { recursive: true, force: true });
+  await withSettingsLock(async () => {
+    const { projectId } = await gitProject(request, 'hs-draft-');
+    const create = async (name: string) => {
+      const res = await request.post(`/api/projects/${projectId}/workstreams`, {
+        data: {
+          providerId: 'core',
+          name,
+          config: { strategy: 'worktree', branch: 'feat' },
+        },
+      });
+      expect(res.status(), await res.text()).toBe(201);
+      return awaitRealWorkstream(request, projectId, 20_000);
+    };
+    const first = await create('First');
+    const deleted = await request.delete(
+      `/api/projects/${projectId}/workstreams/${first.id}`,
+      { data: { keepFiles: true } },
+    );
+    expect(deleted.status()).toBe(204);
+    await rm(first.workingDir ?? '', { recursive: true, force: true });
 
-  const second = await create('Second');
-  expect(second.name).toBe('Second');
-  expect(second.branch).toBe('feat');
+    const second = await create('Second');
+    expect(second.name).toBe('Second');
+    expect(second.branch).toBe('feat');
+  });
 });
 
 test('a draft for an unknown project is not found', async ({ request }) => {

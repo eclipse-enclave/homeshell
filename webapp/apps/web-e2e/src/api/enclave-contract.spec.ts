@@ -6,12 +6,11 @@ import {
   isolatedDaemon,
   removeEnclaveFixture,
 } from '../enclave-helpers';
+import { disposeIsolatedDaemons } from '../isolated-daemon';
 
 test.describe('Enclave CLI contract', () => {
-  test.beforeAll(() => {
-    test.setTimeout(120_000);
-    buildEnclaveFixture();
-  });
+  test.beforeAll(buildEnclaveFixture);
+  test.afterEach(disposeIsolatedDaemons);
   test.afterAll(removeEnclaveFixture);
 
   test('an Enclave whose --pass-env +NAME does not add to the list is unavailable', async () => {

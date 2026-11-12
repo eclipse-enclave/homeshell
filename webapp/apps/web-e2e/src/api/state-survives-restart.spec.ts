@@ -1,9 +1,6 @@
 import { expect, test } from '@playwright/test';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { buildDaemon, isolatedDaemon, type IsolatedDaemon } from '../isolated-daemon';
+import { scratchDir } from '../e2e-env';
+import { isolatedDaemon, type IsolatedDaemon } from '../isolated-daemon';
 
 /**
  * What a daemon persists, the next daemon in the same data directory serves
@@ -55,8 +52,7 @@ test.describe('persisted state survives a restart', () => {
   let daemon: IsolatedDaemon;
 
   test.beforeAll(() => {
-    test.setTimeout(120_000);
-    daemon = isolatedDaemon(buildDaemon('state-restart'), 'state-restart');
+    daemon = isolatedDaemon('rst');
   });
 
   test.afterAll(() => daemon.dispose());
@@ -65,7 +61,7 @@ test.describe('persisted state survives a restart', () => {
     test.setTimeout(90_000);
     await daemon.start();
 
-    const path = mkdtempSync(join(tmpdir(), 'homeshell-state-project-'));
+    const path = scratchDir('project-');
     const created = await daemon.api('/api/projects', {
       method: 'POST',
       body: JSON.stringify({ path }),

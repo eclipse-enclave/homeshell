@@ -132,11 +132,40 @@ jobs:
         working-directory: webapp
       # Full artifact: web app built, embedded, compiled into bin/homeshell.
       - run: make build
-      # Playwright starts the daemon (go run) and vite itself; CI=true makes
-      # it refuse to reuse stray servers.
+      # Playwright builds and starts the daemon and vite itself; CI=true makes
+      # it refuse to reuse stray servers and retry failed tests twice.
       - run: make test-e2e
-      - name: Upload Playwright output on failure
-        if: failure()
+      # Lists failed and flaky (passed only on retry) tests, so a flake is
+      # visible on a green run too.
+      - name: Summarize e2e results
+        if: always()
+        working-directory: webapp/apps/web-e2e
+        run: |
+          report=test-output/results.json
+          if [ ! -f "$report" ]; then
+            echo "No e2e report: the run did not get to the tests." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          jq -r '
+            def list($status):
+              [.. | objects | select(has("specs")) | .specs[] as $spec
+                | $spec.tests[] | select(.status == $status)
+                | "- `\($spec.file):\($spec.line)` [\(.projectName)] \($spec.title)"]
+              | if length == 0 then "none" else join("\n") end;
+            "## e2e results",
+            "",
+            "\(.stats.expected) passed, \(.stats.flaky) flaky, \(.stats.unexpected) failed, \(.stats.skipped) skipped",
+            "",
+            "### Failed",
+            "",
+            list("unexpected"),
+            "",
+            "### Flaky (passed on retry)",
+            "",
+            list("flaky")
+          ' "$report" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Playwright output
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-output

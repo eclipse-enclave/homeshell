@@ -1,4 +1,4 @@
-import { type Page } from '@playwright/test';
+import { type APIRequestContext, type Page } from '@playwright/test';
 import { expect, tempProjectDir, test } from '../fixtures';
 import { settingsSaved, withSettingsLock } from '../settings-lock';
 
@@ -6,11 +6,41 @@ import { settingsSaved, withSettingsLock } from '../settings-lock';
  * The settings page against the shared daemon. The page PUTs the whole document
  * from a draft as old as the page, so a test that writes holds the settings
  * lock around a freshly-reloaded page.
+ *
+ * A test that writes also sets up the state it starts from and puts the document
+ * back afterwards: the daemon outlives the test, so without that a repeat (or the
+ * next spec) starts from whatever this one left.
  */
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
+
+/** The keys these tests set; the rest of the document is carried over as read. */
+interface SettingsDoc {
+  workstreams: { nameTemplate: string; defaultProvider: { useLastUsed: boolean } };
+  providers: { refreshIntervalSec: number };
+}
+
+/**
+ * Writes the daemon's settings as `change` leaves them and returns the document
+ * as it was, for the test to put back. Call it while holding the settings lock.
+ */
+async function writeSettings(
+  request: APIRequestContext,
+  change: (doc: SettingsDoc) => void,
+): Promise<SettingsDoc> {
+  const before = (await (await request.get('/api/settings')).json()) as SettingsDoc;
+  const next = structuredClone(before);
+  change(next);
+  const put = await request.put('/api/settings', { data: next });
+  expect(put.status()).toBe(200);
+  return before;
+}
+
+async function restoreSettings(request: APIRequestContext, doc: SettingsDoc) {
+  expect((await request.put('/api/settings', { data: doc })).status()).toBe(200);
+}
 
 async function openSettings(page: Page) {
   await page.getByRole('button', { name: 'Settings' }).click();
@@ -146,36 +176,46 @@ test('changing the theme applies and persists across reload', async ({ page }) =
 
 test('a configured name template prefills the new-workstream form', async ({
   page,
+  request,
 }) => {
   const { basename } = await import('node:path');
   const dir = await tempProjectDir('hs-ui-set-');
   const dirName = basename(dir);
 
-  // The write is debounced, so the lock is held until the PUT has landed.
+  // Held until the form has read the template: another test may set it.
   await withSettingsLock(async () => {
-    await page.reload();
-    await openCategory(page, 'Workstreams');
-    const saved = settingsSaved(page);
-    await page.getByLabel('Workstream name template').fill('{project}-ws');
-    await saved;
+    // Start without a template, so the fill below is an edit the page saves.
+    const before = await writeSettings(request, (doc) => {
+      doc.workstreams.nameTemplate = '';
+    });
+    try {
+      await page.reload();
+      await openCategory(page, 'Workstreams');
+      // The write is debounced, so wait for the PUT to land.
+      const saved = settingsSaved(page);
+      await page.getByLabel('Workstream name template').fill('{project}-ws');
+      await saved;
+      await page.getByRole('button', { name: 'Close' }).click();
+
+      await page.getByRole('button', { name: 'Add project' }).click();
+      await page.getByPlaceholder('/path/to/project').fill(dir);
+      await page.getByRole('button', { name: 'Add', exact: true }).click();
+      await expect(page.getByPlaceholder('/path/to/project')).not.toBeVisible();
+
+      const nav = page.getByRole('navigation', { name: 'Projects' });
+      await nav.getByRole('button', { name: new RegExp(dirName) }).click();
+      await page.getByRole('button', { name: 'New workstream' }).first().click();
+
+      // Pick the fake provider for a deterministic schema: Enclave, where it is
+      // installed, adds a "Session name" field that collides with "Name".
+      await page.getByRole('radio', { name: 'Fake Provider' }).click();
+      await expect(page.getByLabel('Name', { exact: true })).toHaveValue(
+        `${dirName}-ws`,
+      );
+    } finally {
+      await restoreSettings(request, before);
+    }
   });
-  await page.getByRole('button', { name: 'Close' }).click();
-
-  await page.getByRole('button', { name: 'Add project' }).click();
-  await page.getByPlaceholder('/path/to/project').fill(dir);
-  await page.getByRole('button', { name: 'Add', exact: true }).click();
-  await expect(page.getByPlaceholder('/path/to/project')).not.toBeVisible();
-
-  const nav = page.getByRole('navigation', { name: 'Projects' });
-  await nav.getByRole('button', { name: new RegExp(dirName) }).click();
-  await page.getByRole('button', { name: 'New workstream' }).first().click();
-
-  // Pick the fake provider for a deterministic schema: Enclave, where it is
-  // installed, adds a "Session name" field that collides with "Name".
-  await page.getByRole('radio', { name: 'Fake Provider' }).click();
-  await expect(page.getByLabel('Name', { exact: true })).toHaveValue(
-    `${dirName}-ws`,
-  );
 });
 
 test('remembering the last selected project restores it after reload', async ({
@@ -196,39 +236,48 @@ test('remembering the last selected project restores it after reload', async ({
 
 test('the refresh interval accepts fractional seconds and clamps below the 0.1 s floor on blur', async ({
   page,
+  request,
 }) => {
   await withSettingsLock(async () => {
-    await page.reload();
-    await openCategory(page, 'Providers');
-    const refresh = page.getByLabel('Session-state refresh interval (seconds)');
-    await expect(refresh).toBeEnabled();
+    // Start from a custom interval, so the Reset below always has one to undo.
+    const before = await writeSettings(request, (doc) => {
+      doc.providers.refreshIntervalSec = 2;
+    });
+    try {
+      await page.reload();
+      await openCategory(page, 'Providers');
+      const refresh = page.getByLabel('Session-state refresh interval (seconds)');
+      await expect(refresh).toBeEnabled();
+      await expect(refresh).toHaveValue('2');
 
-    // The category Reset uses the new shipped default, even if the daemon
-    // currently holds a custom interval from another settings test.
-    await page.getByRole('button', { name: 'Reset', exact: true }).click();
-    await expect(refresh).toHaveValue('0.5');
+      // The category Reset uses the shipped default, not the daemon's interval.
+      await page.getByRole('button', { name: 'Reset', exact: true }).click();
+      await expect(refresh).toHaveValue('0.5');
 
-    // pressSequentially, not fill: the decimal point must survive keystrokes.
-    await refresh.clear();
-    await refresh.pressSequentially('0.7');
-    await expect(refresh).toHaveValue('0.7');
-    await refresh.blur();
-    await expect(refresh).toHaveValue('0.7');
+      // pressSequentially, not fill: the decimal point must survive keystrokes.
+      await refresh.clear();
+      await refresh.pressSequentially('0.7');
+      await expect(refresh).toHaveValue('0.7');
+      await refresh.blur();
+      await expect(refresh).toHaveValue('0.7');
 
-    await refresh.fill('0');
-    await refresh.blur();
-    await expect(refresh).toHaveValue('0.1');
+      await refresh.fill('0');
+      await refresh.blur();
+      await expect(refresh).toHaveValue('0.1');
 
-    await refresh.fill('999999999');
-    await refresh.blur();
-    await expect(refresh).toHaveValue('86400');
+      await refresh.fill('999999999');
+      await refresh.blur();
+      await expect(refresh).toHaveValue('86400');
 
-    // Restore the shipped default. The commit is debounced, so wait for it.
-    const saved = settingsSaved(page);
-    await refresh.fill('0.5');
-    await refresh.blur();
-    await expect(refresh).toHaveValue('0.5');
-    await saved;
+      // Back to the shipped default. The commit is debounced, so wait for it.
+      const saved = settingsSaved(page);
+      await refresh.fill('0.5');
+      await refresh.blur();
+      await expect(refresh).toHaveValue('0.5');
+      await saved;
+    } finally {
+      await restoreSettings(request, before);
+    }
   });
 });
 
@@ -380,18 +429,29 @@ test('picking the in-app style shows a test notification', async ({ page }) => {
   await expect(sample.first()).toBeVisible({ timeout: 15_000 });
 });
 
-test('the "Last used" checkbox disables the value control', async ({ page }) => {
+test('the "Last used" checkbox disables the value control', async ({
+  page,
+  request,
+}) => {
   await withSettingsLock(async () => {
-    await page.reload();
-    await openCategory(page, 'Workstreams');
-    const providerSelect = page.getByLabel('Default provider');
-    await expect(providerSelect).toBeEnabled();
+    // Start with "Last used" off, so checking it is an edit the page saves.
+    const before = await writeSettings(request, (doc) => {
+      doc.workstreams.defaultProvider.useLastUsed = false;
+    });
+    try {
+      await page.reload();
+      await openCategory(page, 'Workstreams');
+      const providerSelect = page.getByLabel('Default provider');
+      await expect(providerSelect).toBeEnabled();
 
-    // The first "Last used" checkbox belongs to the default provider field.
-    // The write is debounced, so the lock is held until the PUT has landed.
-    const saved = settingsSaved(page);
-    await page.getByRole('checkbox', { name: /Last used/ }).first().check();
-    await expect(providerSelect).toBeDisabled();
-    await saved;
+      // The first "Last used" checkbox belongs to the default provider field.
+      // The write is debounced, so the lock is held until the PUT has landed.
+      const saved = settingsSaved(page);
+      await page.getByRole('checkbox', { name: /Last used/ }).first().check();
+      await expect(providerSelect).toBeDisabled();
+      await saved;
+    } finally {
+      await restoreSettings(request, before);
+    }
   });
 });
