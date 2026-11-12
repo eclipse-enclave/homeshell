@@ -983,7 +983,9 @@ describe('ProjectView focus around creating', () => {
     await renderLive(project);
     fireEvent.click(opener());
     const name = await nameBox();
-    expect(document.activeElement).toBe(name);
+    // The form mounts once the providers load, and focuses its name an
+    // effect later: the box can be found before it has focus.
+    await waitFor(() => expect(document.activeElement).toBe(name));
 
     act(() => opener().focus());
     expect((opener() as HTMLButtonElement).disabled).toBe(false);
