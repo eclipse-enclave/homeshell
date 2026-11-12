@@ -1,4 +1,4 @@
-import { type Page } from '@playwright/test';
+import { type Locator, type Page } from '@playwright/test';
 import { expect } from '../fixtures';
 
 /**
@@ -44,4 +44,20 @@ export function readClipboard(page: Page): Promise<string> {
       navigator as unknown as { clipboard: { readText(): Promise<string> } }
     ).clipboard.readText(),
   );
+}
+
+/**
+ * Presses Tab until `target` has focus, at most `maxPresses` times; fails
+ * when it never does.
+ */
+export async function tabUntilFocused(
+  page: Page,
+  target: Locator,
+  maxPresses = 40,
+) {
+  for (let presses = 0; presses < maxPresses; presses++) {
+    if (await target.evaluate((el) => el.matches(':focus'))) return;
+    await page.keyboard.press('Tab');
+  }
+  await expect(target).toBeFocused();
 }
