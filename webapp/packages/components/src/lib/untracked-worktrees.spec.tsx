@@ -58,6 +58,8 @@ describe('UntrackedWorktrees', () => {
     const items = screen.getAllByRole('listitem');
     expect(items).toHaveLength(3);
     expect(items[0].textContent).toContain('/work/feature');
+    // Named after its branch, it does not show the branch twice.
+    expect(items[0].textContent?.match(/feature/g)).toHaveLength(2);
     expect(items[0].textContent).toContain('2 sessions');
     expect(items[1].textContent).toContain('detached');
     expect(items[1].textContent).not.toMatch(/session/);

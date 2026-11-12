@@ -127,9 +127,11 @@ export function UntrackedWorktrees({
               onKeyDown={(event) => handleRowKeyDown(event, worktree.path)}
             >
               <span className={styles.name}>{worktree.name}</span>
-              <span className={styles.branch}>
-                {worktree.branch ?? 'detached'}
-              </span>
+              {worktree.branch !== worktree.name && (
+                <span className={styles.branch}>
+                  {worktree.branch ?? 'detached'}
+                </span>
+              )}
               <CopyablePath
                 path={worktree.path}
                 id={`${pathIdPrefix}-${index}`}
