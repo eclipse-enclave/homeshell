@@ -68,7 +68,7 @@ test('the arrow keys reach the fold and its rows, and Enter adds one', async ({
   ).toBeVisible();
 });
 
-test('Tab comes back to the row the arrows left, and on to its Add', async ({
+test('Tab comes back to the row the arrows left, and on to its controls', async ({
   page,
   request,
 }) => {
@@ -86,6 +86,8 @@ test('Tab comes back to the row the arrows left, and on to its Add', async ({
   await page.keyboard.press('Tab');
   await expect(row).toBeFocused();
 
+  await page.keyboard.press('Tab');
+  await expect(row.getByRole('button', { name: 'Copy path' })).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: 'Add wt-kbd' })).toBeFocused();
   await page.keyboard.press('Enter');

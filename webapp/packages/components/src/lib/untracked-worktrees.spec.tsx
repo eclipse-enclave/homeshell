@@ -179,24 +179,24 @@ describe('UntrackedWorktrees', () => {
     });
 
     it.each([
-      ['the fold', 'untracked-worktrees', [0, -1, -1], [-1, -1]],
-      ['a row', 'untracked:/work/loose', [-1, -1, 0], [-1, undefined]],
-      ['a card', 'w1', [-1, -1, -1], [-1, -1]],
+      ['the fold', 'untracked-worktrees', [0, -1, -1], []],
+      ['a row', 'untracked:/work/loose', [-1, -1, 0], ['loose']],
+      ['a card', 'w1', [-1, -1, -1], []],
     ])(
-      'gives Tab only to %s holding the tab stop, and Add only from its row',
-      (_holder, tabStopId, items, adds) => {
+      'gives Tab only to %s holding the tab stop, and a row\'s controls only from it',
+      (_holder, tabStopId, items, withControls) => {
         const { fold } = renderFold({ tabStopId });
         fireEvent.keyDown(fold, { key: 'ArrowRight' });
         expect(
           [fold, row('feature'), row('loose')].map((item) => item.tabIndex),
         ).toEqual(items);
-        expect(
-          ['Add feature', 'Add loose'].map(
-            (name) =>
-              screen.getByRole('button', { name }).getAttribute('tabindex') ??
-              undefined,
-          ),
-        ).toEqual(adds.map((index) => index?.toString()));
+        const controlsTakeTab = (name: string) =>
+          within(row(name))
+            .getAllByRole('button')
+            .some((control) => control.tabIndex !== -1);
+        expect(['feature', 'loose'].filter(controlsTakeTab)).toEqual(
+          withControls,
+        );
       },
     );
 

@@ -138,6 +138,7 @@ export function UntrackedWorktrees({
                 path={worktree.path}
                 id={`${pathIdPrefix}-${index}`}
                 className={styles.path}
+                tabIndex={controlTabIndexFor(rowTabIndex(worktree))}
               />
               {worktree.sessionCount > 0 && (
                 <span className={styles.sessions}>
