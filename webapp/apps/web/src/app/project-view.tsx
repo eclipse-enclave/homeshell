@@ -26,6 +26,7 @@ import {
   useRenamableTitle,
   useReturnFocus,
   UntrackedWorktrees,
+  untrackedNavIds,
   WorkstreamCard,
   type WorkstreamCardHandle,
 } from '@homeshell/components';
@@ -202,6 +203,7 @@ export function ProjectView({
   const emptiedFolder = useRef<string | null>(null);
   const list = useListTabStop([...inPlace, ...separate], {
     resetKey: project.id,
+    trailing: untrackedNavIds(project.untrackedWorktrees),
     emptyFocus: () =>
       (emptiedFolder.current === project.id && workHereRef.current) ||
       newWorkstreamRef.current,
@@ -777,6 +779,7 @@ export function ProjectView({
           {separate.map(renderCard)}
           <UntrackedWorktrees
             worktrees={project.untrackedWorktrees}
+            tabStopId={list.tabStopId}
             onAdd={handleAddWorktree}
             adding={
               creating !== WORK_HERE ? (creating ?? undefined) : undefined

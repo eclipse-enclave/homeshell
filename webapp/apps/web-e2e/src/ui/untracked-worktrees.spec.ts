@@ -1,6 +1,5 @@
 import { expect, test } from '../fixtures';
 import { addWorktree, tempGitRepo } from '../git-repo';
-import { tabUntilFocused } from './keyboard-helpers';
 import { selectProjectWithDefault } from './workstream-helpers';
 
 /**
@@ -69,19 +68,27 @@ test('the arrow keys reach the fold and its rows, and Enter adds one', async ({
   ).toBeVisible();
 });
 
-test('the fold and Add are reachable by keyboard', async ({
+test('Tab comes back to the row the arrows left, and on to its Add', async ({
   page,
   request,
 }) => {
   const { fold } = await projectWithUntracked(page, request, 'wt-kbd');
 
-  await page.getByRole('button', { name: 'New workstream' }).focus();
-  await tabUntilFocused(page, fold);
-  await page.keyboard.press('Enter');
-  await expect(fold).toHaveAttribute('aria-expanded', 'true');
+  await page.getByRole('region', { name: /^Workstream / }).first().focus();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowDown');
+  const row = page.getByRole('listitem').filter({ hasText: 'wt-kbd' });
+  await expect(row).toBeFocused();
 
-  const add = page.getByRole('button', { name: 'Add wt-kbd' });
-  await tabUntilFocused(page, add, 10);
+  // The list keeps one tab stop: Tab from above lands on the row, not the fold.
+  await page.getByRole('button', { name: 'New workstream' }).focus();
+  await page.keyboard.press('Tab');
+  await expect(row).toBeFocused();
+  await expect(fold).toHaveAttribute('tabindex', '-1');
+
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Add wt-kbd' })).toBeFocused();
   await page.keyboard.press('Enter');
 
   await expect(

@@ -6,11 +6,36 @@ import { CopyablePath } from './copyable-path';
 import foldStyles from './fold.module.css';
 import { ChevronDownIcon } from './icons';
 import { isModified } from './keys';
-import { listItemKeyShortcuts, NAV_ITEM_SELECTOR } from './list-navigation';
+import {
+  controlTabIndexFor,
+  listItemKeyShortcuts,
+  NAV_ITEM_SELECTOR,
+} from './list-navigation';
 import styles from './untracked-worktrees.module.css';
+
+const FOLD_NAV_ID = 'untracked-worktrees';
+const rowNavId = (worktree: UntrackedWorktree) => `untracked:${worktree.path}`;
+
+/**
+ * The IDs of the fold and its rows in the workstream list, in page order: the
+ * list's tab stop can rest on them (see useListTabStop's `trailing`).
+ */
+export function untrackedNavIds(
+  worktrees: readonly UntrackedWorktree[],
+): string[] {
+  return worktrees.length === 0
+    ? []
+    : [FOLD_NAV_ID, ...worktrees.map(rowNavId)];
+}
 
 export interface UntrackedWorktreesProps {
   worktrees: readonly UntrackedWorktree[];
+  /**
+   * The item of the workstream list holding its one tab stop (roving
+   * tabindex), as for WorkstreamCard. Set, the fold and the rows take Tab only
+   * when one of them holds it, and an Add button only from its row.
+   */
+  tabStopId?: string;
   onAdd: (path: string) => void;
   /** The path an Add is in flight for: its button is busy, and every Add waits. */
   adding?: string;
@@ -20,6 +45,7 @@ export interface UntrackedWorktreesProps {
 
 export function UntrackedWorktrees({
   worktrees,
+  tabStopId,
   onAdd,
   adding,
   disabledReason,
@@ -31,6 +57,14 @@ export function UntrackedWorktrees({
   if (worktrees.length === 0) return null;
 
   const blocked = Boolean(adding) || Boolean(disabledReason);
+  const navigable = tabStopId !== undefined;
+  const rowTabIndex = (worktree: UntrackedWorktree) =>
+    navigable ? (rowNavId(worktree) === tabStopId ? 0 : -1) : undefined;
+  // Folded away, a row holding the tab stop leaves it to the fold.
+  const foldHoldsStop =
+    tabStopId === FOLD_NAV_ID ||
+    (!expanded && worktrees.some((w) => rowNavId(w) === tabStopId));
+  const foldTabIndex = navigable ? (foldHoldsStop ? 0 : -1) : undefined;
   // The fold and its rows are items of the workstream list's arrow-key tree
   // (see handleListKeyDown), which walks [data-nav-id]: Up and Down reach them
   // from the cards. Right and Left work as on a card and its session rows.
@@ -67,8 +101,9 @@ export function UntrackedWorktrees({
         ref={foldRef}
         type="button"
         className={foldStyles.foldButton}
+        tabIndex={foldTabIndex}
         aria-expanded={expanded}
-        data-nav-id="untracked-worktrees"
+        data-nav-id={FOLD_NAV_ID}
         onClick={() => setExpanded((open) => !open)}
         onKeyDown={handleFoldKeyDown}
       >
@@ -86,8 +121,8 @@ export function UntrackedWorktrees({
             <li
               key={worktree.path}
               className={styles.item}
-              tabIndex={-1}
-              data-nav-id={`untracked:${worktree.path}`}
+              tabIndex={rowTabIndex(worktree) ?? -1}
+              data-nav-id={rowNavId(worktree)}
               aria-keyshortcuts={listItemKeyShortcuts('worktree')}
               onKeyDown={(event) => handleRowKeyDown(event, worktree.path)}
             >
@@ -108,6 +143,7 @@ export function UntrackedWorktrees({
               )}
               <Button
                 className={controls.compact}
+                tabIndex={controlTabIndexFor(rowTabIndex(worktree))}
                 aria-label={`Add ${worktree.name}`}
                 // The path tells apart worktrees whose folders share a name.
                 aria-describedby={`${pathIdPrefix}-${index}`}

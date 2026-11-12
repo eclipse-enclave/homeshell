@@ -422,6 +422,32 @@ describe('ProjectView sections', () => {
       ).toHaveLength(1);
     });
 
+    it('keeps the tab stop on the row the arrows left it on', async () => {
+      stubDaemon();
+      await renderLive(untracked(withCards(worktree('w2', 'b'))));
+      const card = screen.getByRole('region', { name: 'Workstream b' });
+      const fold = screen.getByRole('button', {
+        name: '1 untracked worktree',
+      });
+
+      act(() => card.focus());
+      fireEvent.keyDown(card, { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(fold);
+      fireEvent.keyDown(fold, { key: 'ArrowRight' });
+      const row = screen
+        .getAllByRole('listitem')
+        .find((item) => item.textContent?.startsWith('wt-a'))!;
+      fireEvent.keyDown(fold, { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(row);
+
+      expect([card, fold, row].map((item) => item.tabIndex)).toEqual([
+        -1, -1, 0,
+      ]);
+      expect(
+        screen.getByRole('button', { name: 'Add wt-a' }).getAttribute('tabindex'),
+      ).toBeNull();
+    });
+
     it('does not say there are no separate folders above a fold of them', async () => {
       stubDaemon();
       await renderLive(untracked(withCards()));

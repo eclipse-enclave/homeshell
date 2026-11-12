@@ -176,6 +176,33 @@ describe('UntrackedWorktrees', () => {
       expect(onAdd).toHaveBeenCalledWith('/work/loose');
     });
 
+    it.each([
+      ['the fold', 'untracked-worktrees', [0, -1, -1], [-1, -1]],
+      ['a row', 'untracked:/work/loose', [-1, -1, 0], [-1, undefined]],
+      ['a card', 'w1', [-1, -1, -1], [-1, -1]],
+    ])(
+      'gives Tab only to %s holding the tab stop, and Add only from its row',
+      (_holder, tabStopId, items, adds) => {
+        const { fold } = renderFold({ tabStopId });
+        fireEvent.keyDown(fold, { key: 'ArrowRight' });
+        expect(
+          [fold, row('feature'), row('loose')].map((item) => item.tabIndex),
+        ).toEqual(items);
+        expect(
+          ['Add feature', 'Add loose'].map(
+            (name) =>
+              screen.getByRole('button', { name }).getAttribute('tabindex') ??
+              undefined,
+          ),
+        ).toEqual(adds.map((index) => index?.toString()));
+      },
+    );
+
+    it('folded, gives the tab stop of a row to the fold', () => {
+      const { fold } = renderFold({ tabStopId: 'untracked:/work/loose' });
+      expect(fold.tabIndex).toBe(0);
+    });
+
     it('Enter does nothing while an Add is in flight', () => {
       const { onAdd, fold } = renderFold({ adding: '/work/feature' });
       fireEvent.keyDown(fold, { key: 'ArrowRight' });

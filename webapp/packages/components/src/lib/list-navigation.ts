@@ -168,23 +168,34 @@ function cardItems(workstream: Workstream): string[] {
 interface TabStop {
   id: string;
   index: number;
-  workstreamId: string;
+  /** The card it is in; unset for a trailing item. */
+  workstreamId?: string;
   /** Among its card's items. */
-  position: number;
+  position?: number;
+}
+
+/** Every item of the list in page order: the cards' items, then `trailing`. */
+function listItems(
+  workstreams: readonly Workstream[],
+  trailing: readonly string[],
+): string[] {
+  return [...workstreams.flatMap(cardItems), ...trailing];
 }
 
 function placeTabStop(
   id: string,
   workstreams: readonly Workstream[],
+  trailing: readonly string[],
 ): TabStop | null {
+  const index = listItems(workstreams, trailing).indexOf(id);
+  if (index === -1) return null;
   for (const workstream of workstreams) {
     const position = cardItems(workstream).indexOf(id);
     if (position !== -1) {
-      const index = workstreams.flatMap(cardItems).indexOf(id);
       return { id, index, workstreamId: workstream.id, position };
     }
   }
-  return null;
+  return { id, index };
 }
 
 /**
@@ -196,14 +207,15 @@ function placeTabStop(
 function tabStopHolder(
   stop: TabStop | null,
   workstreams: readonly Workstream[],
+  trailing: readonly string[],
 ): string | undefined {
-  const navIds = workstreams.flatMap(cardItems);
+  const navIds = listItems(workstreams, trailing);
   if (!stop) return navIds[0];
   if (navIds.includes(stop.id)) return stop.id;
   const card = workstreams.find(
     (workstream) => workstream.id === stop.workstreamId,
   );
-  if (card) {
+  if (card && stop.position !== undefined) {
     const items = cardItems(card);
     return items[Math.min(stop.position, items.length - 1)];
   }
@@ -215,6 +227,11 @@ export interface ListTabStopOptions {
   resetKey: string;
   /** Takes focus when the list is empty, and when its last item goes. */
   emptyFocus: FocusTarget;
+  /**
+   * The IDs of the items shown after the cards, in page order (see
+   * untrackedNavIds), so that the tab stop can rest on them too.
+   */
+  trailing?: readonly string[];
 }
 
 /**
@@ -232,7 +249,7 @@ export interface ListTabStopOptions {
  */
 export function useListTabStop(
   workstreams: readonly Workstream[],
-  { resetKey, emptyFocus }: ListTabStopOptions,
+  { resetKey, emptyFocus, trailing = [] }: ListTabStopOptions,
 ) {
   const listRef = useRef<HTMLDivElement>(null);
   const describedBy = useId();
@@ -240,7 +257,7 @@ export function useListTabStop(
   // away. A click onto blank page clears it, so that <body> keeps focus then.
   const hasFocus = useRef(false);
   const [stop, setStop] = useState<TabStop | null>(null);
-  const tabStopId = tabStopHolder(stop, workstreams);
+  const tabStopId = tabStopHolder(stop, workstreams, trailing);
 
   // A layout effect, so that it runs before an effect of the caller's that
   // focuses an item of what the reset brought in, and so gives it the stop.
@@ -283,7 +300,7 @@ export function useListTabStop(
         // (a section's buttons, its form) hands focus back on its own.
         const id = closestNavItem(event.target)?.dataset.navId;
         hasFocus.current = id !== undefined;
-        if (id) setStop(placeTabStop(id, workstreams));
+        if (id) setStop(placeTabStop(id, workstreams, trailing));
       },
       onBlur: (event: FocusEvent<HTMLElement>) => {
         // A control disabled while it has focus drops it without a render to
