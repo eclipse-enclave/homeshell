@@ -263,7 +263,7 @@ export function SessionRow({
   // Stopped, or done by the daemon: what is left is to continue it. Not the
   // UI's own Done (idle, unseen), which is live, nor an error, which needs a
   // look first.
-  const ended = session.ended === true;
+  const ended = session.ended ?? false;
   const stateWord = ended
     ? session.state === 'stopped'
       ? stateLabel('stopped')

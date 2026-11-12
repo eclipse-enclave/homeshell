@@ -429,8 +429,8 @@ func (c *core) Refresh(ctx context.Context, project ProjectRef, workstream domai
 
 // checkedOutBranch is the branch checked out in a workstream's folder, "" on a
 // detached HEAD, and false where there is none to read: a project outside git,
-// or a git that does not answer. Both read a HEAD file, as every one is polled
-// at the refresh interval. In place it is the project's branch, found from a
+// or a git that does not answer. Every strategy reads it from a HEAD file, as
+// every workstream is polled at the refresh interval. In place it is the project's branch, found from a
 // project folder below the repository's root too. A separate folder has one
 // only as a repository or worktree of its own: a copy, made without .git, must
 // not take the branch of a repository around it.

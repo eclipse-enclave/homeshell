@@ -444,11 +444,10 @@ func SameFolder(dir, other string) bool {
 	return dir != "" && other != "" && filepath.Clean(dir) == filepath.Clean(other)
 }
 
-// Recompute derives the workstream states from their session states (and
-// whether each session has ended), whether
-// each works in the project folder, the effective display state from the
-// runtime and session aggregates, and the project-level aggregates from the
-// workstream values. Call it after every mutation.
+// Recompute derives whether each session has ended, the workstream states from
+// their session states, whether each works in the project folder, the effective
+// display state from the runtime and session aggregates, and the project-level
+// aggregates from the workstream values. Call it after every mutation.
 func (p *Project) Recompute() {
 	workstreamStates := make([]SessionState, len(p.Workstreams))
 	workstreamRuntimeStates := make([]RuntimeState, len(p.Workstreams))

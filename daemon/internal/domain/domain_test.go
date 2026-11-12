@@ -142,19 +142,28 @@ func TestRecompute(t *testing.T) {
 // A session has ended when it is done or stopped; a failed start has not, and
 // one that runs again is live once more.
 func TestRecomputeMarksEndedSessions(t *testing.T) {
-	states := []SessionState{SessionDone, SessionStopped, SessionError, SessionRunning,
-		SessionWaiting, SessionIdle, SessionStarting, SessionUnknown}
-	sessions := make([]Session, len(states))
-	for i, state := range states {
-		sessions[i] = Session{State: state, Ended: true}
+	tests := []struct {
+		state SessionState
+		want  bool
+	}{
+		{SessionDone, true},
+		{SessionStopped, true},
+		{SessionError, false},
+		{SessionRunning, false},
+		{SessionWaiting, false},
+		{SessionIdle, false},
+		{SessionStarting, false},
+		{SessionUnknown, false},
 	}
-	project := Project{Workstreams: []Workstream{{Sessions: sessions}}}
-	project.Recompute()
-	for _, session := range project.Workstreams[0].Sessions {
-		want := session.State == SessionDone || session.State == SessionStopped
-		if session.Ended != want {
-			t.Errorf("%q session Ended = %v, want %v", session.State, session.Ended, want)
-		}
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			// Ended starts out wrong both ways, so Recompute is what sets it.
+			project := Project{Workstreams: []Workstream{{Sessions: []Session{{State: tt.state, Ended: !tt.want}}}}}
+			project.Recompute()
+			if got := project.Workstreams[0].Sessions[0].Ended; got != tt.want {
+				t.Errorf("Ended = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

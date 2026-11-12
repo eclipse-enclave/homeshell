@@ -76,7 +76,7 @@ func isStartingPlaceholder(sess domain.Session) bool {
 // minutes later, after its directory had been materialized, on a clash the user
 // was never warned about. A placeholder left in error state is the opposite case
 // — the attempt it stood for is over, so holding its name hostage would refuse
-// the retry — and so is the caller's own earlier self, which exceptID covers.
+// the retry — and so is the caller's own earlier self, which exceptIDs cover.
 //
 // An empty name never collides: it is not a name yet, and the provider fills one
 // in during creation.

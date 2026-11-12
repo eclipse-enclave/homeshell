@@ -136,7 +136,8 @@ func HeadBranch(ctx context.Context, dir string) (string, error) {
 // EnclosingHeadBranch is the branch checked out in the repository dir is in,
 // which git finds from a folder below the repository's root too: the nearest
 // folder at or above dir with a .git of its own. Like HeadBranch it reads HEAD
-// rather than running git, so it is cheap enough to poll.
+// rather than running git, so it is cheap enough to poll, and leaves a HEAD it
+// cannot read as a branch to CurrentBranch.
 func EnclosingHeadBranch(ctx context.Context, dir string) (string, error) {
 	for current := filepath.Clean(dir); ; {
 		gitDir, err := ownGitDir(current)
