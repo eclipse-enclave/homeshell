@@ -120,6 +120,24 @@ func TestCoreRefreshFollowsTheCheckedOutBranch(t *testing.T) {
 		}
 	})
 
+	t.Run("a project folder below the repository's root follows its branch", func(t *testing.T) {
+		below := filepath.Join(repo, "below")
+		if err := os.Mkdir(below, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Remove(below) })
+		ws := domain.Workstream{
+			Name: "feature", Branch: "feature", WorkingDir: below,
+			CreatorData: marshalCreatorData(coreCreatorData{Strategy: "in-place", NameFromBranch: "feature"}),
+		}
+		checkout(t, repo, "main")
+		t.Cleanup(func() { checkout(t, repo, "feature") })
+		got := provider.Refresh(context.Background(), ProjectRef{Path: below, GitBacked: true}, ws)
+		if got.Name != "main" || got.Branch != "main" {
+			t.Errorf("Refresh = %q on %q, want main on main", got.Name, got.Branch)
+		}
+	})
+
 	t.Run("a worktree's branch follows a checkout in its folder, its name stays", func(t *testing.T) {
 		ws, err := provider.Create(context.Background(), CreateRequest{
 			Project: project, Name: "topic work", Config: []byte(`{"strategy":"worktree","branch":"topic"}`),

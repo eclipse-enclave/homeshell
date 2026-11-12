@@ -171,9 +171,10 @@ strategies ([CONTEXT.md](../CONTEXT.md#working-directory)) through `provider/wor
   every new project, synchronously (nothing to materialize).
 - **Branch follows checkouts.** A workstream's branch is the one checked out in its folder; an
   `in-place` workstream is named after it when given no name. A `copy`, made without `.git`, has
-  none. Core is a `Refresher`: each projection re-reads that branch (in place `git.CurrentBranch`;
-  elsewhere `git.HeadBranch`, which reads the folder's own HEAD file. Why: it runs for every
-  workstream on each tick, and must not find a repository above a copy), and a watch loop at the
+  none. Core is a `Refresher`: each projection re-reads that branch from a HEAD file, without
+  running git (in place `git.EnclosingHeadBranch`, the nearest repository at or above the project
+  folder; elsewhere `git.HeadBranch`, the folder's own. Why: it runs for every workstream on each
+  tick, and must not find a repository above a copy), and a watch loop at the
   refresh interval re-projects when it moved, as nothing else notices a switch with no session
   running. Only an `in-place` workstream's name follows the branch, while it is still the one the
   core gave (`coreCreatorData.NameFromBranch`) and no other workstream in the project has it; a

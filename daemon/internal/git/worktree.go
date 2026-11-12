@@ -130,6 +130,33 @@ func HeadBranch(ctx context.Context, dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return headFileBranch(ctx, gitDir, dir)
+}
+
+// EnclosingHeadBranch is the branch checked out in the repository dir is in,
+// which git finds from a folder below the repository's root too: the nearest
+// folder at or above dir with a .git of its own. Like HeadBranch it reads HEAD
+// rather than running git, so it is cheap enough to poll.
+func EnclosingHeadBranch(ctx context.Context, dir string) (string, error) {
+	for current := filepath.Clean(dir); ; {
+		gitDir, err := ownGitDir(current)
+		if err == nil {
+			return headFileBranch(ctx, gitDir, dir)
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("no repository at or above %s", dir)
+		}
+		current = parent
+	}
+}
+
+// headFileBranch reads the branch from the HEAD file in gitDir, the git
+// directory of the work tree at dir.
+func headFileBranch(ctx context.Context, gitDir, dir string) (string, error) {
 	head, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
 	if err != nil {
 		return "", fmt.Errorf("reading HEAD: %w", err)

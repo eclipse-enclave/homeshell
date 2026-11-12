@@ -1153,3 +1153,45 @@ func TestHeadBranch(t *testing.T) {
 		})
 	}
 }
+
+func TestEnclosingHeadBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	repo := t.TempDir()
+	initRepo(t, repo)
+	runGit(t, repo, "checkout", "-q", "-b", "feature/x")
+	below := filepath.Join(repo, "sub", "dir")
+	if err := os.MkdirAll(below, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGit(t, repo, "worktree", "add", "-q", "-b", "topic", worktree)
+	worktreeBelow := filepath.Join(worktree, "sub")
+	if err := os.Mkdir(worktreeBelow, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	detached := filepath.Join(t.TempDir(), "detached")
+	runGit(t, repo, "worktree", "add", "-q", "--detach", detached)
+
+	tests := []struct {
+		name    string
+		dir     string
+		want    string
+		wantErr bool
+	}{
+		{"a repository's checked-out branch", repo, "feature/x", false},
+		{"a folder below the repository's root", below, "feature/x", false},
+		{"a folder below a linked worktree's root", worktreeBelow, "topic", false},
+		{"a detached HEAD has none", detached, "", false},
+		{"no repository around it is an error", t.TempDir(), "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := EnclosingHeadBranch(context.Background(), tt.dir)
+			if got != tt.want || (err != nil) != tt.wantErr {
+				t.Errorf("EnclosingHeadBranch = %q, %v; want %q, error %v", got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}
