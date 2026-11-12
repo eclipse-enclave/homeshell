@@ -153,6 +153,25 @@ describe('defaultsOf', () => {
       defaultsOf(locked, { telemetry: false, hostConfig: true }),
     ).toEqual({ telemetry: true, hostConfig: true });
   });
+
+  it('prefills a preferred choice only where it is offered', () => {
+    const form: SchemaProp = {
+      type: 'object',
+      properties: {
+        strategy: {
+          type: 'string',
+          enum: ['worktree', 'copy'],
+          default: 'copy',
+        },
+      },
+    };
+    expect(defaultsOf(form, { strategy: 'worktree' })).toEqual({
+      strategy: 'worktree',
+    });
+    expect(defaultsOf(form, { strategy: 'in-place' })).toEqual({
+      strategy: 'copy',
+    });
+  });
 });
 
 describe('buildConfig', () => {
@@ -209,12 +228,8 @@ describe('buildConfig', () => {
 
 describe('summaryOf', () => {
   it('says Defaults when nothing changed, in any order', () => {
-    expect(summaryOf(changesOf(sandbox, defaultsOf(sandbox)))).toBe(
-      'Defaults',
-    );
-    expect(
-      isDefault(children.features, ['python-dev', 'devtools']),
-    ).toBe(true);
+    expect(summaryOf(changesOf(sandbox, defaultsOf(sandbox)))).toBe('Defaults');
+    expect(isDefault(children.features, ['python-dev', 'devtools'])).toBe(true);
   });
 
   it('lists what changed by field title', () => {

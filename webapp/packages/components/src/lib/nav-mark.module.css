@@ -1,0 +1,30 @@
+/* The mark of the selected project, and of the workstream list's selected or
+   focused item: a neutral tint, so that teal keeps meaning running and primary,
+   and a rounded bar set in from the item's edges, so a card's rounded corner
+   cannot clip it. Composed: selectionMark draws it on the selected item
+   (aria-current), focusMark on the one keyboard focus is on. */
+.selectionMark,
+.focusMark {
+  position: relative;
+}
+
+.selectionMark[aria-current='true'],
+.focusMark:focus-visible {
+  background: var(--hs-panel-raised, #1b242f);
+}
+
+.focusMark:focus-visible {
+  outline: none;
+}
+
+.selectionMark[aria-current='true']::before,
+.focusMark:focus-visible::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--hs-accent, #2dd4bf);
+}

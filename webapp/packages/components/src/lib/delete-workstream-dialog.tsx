@@ -15,9 +15,16 @@ export interface DeleteWorkstreamDialogProps {
   onCancel: () => void;
 }
 
-/** Whether the strategy materializes files outside the project directory. */
-export function hasMaterializedFiles(strategyId: string): boolean {
-  return strategyId === 'worktree' || strategyId === 'copy';
+/**
+ * Whether the workstream has files outside the project directory. A create's
+ * placeholder has none yet, whatever its strategy: deleting it touches no files.
+ */
+export function hasMaterializedFiles(workstream: Workstream): boolean {
+  if (workstream.createFailed || workstream.effectiveState === 'creating')
+    return false;
+  return (
+    workstream.strategyId === 'worktree' || workstream.strategyId === 'copy'
+  );
 }
 
 /**
@@ -36,7 +43,7 @@ export function DeleteWorkstreamDialog({
   onConfirm,
   onCancel,
 }: DeleteWorkstreamDialogProps) {
-  const materialized = hasMaterializedFiles(workstream.strategyId);
+  const materialized = hasMaterializedFiles(workstream);
 
   const handleDelete = () => {
     onConfirm({ keepFiles: false });

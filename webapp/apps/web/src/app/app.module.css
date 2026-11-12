@@ -57,13 +57,18 @@
   justify-content: space-between;
 }
 
-.sidebarTitle {
+/* A small-caps heading: the sidebar's PROJECTS and the project page's sections. */
+.capsTitle {
   margin: 0;
-  font-size: 0.78rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--hs-text-muted);
+}
+
+.sidebarTitle {
+  composes: capsTitle;
+  font-size: 0.78rem;
 }
 
 .main {

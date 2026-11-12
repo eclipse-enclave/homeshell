@@ -12,6 +12,7 @@
     "./package.json": "./package.json"
   },
   "dependencies": {
-    "@homeshell/model": "workspace:*"
+    "@homeshell/model": "workspace:*",
+    "lucide-react": "1.70.0"
   }
 }

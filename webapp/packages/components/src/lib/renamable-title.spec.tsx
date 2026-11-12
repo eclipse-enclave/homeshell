@@ -8,7 +8,7 @@ import {
 } from './renamable-title';
 
 function Title(props: RenamableTitleOptions) {
-  const titleProps = useRenamableTitle(props);
+  const titleProps = useRenamableTitle<HTMLHeadingElement>(props);
   return <h1 {...titleProps}>{props.name}</h1>;
 }
 
@@ -16,7 +16,7 @@ function Title(props: RenamableTitleOptions) {
 function EditableTitle() {
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const titleProps = useRenamableTitle({
+  const titleProps = useRenamableTitle<HTMLHeadingElement>({
     name: 'homeshell',
     onRename: () => setEditing(true),
   });

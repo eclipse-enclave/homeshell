@@ -244,7 +244,10 @@ export function SchemaField({
         </span>
         <PillGroup
           label={title}
-          options={prop.enum!.map((option) => ({ value: option, label: option }))}
+          options={prop.enum!.map((option, i) => ({
+            value: option,
+            label: prop.enumNames?.[i] ?? option,
+          }))}
           value={String(value)}
           disabled={disabled}
           onChange={onChange}
@@ -272,9 +275,9 @@ export function SchemaField({
           {...aria}
         >
           {enumIsOptional(prop, required) && <option value="">Default</option>}
-          {prop.enum!.map((option) => (
+          {prop.enum!.map((option, i) => (
             <option key={option} value={option}>
-              {option}
+              {prop.enumNames?.[i] ?? option}
             </option>
           ))}
         </select>

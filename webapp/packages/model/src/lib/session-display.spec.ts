@@ -1,6 +1,7 @@
 import {
   displaySessionState,
   isSessionActive,
+  isSessionEnded,
   isSessionTerminal,
 } from './types';
 
@@ -45,6 +46,20 @@ describe('isSessionTerminal', () => {
     expect(isSessionTerminal('running')).toBe(false);
     expect(isSessionTerminal('waiting')).toBe(false);
     expect(isSessionTerminal('unknown')).toBe(false);
+  });
+});
+
+describe('isSessionEnded', () => {
+  it.each([
+    ['stopped', true],
+    ['done', true],
+    ['idle', false],
+    ['running', false],
+    ['error', false],
+  ] as const)('%s -> %s', (state, expected) => {
+    expect(
+      isSessionEnded({ id: 's', title: 's', agent: 'Claude Code', state }),
+    ).toBe(expected);
   });
 });
 

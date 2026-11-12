@@ -1,4 +1,4 @@
-import type { EffectiveState, Workstream } from '@homeshell/model';
+import type { EffectiveState, Session, Workstream } from '@homeshell/model';
 import {
   act,
   fireEvent,
@@ -9,8 +9,32 @@ import {
 } from '@testing-library/react';
 import { createRef } from 'react';
 
+import { useListTabStop } from './list-navigation';
 import { useMnemonics } from './mnemonic';
-import { WorkstreamCard, type WorkstreamCardHandle } from './workstream-card';
+import {
+  WorkstreamCard,
+  type WorkstreamCardHandle,
+  type WorkstreamCardProps,
+} from './workstream-card';
+
+/** The project the cards belong to; separate folders sit beside it. */
+const PROJECT = '/home/u/core';
+
+/** The workstream that works in the project folder itself. */
+const inPlace: Partial<Workstream> = {
+  name: 'add-readme',
+  branch: 'add-readme',
+  provider: 'core',
+  providerLabel: undefined,
+  strategyId: 'in-place',
+  strategy: 'in place',
+  workingDir: PROJECT,
+  inProjectFolder: true,
+};
+
+/** A button's name as a screen reader reads it. */
+const accessibleName = (button: HTMLElement) =>
+  button.getAttribute('aria-label') ?? button.textContent;
 
 /** A rename handler the daemon accepts (null = no error). */
 const renameOk = () => vi.fn(async () => null);
@@ -49,18 +73,36 @@ const workstream = (
   ...overrides,
 });
 
+/** An idle workstream with no sessions, `overrides` aside. */
+const idle = (overrides?: Partial<Workstream>) =>
+  workstream('idle', [], undefined, undefined, overrides);
+
+/** A card in the project, on `idle()` unless given a workstream. */
+function Card(props: Partial<WorkstreamCardProps>) {
+  return (
+    <WorkstreamCard projectPath={PROJECT} workstream={idle()} {...props} />
+  );
+}
+
 describe('WorkstreamCard', () => {
-  it('renders name, provider, strategy and branch', () => {
-    render(<WorkstreamCard workstream={workstream('idle', [])} />);
+  it("shows the provider and the kind beside a separate folder's path", () => {
+    render(
+      <Card
+        workstream={idle({
+          workingDir: '/home/u/core-self-update',
+        })}
+      />,
+    );
     expect(
       screen.getByRole('heading', { name: 'feature/self-update' }),
     ).toBeTruthy();
     expect(screen.getByText('Eclipse Enclave')).toBeTruthy();
     expect(screen.getByText('worktree')).toBeTruthy();
+    expect(screen.getByText('../core-self-update')).toBeTruthy();
   });
 
   it('titles its name in full on hover only while it is cut off', () => {
-    render(<WorkstreamCard workstream={workstream('idle', [])} />);
+    render(<Card />);
     const name = screen.getByRole('heading', { name: 'feature/self-update' });
     fireEvent.pointerEnter(name);
     expect(name.hasAttribute('title')).toBe(false);
@@ -69,10 +111,10 @@ describe('WorkstreamCard', () => {
     expect(name.getAttribute('title')).toBe('feature/self-update');
   });
 
-  it('shows no provider pill when the daemon gives no provider label', () => {
+  it('names no provider when the daemon gives no provider label', () => {
     render(
-      <WorkstreamCard
-        workstream={workstream('idle', [], undefined, undefined, {
+      <Card
+        workstream={idle({
           provider: 'core',
           providerLabel: undefined,
         })}
@@ -82,9 +124,60 @@ describe('WorkstreamCard', () => {
     expect(screen.getByText('worktree')).toBeTruthy();
   });
 
+  // Its section already says where it works.
+  it('gives the card in the project folder its provider, but no kind or path', () => {
+    render(
+      <Card
+        workstream={idle({
+          ...inPlace,
+          providerLabel: 'Fake Provider',
+        })}
+      />,
+    );
+    expect(screen.getByText('Fake Provider')).toBeTruthy();
+    expect(screen.queryByText('in place')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy path' })).toBeNull();
+  });
+
+  it.each([
+    [
+      'worktree',
+      'worktree',
+      'worktree',
+      '/home/u/core-Test11',
+      '../core-Test11',
+    ],
+    ['copy', 'folder', 'folder', '/home/u/core-spike', '../core-spike'],
+  ])(
+    "shows a %s card's kind and path, and copies the full path",
+    async (strategyId, strategy, kind, workingDir, shown) => {
+      const writeText = vi.fn(async () => undefined);
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText },
+        configurable: true,
+      });
+      render(
+        <Card
+          workstream={idle({
+            provider: 'core',
+            providerLabel: undefined,
+            strategyId,
+            strategy,
+            workingDir,
+            inProjectFolder: false,
+          })}
+        />,
+      );
+      expect(screen.getByText(kind)).toBeTruthy();
+      expect(screen.getByText(shown)).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Copy path' }));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith(workingDir));
+    },
+  );
+
   it('renders one row per session', () => {
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream('waiting', [
           {
             id: 's1',
@@ -99,49 +192,9 @@ describe('WorkstreamCard', () => {
     expect(screen.getAllByRole('listitem')).toHaveLength(2);
   });
 
-  // One badge per state, its count beside the dot, so the card says how
-  // many sessions there are and what they are doing in one place.
-  it('shows a badge per session state, with its count', () => {
-    render(
-      <WorkstreamCard
-        workstream={workstream('waiting', [
-          {
-            id: 's1',
-            title: 'Implement',
-            agent: 'Claude Code',
-            state: 'running',
-          },
-          { id: 's2', title: 'Verify', agent: 'Claude Code', state: 'waiting' },
-          { id: 's3', title: 'Review', agent: 'Claude Code', state: 'running' },
-        ])}
-      />,
-    );
-    const badges = screen.getByRole('img', {
-      name: 'Sessions: 1 waiting for input, 2 running',
-    });
-    expect(badges.textContent).toBe('12');
-  });
-
-  // The badges sit with the name rather than in a footer of their own, which
-  // cost the card a whole line to say one number.
-  it('places the badges in the header, beside the name', () => {
-    render(
-      <WorkstreamCard
-        workstream={workstream('running', [
-          { id: 's1', title: 'Work', agent: 'Claude Code', state: 'running' },
-        ])}
-      />,
-    );
-    const header = screen
-      .getByRole('heading', { name: 'feature/self-update' })
-      .closest('header') as HTMLElement;
-    expect(within(header).getByTestId('workstream-sessions')).toBeTruthy();
-    expect(screen.queryByText(/\d+ sessions?$/)).toBeNull();
-  });
-
   it('counts sessions in their display state, as their rows show them', () => {
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream('idle', [
           { id: 's1', title: 'Work', agent: 'Claude Code', state: 'idle' },
         ])}
@@ -159,7 +212,7 @@ describe('WorkstreamCard', () => {
     ['error', 'Error'],
   ] as const)('shows the workstream state while it is %s', (runtime, label) => {
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream(
           'running',
           [{ id: 's1', title: 'Work', agent: 'Claude Code', state: 'running' }],
@@ -176,7 +229,7 @@ describe('WorkstreamCard', () => {
 
   it('leaves the state to the sessions while the workstream is up', () => {
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream('waiting', [
           { id: 's1', title: 'Verify', agent: 'Claude Code', state: 'waiting' },
         ])}
@@ -185,29 +238,21 @@ describe('WorkstreamCard', () => {
     expect(screen.queryByTestId('workstream-state')).toBeNull();
   });
 
-  // A zero badge is the whole of the empty state: an empty workstream reads
-  // as one at a glance, with no "No sessions yet." line saying it again.
-  it('says a workstream is empty once, through a zero badge', () => {
-    render(<WorkstreamCard workstream={workstream('idle', [])} />);
-    expect(screen.queryByText('No sessions yet.')).toBeNull();
-    expect(
-      screen.getByRole('img', { name: 'Sessions: No sessions' }).textContent,
-    ).toBe('0');
+  it('shows no counts for a workstream without sessions, and says so below', () => {
+    render(<Card />);
+    expect(screen.queryByTestId('workstream-sessions')).toBeNull();
+    expect(screen.getByText('No sessions yet.')).toBeTruthy();
   });
 
-  // The default name of a workstream is its branch's, and then the pill says
-  // it a second time.
+  // The default name of a workstream is its branch's, and then the branch
+  // would say it a second time.
   it('shows the branch only when it differs from the name', () => {
-    const { rerender } = render(
-      <WorkstreamCard workstream={workstream('idle', [])} />,
-    );
-    expect(
-      screen.queryByText('feature/self-update', { selector: 'span' }),
-    ).toBeNull();
+    const { rerender } = render(<Card />);
+    expect(screen.getAllByText('feature/self-update')).toHaveLength(1);
 
     rerender(
-      <WorkstreamCard
-        workstream={workstream('idle', [], undefined, undefined, {
+      <Card
+        workstream={idle({
           name: 'self-update',
         })}
       />,
@@ -216,7 +261,7 @@ describe('WorkstreamCard', () => {
   });
 
   it('disables "New session" when session creation is not wired', () => {
-    render(<WorkstreamCard workstream={workstream('idle', [])} />);
+    render(<Card />);
     const button = screen.getByRole('button', { name: 'New session' });
     expect((button as HTMLButtonElement).disabled).toBe(true);
   });
@@ -226,8 +271,7 @@ describe('WorkstreamCard', () => {
     [undefined, 'Could not load session types.'],
   ])('says why the session types could not be loaded', async (cause, said) => {
     render(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
+      <Card
         loadSessionOptions={vi.fn().mockRejectedValue(cause)}
         onCreateSession={vi.fn()}
       />,
@@ -248,8 +292,7 @@ describe('WorkstreamCard', () => {
       },
     ]);
     render(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
+      <Card
         loadSessionOptions={loadSessionOptions}
         onCreateSession={onCreateSession}
       />,
@@ -271,8 +314,7 @@ describe('WorkstreamCard', () => {
 
   it('leaves a right-click in the session form to the form', async () => {
     render(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
+      <Card
         loadSessionOptions={vi.fn().mockResolvedValue([
           {
             providerId: 'local',
@@ -315,8 +357,7 @@ describe('WorkstreamCard', () => {
 
     async function openForm() {
       render(
-        <WorkstreamCard
-          workstream={workstream('idle', [])}
+        <Card
           loadSessionOptions={vi.fn().mockResolvedValue(options)}
           onCreateSession={vi.fn().mockResolvedValue(null)}
         />,
@@ -345,9 +386,8 @@ describe('WorkstreamCard', () => {
     it('opens and refocuses the form through its handle', async () => {
       const handle = createRef<WorkstreamCardHandle>();
       render(
-        <WorkstreamCard
+        <Card
           ref={handle}
-          workstream={workstream('idle', [])}
           loadSessionOptions={vi.fn().mockResolvedValue(options)}
           onCreateSession={vi.fn().mockResolvedValue(null)}
         />,
@@ -372,9 +412,8 @@ describe('WorkstreamCard', () => {
       const handle = createRef<WorkstreamCardHandle>();
       const loadSessionOptions = vi.fn().mockResolvedValue(options);
       render(
-        <WorkstreamCard
+        <Card
           ref={handle}
-          workstream={workstream('idle', [])}
           loadSessionOptions={loadSessionOptions}
           onCreateSession={vi.fn()}
           disabledReason="Offline"
@@ -392,7 +431,7 @@ describe('WorkstreamCard', () => {
     it('offers no New session on a creating placeholder', () => {
       const handle = createRef<WorkstreamCardHandle>();
       render(
-        <WorkstreamCard
+        <Card
           ref={handle}
           workstream={workstream('idle', [], 'creating', 'creating', {
             id: 'creating-1',
@@ -433,11 +472,11 @@ describe('WorkstreamCard', () => {
     });
   });
 
-  it('wires session Stop/Start/Delete to their handlers by session id', () => {
+  it('wires session Stop/Delete to their handlers by session id', () => {
     const onStopSession = vi.fn();
     const onRemoveSession = vi.fn();
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream('running', [
           { id: 's1', title: 'Work', agent: 'Claude Code', state: 'running' },
         ])}
@@ -448,7 +487,12 @@ describe('WorkstreamCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
     expect(onStopSession).toHaveBeenCalledWith('s1');
     // Delete opens a confirmation dialog; clicking Delete inside confirms.
-    fireEvent.click(screen.getByRole('button', { name: /Delete session/ }));
+    fireEvent.click(
+      within(screen.getByRole('listitem')).getByRole('button', {
+        name: 'More actions',
+      }),
+    );
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
     fireEvent.click(
       within(screen.getByRole('dialog')).getByRole('button', {
         name: 'Delete',
@@ -460,7 +504,7 @@ describe('WorkstreamCard', () => {
   it('wires a session rename to its handler by session id', () => {
     const onRenameSession = vi.fn();
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream('running', [
           { id: 's1', title: 'Work', agent: 'Claude Code', state: 'running' },
         ])}
@@ -476,7 +520,7 @@ describe('WorkstreamCard', () => {
 
   it('offers no session rename without a handler', () => {
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream('running', [
           { id: 's1', title: 'Work', agent: 'Claude Code', state: 'running' },
         ])}
@@ -486,11 +530,11 @@ describe('WorkstreamCard', () => {
     expect(screen.queryByLabelText('Session name')).toBeNull();
   });
 
-  it('gates Stop/Start per session on its own provider, not the workstream', () => {
+  it('gates Stop/Continue per session on its own provider, not the workstream', () => {
     // The workstream's provider is "core", which has no session start/stop.
     const onStopSession = vi.fn();
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream(
           'running',
           [
@@ -527,7 +571,7 @@ describe('WorkstreamCard', () => {
   it('gates the send-text input per session on canPromptSession', () => {
     // The workstream's own provider has no prompting.
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream(
           'running',
           [
@@ -566,7 +610,7 @@ describe('WorkstreamCard', () => {
   it('wires each session Open button to onOpenSession with the session id', () => {
     const onOpenSession = vi.fn();
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream('running', [
           {
             id: 's1',
@@ -584,7 +628,7 @@ describe('WorkstreamCard', () => {
 
   it('shows status message when present', () => {
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream('idle', [], 'creating', 'creating', {
           statusMessage: 'Setting up workstream\u2026',
         })}
@@ -601,7 +645,7 @@ describe('WorkstreamCard', () => {
   // be stating a fact about something that does not exist.
   it('shows no session badges on a creating placeholder', () => {
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream('idle', [], 'creating', 'creating', {
           statusMessage: 'Setting up workstream\u2026',
         })}
@@ -611,12 +655,21 @@ describe('WorkstreamCard', () => {
     expect(screen.queryByTestId('workstream-sessions')).toBeNull();
   });
 
-  // A failed create stands for no workstream: it offers only its removal, and
-  // no pill for a strategy it never got.
+  it('is busy while it is a creating placeholder, and not once it is real', () => {
+    const { rerender } = render(
+      <Card workstream={workstream('idle', [], 'creating', 'creating')} />,
+    );
+    const card = screen.getByRole('region');
+    expect(card.getAttribute('aria-busy')).toBe('true');
+    rerender(<Card workstream={workstream('idle', [], 'idle', 'idle')} />);
+    expect(card.hasAttribute('aria-busy')).toBe(false);
+  });
+
+  // A failed create stands for no workstream: it offers only its removal.
   it('offers only Delete on a failed create', () => {
     const handle = createRef<WorkstreamCardHandle>();
     render(
-      <WorkstreamCard
+      <Card
         ref={handle}
         workstream={workstream('idle', [], 'error', 'error', {
           id: 'creating-1',
@@ -640,22 +693,19 @@ describe('WorkstreamCard', () => {
         onCreateSession={vi.fn()}
       />,
     );
-    expect(
-      screen.getAllByRole('button').map((button) => button.textContent),
-    ).toEqual(['Delete']);
+    expect(screen.getAllByRole('button').map(accessibleName)).toEqual([
+      'Delete workstream New workstream',
+    ]);
     expect(
       handle.current?.actions('creating-1').map((action) => action.id),
     ).toEqual(['delete']);
-    // No pills: the heading's sibling holds them, and it is empty.
-    const heading = screen.getByRole('heading', { name: 'New workstream' });
-    expect(heading.nextElementSibling?.childElementCount).toBe(0);
     expect(screen.queryByTestId('workstream-sessions')).toBeNull();
   });
 
   it('wires onPromptSession per session', () => {
     const onPromptSession = vi.fn();
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream('running', [
           {
             id: 's1',
@@ -678,20 +728,13 @@ describe('WorkstreamCard', () => {
   });
 
   it('shows a delete action only when onDelete is provided', () => {
-    const { rerender } = render(
-      <WorkstreamCard workstream={workstream('idle', [])} />,
-    );
+    const { rerender } = render(<Card />);
     expect(
       screen.queryByRole('button', { name: /Delete workstream/ }),
     ).toBeNull();
 
     const onDelete = vi.fn();
-    rerender(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
-        onDelete={onDelete}
-      />,
-    );
+    rerender(<Card onDelete={onDelete} />);
     fireEvent.click(screen.getByRole('button', { name: /Delete workstream/ }));
     fireEvent.click(
       within(screen.getByRole('dialog')).getByRole('button', {
@@ -703,32 +746,23 @@ describe('WorkstreamCard', () => {
     });
   });
 
-  it('shows an open action only when onOpen is provided, first, with Delete last', () => {
+  it('shows an open action only when onOpen is provided, first', () => {
     const onOpen = vi.fn();
-    const openable = workstream('idle', [], undefined, undefined, {
+    const openable = idle({
       openModes: [
         { id: 'open-with:terminal', label: 'Terminal', default: true },
       ],
     });
-    const { rerender } = render(<WorkstreamCard workstream={openable} />);
+    const { rerender } = render(<Card workstream={openable} />);
     expect(
       screen.queryByRole('button', { name: /Open workstream/ }),
     ).toBeNull();
 
-    rerender(
-      <WorkstreamCard
-        workstream={openable}
-        onDelete={vi.fn()}
-        onOpen={onOpen}
-      />,
-    );
+    rerender(<Card workstream={openable} onDelete={vi.fn()} onOpen={onOpen} />);
     const actions = screen
       .getAllByRole('button')
       .map((button) => button.getAttribute('aria-label') ?? button.textContent);
     expect(actions.indexOf('Open workstream feature/self-update')).toBe(0);
-    expect(actions.indexOf('Delete workstream feature/self-update')).toBe(
-      actions.length - 1,
-    );
 
     // Opening is not destructive, so it fires straight away with no dialog. The
     // button is the default open and names no mode.
@@ -745,8 +779,8 @@ describe('WorkstreamCard', () => {
     const onOpen = vi.fn();
     const onOpenWith = vi.fn();
     render(
-      <WorkstreamCard
-        workstream={workstream('idle', [], undefined, undefined, {
+      <Card
+        workstream={idle({
           openModes: [
             { id: 'open-with:terminal', label: 'Terminal', default: true },
             { id: 'open-with:e1', label: 'Visual Studio Code' },
@@ -778,8 +812,8 @@ describe('WorkstreamCard', () => {
     const onOpen = vi.fn();
     const onOpenWith = vi.fn();
     render(
-      <WorkstreamCard
-        workstream={workstream('idle', [], undefined, undefined, {
+      <Card
+        workstream={idle({
           openModes: [
             { id: 'session-shell:s1', label: 'Shell in Work' },
             { id: 'link:web-ide', label: 'Web IDE' },
@@ -807,8 +841,8 @@ describe('WorkstreamCard', () => {
 
   it('shows no open action when the daemon declares no modes', () => {
     render(
-      <WorkstreamCard
-        workstream={workstream('idle', [], undefined, undefined, {
+      <Card
+        workstream={idle({
           openModes: [],
         })}
         onOpen={vi.fn()}
@@ -820,12 +854,12 @@ describe('WorkstreamCard', () => {
   });
 
   // The card reads the daemon's action list and echoes the ID back; it has no
-  // opinion about which actions exist, not even for the note.
+  // opinion about which actions exist. It knows only the note's icon.
   it('runs the action the daemon advertised, by its ID', () => {
     const onAction = vi.fn();
     render(
-      <WorkstreamCard
-        workstream={workstream('idle', [], undefined, undefined, {
+      <Card
+        workstream={idle({
           actions: [{ id: 'note', label: 'Note' }],
         })}
         onAction={onAction}
@@ -842,8 +876,8 @@ describe('WorkstreamCard', () => {
   // it is the side that knows, so the card never writes its own copy.
   it('labels an action as the daemon named it', () => {
     render(
-      <WorkstreamCard
-        workstream={workstream('idle', [], undefined, undefined, {
+      <Card
+        workstream={idle({
           actions: [
             {
               id: 'some-action-the-ui-does-not-know',
@@ -870,9 +904,9 @@ describe('WorkstreamCard', () => {
   // One row of controls, in the order every item shares: opening first, then
   // making something in it, then what the daemon advertises, and what deletes
   // last. The footer they used to sit in cost the card a line of its own.
-  it('places the actions in the header, before Delete', () => {
+  it('places the actions in the header, Delete and More actions last', () => {
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream(
           'running',
           [{ id: 's1', title: 'Work', agent: 'Claude Code', state: 'running' }],
@@ -899,16 +933,23 @@ describe('WorkstreamCard', () => {
     const controls = within(header)
       .getAllByRole('button')
       .filter((button) => button.tabIndex !== -1)
-      .map((button) => button.textContent);
-    expect(controls).toEqual(['Open', '▾', 'New session', 'Notes', 'Delete']);
+      .map(accessibleName);
+    expect(controls).toEqual([
+      'Open workstream feature/self-update',
+      'Open workstream feature/self-update with…',
+      'New session',
+      'Notes for workstream feature/self-update',
+      'Delete workstream feature/self-update',
+      'More actions',
+    ]);
   });
 
   // The daemon advertises its actions by label, so their letters are picked
   // from it: the first the card's own (O, N, R, D) leave free.
   it('gives an advertised action a letter of its label the others leave', () => {
     render(
-      <WorkstreamCard
-        workstream={workstream('idle', [], undefined, undefined, {
+      <Card
+        workstream={idle({
           actions: [{ id: 'note', label: 'Notes' }],
         })}
         onAction={vi.fn()}
@@ -921,8 +962,8 @@ describe('WorkstreamCard', () => {
 
   it('shows no advertised buttons when the daemon offers no actions', () => {
     render(
-      <WorkstreamCard
-        workstream={workstream('idle', [], undefined, undefined, {
+      <Card
+        workstream={idle({
           actions: [],
         })}
         onAction={vi.fn()}
@@ -933,18 +974,13 @@ describe('WorkstreamCard', () => {
 
   it('resets the delete confirmation when the workstream changes', () => {
     const onDelete = vi.fn();
-    const { rerender } = render(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
-        onDelete={onDelete}
-      />,
-    );
+    const { rerender } = render(<Card onDelete={onDelete} />);
     fireEvent.click(screen.getByRole('button', { name: /Delete workstream/ }));
     expect(screen.getByRole('dialog')).toBeTruthy();
     // Switching to a different workstream (new id) closes the dialog.
     rerender(
-      <WorkstreamCard
-        workstream={{ ...workstream('idle', []), id: 'ws-2', name: 'other' }}
+      <Card
+        workstream={{ ...idle(), id: 'ws-2', name: 'other' }}
         onDelete={onDelete}
       />,
     );
@@ -952,18 +988,11 @@ describe('WorkstreamCard', () => {
   });
 
   it('makes the name the way to rename only when onRename is provided', () => {
-    const { rerender } = render(
-      <WorkstreamCard workstream={workstream('idle', [])} />,
-    );
+    const { rerender } = render(<Card />);
     expect(cardName().hasAttribute('data-mnemonic')).toBe(false);
     renameByName();
     expect(screen.queryByLabelText('Workstream name')).toBeNull();
-    rerender(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
-        onRename={renameOk()}
-      />,
-    );
+    rerender(<Card onRename={renameOk()} />);
     expect(cardName().getAttribute('data-mnemonic')).toBe('r');
     expect(cardName().getAttribute('aria-keyshortcuts')).toBe('Alt+R');
     expect(cardName().getAttribute('title')).toBe(
@@ -973,14 +1002,8 @@ describe('WorkstreamCard', () => {
 
   // F2 reaches a card only where it can take focus.
   it('names F2 in the tooltip only on a card that can take focus', () => {
-    const ws = workstream('idle', []);
-    render(
-      <WorkstreamCard
-        workstream={ws}
-        onRename={renameOk()}
-        tabStopId={ws.id}
-      />,
-    );
+    const ws = idle();
+    render(<Card workstream={ws} onRename={renameOk()} tabStopId={ws.id} />);
     expect(cardName().getAttribute('title')).toBe(
       'feature/self-update\n\nDouble-click to rename (or press F2)',
     );
@@ -988,12 +1011,7 @@ describe('WorkstreamCard', () => {
 
   // The name is the rename affordance; there is no control beside it.
   it('has no Rename button', () => {
-    render(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
-        onRename={renameOk()}
-      />,
-    );
+    render(<Card onRename={renameOk()} />);
     expect(screen.queryByRole('button', { name: /^Rename/ })).toBeNull();
   });
 
@@ -1001,7 +1019,7 @@ describe('WorkstreamCard', () => {
     // A `creating-` placeholder is replaced wholesale by the real workstream, so
     // a rename here would be dropped and the PATCH would 404.
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream('idle', [], 'creating', 'starting', {
           id: 'creating-1',
         })}
@@ -1015,12 +1033,7 @@ describe('WorkstreamCard', () => {
 
   it('renames on Enter with the edited value', async () => {
     const onRename = renameOk();
-    render(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
-        onRename={onRename}
-      />,
-    );
+    render(<Card onRename={onRename} />);
     renameByName();
     const input = screen.getByLabelText('Workstream name');
     fireEvent.change(input, { target: { value: 'renamed-ws' } });
@@ -1034,12 +1047,7 @@ describe('WorkstreamCard', () => {
 
   it('renames on blur with the edited value', async () => {
     const onRename = renameOk();
-    render(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
-        onRename={onRename}
-      />,
-    );
+    render(<Card onRename={onRename} />);
     renameByName();
     const input = screen.getByLabelText('Workstream name');
     fireEvent.change(input, { target: { value: 'blurred-name' } });
@@ -1055,13 +1063,7 @@ describe('WorkstreamCard', () => {
   // it renamed, as for F2.
   it('cancels on Escape without calling onRename, restoring focus', async () => {
     const onRename = renameOk();
-    render(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
-        onRename={onRename}
-        tabStopId="ws-1"
-      />,
-    );
+    render(<Card onRename={onRename} tabStopId="ws-1" />);
     renameByName();
     const input = screen.getByLabelText('Workstream name');
     fireEvent.change(input, { target: { value: 'discard-me' } });
@@ -1081,12 +1083,7 @@ describe('WorkstreamCard', () => {
 
   it('keeps the field, the draft and an error when the rename fails', async () => {
     const onRename = vi.fn(async () => 'Rename failed.');
-    render(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
-        onRename={onRename}
-      />,
-    );
+    render(<Card onRename={onRename} />);
     renameByName();
     const input = screen.getByLabelText('Workstream name');
     fireEvent.change(input, { target: { value: 'rejected-name' } });
@@ -1102,12 +1099,7 @@ describe('WorkstreamCard', () => {
   // The reason was about the name that was refused; once that is being edited
   // it no longer describes anything on screen.
   it("drops a refused rename's error as the name is edited", async () => {
-    render(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
-        onRename={vi.fn(async () => 'Rename failed.')}
-      />,
-    );
+    render(<Card onRename={vi.fn(async () => 'Rename failed.')} />);
     renameByName();
     const input = screen.getByLabelText('Workstream name');
     fireEvent.change(input, { target: { value: 'rejected-name' } });
@@ -1119,12 +1111,7 @@ describe('WorkstreamCard', () => {
   });
 
   it('renames on a double-click on the name', () => {
-    render(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
-        onRename={renameOk()}
-      />,
-    );
+    render(<Card onRename={renameOk()} />);
     const name = screen.getByRole('heading', { name: 'feature/self-update' });
     expect(name.getAttribute('title')).toMatch(/Double-click to rename/);
     fireEvent.doubleClick(name);
@@ -1132,13 +1119,7 @@ describe('WorkstreamCard', () => {
   });
 
   it('does not rename on a double-click while blocked', () => {
-    render(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
-        onRename={renameOk()}
-        disabledReason="Daemon offline"
-      />,
-    );
+    render(<Card onRename={renameOk()} disabledReason="Daemon offline" />);
     const name = screen.getByRole('heading', { name: 'feature/self-update' });
     expect(name.getAttribute('title')).toBe(
       'feature/self-update\n\nDaemon offline',
@@ -1151,27 +1132,27 @@ describe('WorkstreamCard', () => {
   it.each([
     ['renames', undefined, true],
     ['does not rename while blocked', 'Daemon offline', false],
-  ])('on Alt+R with the card selected, %s', (_what, disabledReason, renames) => {
-    render(
-      <>
-        <Mnemonics />
-        <WorkstreamCard
-          workstream={workstream('idle', [])}
-          onRename={renameOk()}
-          disabledReason={disabledReason}
-          tabStopId="ws-1"
-          selectedId="ws-1"
-        />
-      </>,
-    );
-    fireEvent.keyDown(window, { key: 'r', code: 'KeyR', altKey: true });
-    expect(Boolean(screen.queryByLabelText('Workstream name'))).toBe(renames);
-  });
+  ])(
+    'on Alt+R with the card selected, %s',
+    (_what, disabledReason, renames) => {
+      render(
+        <>
+          <Mnemonics />
+          <Card
+            onRename={renameOk()}
+            disabledReason={disabledReason}
+            tabStopId="ws-1"
+            selectedId="ws-1"
+          />
+        </>,
+      );
+      fireEvent.keyDown(window, { key: 'r', code: 'KeyR', altKey: true });
+      expect(Boolean(screen.queryByLabelText('Workstream name'))).toBe(renames);
+    },
+  );
 
   it("gives the delete dialog's buttons their letters", () => {
-    render(
-      <WorkstreamCard workstream={workstream('idle', [])} onDelete={vi.fn()} />,
-    );
+    render(<Card onDelete={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /^Delete workstream/ }));
     const dialog = screen.getByRole('dialog');
     const letters = within(dialog)
@@ -1193,11 +1174,7 @@ describe('WorkstreamCard', () => {
     const onRename = renameOk();
     const shown = (disabledReason?: string) => (
       <>
-        <WorkstreamCard
-          workstream={workstream('idle', [])}
-          onRename={onRename}
-          disabledReason={disabledReason}
-        />
+        <Card onRename={onRename} disabledReason={disabledReason} />
         <button type="button">elsewhere</button>
       </>
     );
@@ -1221,12 +1198,7 @@ describe('WorkstreamCard', () => {
 
   it('does not rename to an empty or unchanged name', () => {
     const onRename = renameOk();
-    render(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
-        onRename={onRename}
-      />,
-    );
+    render(<Card onRename={onRename} />);
     // Empty.
     renameByName();
     let input = screen.getByLabelText('Workstream name');
@@ -1244,13 +1216,12 @@ describe('WorkstreamCard', () => {
 // A provider's failure lands on the status message and nothing overwrites it
 // until the next create, so the card offers a way to say "read it, thanks".
 describe('dismissing the status message', () => {
-  const failed = (message: string) =>
-    workstream('idle', [], undefined, undefined, { statusMessage: message });
+  const failed = (message: string) => idle({ statusMessage: message });
 
   it('offers a dismiss button that reports the workstream it belongs to', () => {
     const onDismissStatus = vi.fn();
     render(
-      <WorkstreamCard
+      <Card
         workstream={failed('start enclave container: exit status 1')}
         onDismissStatus={onDismissStatus}
       />,
@@ -1266,7 +1237,7 @@ describe('dismissing the status message', () => {
   // card must not hide it locally on click — it waits for the state push.
   it('leaves the message on screen until the daemon clears it', () => {
     const { rerender } = render(
-      <WorkstreamCard
+      <Card
         workstream={failed('a long provider error')}
         onDismissStatus={vi.fn()}
       />,
@@ -1277,15 +1248,13 @@ describe('dismissing the status message', () => {
     expect(screen.getByText('a long provider error')).toBeTruthy();
 
     // …and it goes when the cleared state arrives.
-    rerender(
-      <WorkstreamCard workstream={failed('')} onDismissStatus={vi.fn()} />,
-    );
+    rerender(<Card workstream={failed('')} onDismissStatus={vi.fn()} />);
     expect(screen.queryByText('a long provider error')).toBeNull();
   });
 
   // No handler means no affordance, the same rule the card's other actions follow.
   it('shows no dismiss button without a handler', () => {
-    render(<WorkstreamCard workstream={failed('some message')} />);
+    render(<Card workstream={failed('some message')} />);
     expect(screen.getByText('some message')).toBeTruthy();
     expect(
       screen.queryByRole('button', { name: /Dismiss message for workstream/ }),
@@ -1298,7 +1267,7 @@ describe('dismissing the status message', () => {
   // way out of a failed creation is to remove it. The daemon refuses this too (409).
   it('shows no dismiss button on a workstream in error state', () => {
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream('idle', [], 'error', 'error', {
           statusMessage: 'branch "main" is checked out in another worktree',
         })}
@@ -1316,12 +1285,7 @@ describe('dismissing the status message', () => {
 
   // Nothing to dismiss when there is no message.
   it('shows no dismiss button when there is no status message', () => {
-    render(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
-        onDismissStatus={vi.fn()}
-      />,
-    );
+    render(<Card onDismissStatus={vi.fn()} />);
     expect(
       screen.queryByRole('button', { name: /Dismiss message for workstream/ }),
     ).toBeNull();
@@ -1335,7 +1299,7 @@ describe('WorkstreamCard when the daemon is unreachable', () => {
 
   const renderBlocked = () =>
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream(
           'running',
           [{ id: 's1', title: 'Work', agent: 'Claude Code', state: 'running' }],
@@ -1366,6 +1330,11 @@ describe('WorkstreamCard when the daemon is unreachable', () => {
 
   it('disables its own workstream actions', () => {
     renderBlocked();
+    const header = within(
+      screen
+        .getByRole('heading', { name: 'feature/self-update' })
+        .closest('header') as HTMLElement,
+    );
     for (const name of [
       /^New session$/,
       /^Delete workstream/,
@@ -1379,6 +1348,9 @@ describe('WorkstreamCard when the daemon is unreachable', () => {
       expect(button.disabled).toBe(true);
       expect(button.getAttribute('title')).toBe(REASON);
     }
+    // Disabled in its place, not gone, so the header keeps its shape.
+    const more = header.getByRole('button', { name: 'More actions' });
+    expect((more as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('passes the reason down to its session rows', () => {
@@ -1388,13 +1360,6 @@ describe('WorkstreamCard when the daemon is unreachable', () => {
         .getByRole('button', { name: 'Stop' })
         .getAttribute('aria-disabled'),
     ).toBe('true');
-    expect(
-      (
-        screen.getByRole('button', {
-          name: /^Delete session/,
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
     // Rename has no button; the row's gesture is what must be inert.
     fireEvent.doubleClick(screen.getByTestId('session-title'));
     expect(screen.queryByLabelText('Session name')).toBeNull();
@@ -1402,7 +1367,7 @@ describe('WorkstreamCard when the daemon is unreachable', () => {
 
   it('leaves them all enabled with no reason set', () => {
     render(
-      <WorkstreamCard
+      <Card
         workstream={workstream('running', [
           { id: 's1', title: 'Work', agent: 'Claude Code', state: 'running' },
         ])}
@@ -1434,24 +1399,13 @@ describe('WorkstreamCard as a keyboard list item', () => {
   const renderNavigable = (
     props: Partial<Parameters<typeof WorkstreamCard>[0]> = {},
   ) => {
-    render(
-      <WorkstreamCard
-        workstream={workstream('idle', [])}
-        tabStopId="ws-1"
-        {...props}
-      />,
-    );
+    render(<Card tabStopId="ws-1" {...props} />);
     card().focus();
     return card();
   };
 
   it('gives the tab stop to the named item and -1 to the others', () => {
-    render(
-      <WorkstreamCard
-        workstream={workstream('idle', sessions)}
-        tabStopId="s2"
-      />,
-    );
+    render(<Card workstream={workstream('idle', sessions)} tabStopId="s2" />);
     const rows = screen.getAllByRole('listitem');
     expect(card().getAttribute('tabindex')).toBe('-1');
     expect(rows.map((row) => row.getAttribute('tabindex'))).toEqual([
@@ -1468,7 +1422,7 @@ describe('WorkstreamCard as a keyboard list item', () => {
     'with the tab stop on %s, gives its controls tab index %s',
     (id, expected) => {
       render(
-        <WorkstreamCard
+        <Card
           workstream={workstream('idle', sessions)}
           tabStopId={id}
           onRename={renameOk()}
@@ -1484,7 +1438,7 @@ describe('WorkstreamCard as a keyboard list item', () => {
   );
 
   it('is not focusable without a list around it', () => {
-    render(<WorkstreamCard workstream={workstream('idle', sessions)} />);
+    render(<Card workstream={workstream('idle', sessions)} />);
     expect(card().hasAttribute('tabindex')).toBe(false);
     expect(screen.getAllByRole('listitem')[0].hasAttribute('tabindex')).toBe(
       false,
@@ -1495,7 +1449,7 @@ describe('WorkstreamCard as a keyboard list item', () => {
     const onOpen = vi.fn();
     const focused = renderNavigable({
       onOpen,
-      workstream: workstream('idle', [], undefined, undefined, {
+      workstream: idle({
         openModes: [{ id: 'terminal', label: 'Terminal', default: true }],
       }),
     });
@@ -1509,7 +1463,7 @@ describe('WorkstreamCard as a keyboard list item', () => {
     const onOpen = vi.fn();
     const focused = renderNavigable({
       onOpen,
-      workstream: workstream('idle', [], undefined, undefined, {
+      workstream: idle({
         openModes: [{ id: 'terminal', label: 'Terminal' }],
       }),
     });
@@ -1528,7 +1482,7 @@ describe('WorkstreamCard as a keyboard list item', () => {
   it('deletes once for a held Delete', () => {
     const onDelete = vi.fn();
     const focused = renderNavigable({
-      workstream: workstream('idle', [], undefined, undefined, {
+      workstream: idle({
         strategyId: 'in-place',
       }),
       onDelete,
@@ -1647,7 +1601,7 @@ describe('WorkstreamCard restart with settings', () => {
     const handle = createRef<WorkstreamCardHandle>();
     const onRestartSession = vi.fn();
     render(
-      <WorkstreamCard
+      <Card
         ref={handle}
         workstream={workstream('running', sessions)}
         onRestartSession={onRestartSession}
@@ -1660,5 +1614,117 @@ describe('WorkstreamCard restart with settings', () => {
     expect(restartOf('s-2')).toBeUndefined();
     restartOf('s-1')?.run();
     expect(onRestartSession).toHaveBeenCalledWith('s-1');
+  });
+});
+
+describe('WorkstreamCard header buttons', () => {
+  const name = 'feature/self-update';
+
+  it('draws Notes and Delete as icons, named for screen readers', () => {
+    render(
+      <Card
+        workstream={idle({
+          actions: [{ id: 'note', label: 'Notes' }],
+        })}
+        onAction={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    for (const label of [
+      `Notes for workstream ${name}`,
+      `Delete workstream ${name}`,
+    ]) {
+      expect(screen.getByRole('button', { name: label }).textContent).toBe('');
+    }
+  });
+
+  it("opens the card's actions menu from More actions", () => {
+    render(<Card onRename={renameOk()} onDelete={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    const menu = screen.getByRole('menu', {
+      name: `Actions for workstream ${name}`,
+    });
+    expect(
+      within(menu)
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent),
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/^Rename/)]));
+  });
+});
+
+describe('WorkstreamCard rows in a list', () => {
+  const live = (id: string): Session => ({
+    id,
+    title: `Live ${id}`,
+    agent: 'Claude Code',
+    state: 'running',
+  });
+  /** Ended `minutes` ago. */
+  const ended = (id: string, minutes: number): Session => ({
+    id,
+    title: `Ended ${id}`,
+    agent: 'Claude Code',
+    state: 'stopped',
+    endedAt: new Date(Date.now() - minutes * 60_000).toISOString(),
+  });
+  const rowTitles = () =>
+    screen.getAllByTestId('session-title').map((title) => title.textContent);
+
+  /** The card in a list that owns the tab stop, as the project page has it. */
+  function List({ current }: { current: Session[] }) {
+    const workstreams = [workstream('running', current)];
+    const list = useListTabStop(workstreams, {
+      resetKey: 'p',
+      emptyFocus: () => null,
+    });
+    return (
+      <div {...list.listProps}>
+        <Card
+          workstream={workstreams[0]}
+          tabStopId={list.tabStopId}
+          selectedId={list.selectedId}
+        />
+      </div>
+    );
+  }
+
+  it('hands focus to the row shown below a focused row that goes', () => {
+    // Shown live first: l1, l2, then e1.
+    const { rerender } = render(
+      <List current={[live('l1'), ended('e1', 5), live('l2')]} />,
+    );
+    act(() =>
+      (screen.getByText('Live l1').closest('li') as HTMLElement).focus(),
+    );
+
+    rerender(<List current={[ended('e1', 5), live('l2')]} />);
+    expect(document.activeElement).toBe(
+      screen.getByText('Live l2').closest('li'),
+    );
+  });
+
+  // The session the user is on moves when it stops; the selection and focus
+  // move with it, rather than jumping to whatever took its place.
+  it('keeps the selection, focus and open details on a session that stops', () => {
+    const sessions = [live('l1'), live('l2'), ended('e1', 5)];
+    const { rerender } = render(<List current={sessions} />);
+    const row = () => screen.getByText('Live l1').closest('li') as HTMLElement;
+    const details = () =>
+      within(row()).getByRole('button', { name: 'Toggle session details' });
+    fireEvent.click(details());
+    act(() => row().focus());
+
+    const stopped = {
+      ...live('l1'),
+      state: 'stopped' as const,
+      endedAt: new Date().toISOString(),
+    };
+    rerender(<List current={[stopped, live('l2'), ended('e1', 5)]} />);
+
+    expect(rowTitles()).toEqual(['Live l2', 'Live l1', 'Ended e1']);
+    expect(row().getAttribute('aria-current')).toBe('true');
+    expect(document.activeElement).toBe(row());
+    // The same row, moved: what was open in it still is.
+    expect(details().getAttribute('aria-expanded')).toBe('true');
   });
 });

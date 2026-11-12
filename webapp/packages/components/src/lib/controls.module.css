@@ -35,3 +35,56 @@
   background: var(--hs-danger, #f87171);
   color: var(--hs-danger-contrast, #2a0a0a);
 }
+
+/* A button with an icon before its label, or with only an icon (named by its
+   aria-label). Placed after .button, so their padding wins. */
+.labelled,
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.iconButton {
+  padding: 0.25rem 0.4rem;
+}
+
+/* Bare until hovered: what opens a menu or discloses more, such as More
+   actions and a session's details caret. */
+.bareButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  font: inherit;
+  color: var(--hs-text-muted, #8494a7);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.bareButton:hover {
+  color: var(--hs-text, #dbe4ee);
+  background: var(--hs-hover, #232e3c);
+}
+
+/* The smaller size a session row's buttons share, labelled or not. */
+.compact {
+  height: 1.6rem;
+}
+
+/* A list row's tint changes with selection and focus, so its bordered buttons
+   carry a fill of their own: a chip whose border shows on any of them. */
+.button.compact:not(.primary) {
+  background: var(--hs-panel, #161d26);
+}
+
+.iconButton.compact,
+.bareButton.compact {
+  width: 1.6rem;
+  padding: 0;
+}

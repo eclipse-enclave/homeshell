@@ -55,6 +55,12 @@ html {
     --hs-terminal-bg: #0a0e14;
     --hs-terminal-text: #ccd8e6;
     --hs-terminal-rule: #3d4c5e;
+    /* A branch name, set apart from the muted metadata around it. */
+    --hs-branch: #c4b5fd;
+    /* What sits back from the card, such as an ended session's row. */
+    --hs-recess: rgba(0, 0, 0, 0.18);
+    /* A recessed row under the pointer: lifted, but still set back. */
+    --hs-recess-hover: #232e3c;
 }
 
 [data-theme='light'] {
@@ -80,6 +86,9 @@ html {
     --hs-state-error: #ef4444;
     --hs-state-stopped: #64748b;
     --hs-state-stopping: #64748b;
+    /* The thin hollow ring of an ended session: darker than the filled stopped
+       slate so a 1.5px outline still clears 3:1 on the card and the recess. */
+    --hs-state-ended: #526071;
     --hs-state-starting: #10b981;
     --hs-state-creating: #7c3aed;
     --hs-state-unknown: #94a3b8;
@@ -97,6 +106,9 @@ html {
     --hs-terminal-bg: #eceff4;
     --hs-terminal-text: #24303f;
     --hs-terminal-rule: #9fadbf;
+    --hs-branch: #6d28d9;
+    --hs-recess: #f7f8fa;
+    --hs-recess-hover: #eef1f5;
 }
 
 body {

@@ -1,6 +1,5 @@
-import { useCallback, useLayoutEffect, useRef } from 'react';
-import { flushSync } from 'react-dom';
-import { MNEMONIC_EVENT, MNEMONICS, mnemonicProps } from './mnemonic';
+import { cx } from './cx';
+import { MNEMONICS, mnemonicProps, useMnemonicHandler } from './mnemonic';
 import styles from './renamable-title.module.css';
 
 export interface RenamableTitleOptions {
@@ -28,7 +27,7 @@ export const renameInputClass = styles.input;
  * not, in which case it has neither tint nor letter. It is not a control of
  * its own: a click still selects what it is on.
  */
-export function useRenamableTitle({
+export function useRenamableTitle<T extends HTMLElement>({
   name,
   onRename,
   disabledReason,
@@ -36,30 +35,13 @@ export function useRenamableTitle({
   className,
 }: RenamableTitleOptions) {
   const disabled = Boolean(disabledReason);
-  const rename = useRef<(() => void) | undefined>(undefined);
-  useLayoutEffect(() => {
-    rename.current = disabled ? undefined : onRename;
-  });
-  // Alt+R must not click it, which would select instead, so the event is
-  // taken either way. flushSync renders the box and focuses it before the next
-  // key arrives: React would render an update from this non-React event a task
-  // later, and keys typed straight after Alt+R would be lost.
-  const ref = useCallback((element: HTMLElement | null) => {
-    if (!element) return;
-    const onMnemonic = (event: Event) => {
-      event.preventDefault();
-      const start = rename.current;
-      if (start) flushSync(start);
-    };
-    element.addEventListener(MNEMONIC_EVENT, onMnemonic);
-    return () => element.removeEventListener(MNEMONIC_EVENT, onMnemonic);
-  }, []);
+  // Alt+R must not click it, which would select instead, so it takes the
+  // letter even while it cannot be renamed.
+  const ref = useMnemonicHandler<T>(disabled ? undefined : onRename);
 
   return {
     ref,
-    className: disabled
-      ? className
-      : [className, styles.renamable].filter(Boolean).join(' '),
+    className: disabled ? className : cx(className, styles.renamable),
     title: disabled
       ? `${name}\n\n${disabledReason}`
       : `${name}\n\nDouble-click to rename${f2 ? ' (or press F2)' : ''}`,

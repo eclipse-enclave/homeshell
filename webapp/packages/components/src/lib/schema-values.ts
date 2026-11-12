@@ -31,6 +31,8 @@ export interface SchemaProp extends Schema {
   title?: string;
   description?: string;
   enum?: string[];
+  /** Display names for `enum`, same order; labels fall back to the values. */
+  enumNames?: string[];
   default?: unknown;
   /**
    * Rendering hint: "textarea" renders a string as a multi-line textarea,
@@ -127,7 +129,8 @@ export function isLocked(prop: SchemaProp): boolean {
 
 /**
  * The initial value of one field, with `override` taking precedence — except
- * over a locked field, which holds its default.
+ * over a locked field, which holds its default, and over a choice the field
+ * does not offer.
  */
 function initialOf(
   prop: SchemaProp,
@@ -154,7 +157,11 @@ function initialOf(
         )
       : items;
   }
-  if (override !== undefined && !isLocked(prop)) return override as ConfigValue;
+  const offered =
+    !Array.isArray(prop.enum) || prop.enum.includes(override as string);
+  if (override !== undefined && !isLocked(prop) && offered) {
+    return override as ConfigValue;
+  }
   if (prop.default !== undefined) return prop.default as ConfigValue;
   if (prop.type === 'boolean') return false;
   // A required enum must carry a value, so pick the first; an optional enum

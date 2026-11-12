@@ -47,6 +47,7 @@ const project: Project = {
       // in-place: the first dialog asks a single yes/no, with no files question.
       strategyId: 'in-place',
       strategy: 'in place',
+      inProjectFolder: true,
       state: 'running',
       runtimeState: 'running',
       effectiveState: 'running',
@@ -122,6 +123,17 @@ const card = (
   name,
   sessions,
   placeholderId,
+});
+const worktree = (
+  id: string,
+  name: string,
+  sessions = card(id, name).sessions,
+) => ({
+  ...card(id, name, sessions),
+  strategyId: 'worktree',
+  strategy: 'worktree',
+  inProjectFolder: false,
+  workingDir: `/tmp/alpha-${name}`,
 });
 const withCards = (...workstreams: Project['workstreams']): Project => ({
   ...project,
@@ -200,6 +212,119 @@ async function deleteWorkstream() {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe('ProjectView sections', () => {
+  // Both sections are in the one list the arrow keys walk.
+  const section = (name: RegExp) =>
+    within(screen.getByRole('group', { name: 'Workstreams' })).getByRole(
+      'region',
+      { name },
+    );
+  const cardsIn = (region: HTMLElement) =>
+    within(region)
+      .queryAllByRole('region', { name: /^Workstream / })
+      .map((shown) => shown.getAttribute('aria-label'));
+
+  it('shows the project folder first, then the separate folders in daemon order', async () => {
+    stubDaemon();
+    await renderLive(
+      withCards(worktree('w2', 'b'), card('w1', 'here'), worktree('w3', 'a')),
+    );
+
+    expect(cardsIn(section(/^In the project folder/))).toEqual([
+      'Workstream here',
+    ]);
+    // The folder is in use: nothing to offer in it.
+    expect(screen.queryByRole('button', { name: 'Work here' })).toBeNull();
+    const separate = section(/^Separate folders · 2$/);
+    expect(cardsIn(separate)).toEqual(['Workstream b', 'Workstream a']);
+    expect(
+      within(separate).getByRole('button', { name: 'New workstream' }),
+    ).toBeTruthy();
+  });
+
+  it('says when either section is empty', async () => {
+    stubDaemon();
+    await renderLive(withCards());
+
+    expect(
+      within(section(/^In the project folder/)).getByText(
+        'Nothing works in the project folder.',
+      ),
+    ).toBeTruthy();
+    expect(
+      within(section(/^Separate folders/)).getByText(
+        'No separate folders yet.',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('creates the in-place workstream on Work here, once, busy meanwhile, and focuses it', async () => {
+    let answer: () => void = () => undefined;
+    stubCreates(
+      () => card('w1', 'here'),
+      new Promise<void>((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const rerender = await renderLive(withCards(worktree('w2', 'b')));
+
+    const workHere = screen.getByRole('button', { name: 'Work here' });
+    fireEvent.click(workHere);
+    fireEvent.click(workHere);
+    expect(workHere.getAttribute('aria-busy')).toBe('true');
+    await act(async () => answer());
+    await rerender(withCards(card('w1', 'here'), worktree('w2', 'b')));
+
+    const posts = vi
+      .mocked(fetch)
+      .mock.calls.filter(([, init]) => init?.method === 'POST');
+    expect(posts).toHaveLength(1);
+    expect(document.activeElement).toBe(
+      screen.getByRole('region', { name: 'Workstream here' }),
+    );
+  });
+
+  it('says why the daemon refused Work here', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) =>
+        init?.method === 'POST'
+          ? {
+              ok: false,
+              status: 409,
+              json: async () => ({ error: 'The folder is taken.' }),
+            }
+          : { ok: true, status: 200, json: async () => ({}) },
+      ),
+    );
+    await renderLive(withCards(worktree('w2', 'b')));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Work here' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'The folder is taken.',
+    );
+  });
+
+  // One list: the arrows and the tab stop follow the page, not the daemon.
+  it('walks from the project folder into the separate folders', async () => {
+    stubDaemon();
+    await renderLive(
+      withCards(worktree('w2', 'b'), card('w1', 'here', [session('s1')])),
+    );
+    const here = screen.getByRole('region', { name: 'Workstream here' });
+    expect(here.getAttribute('tabindex')).toBe('0');
+
+    const row = within(here).getByRole('listitem');
+    act(() => row.focus());
+    fireEvent.keyDown(row, { key: 'ArrowDown' });
+
+    expect(document.activeElement).toBe(
+      screen.getByRole('region', { name: 'Workstream b' }),
+    );
+  });
 });
 
 describe('ProjectView removal guard', () => {
@@ -342,17 +467,27 @@ describe('ProjectView keyboard list', () => {
     );
   });
 
-  it('hands focus to New workstream when the focused last card goes', async () => {
-    const { card, rerender } = await renderList();
-    act(() => card.focus());
+  // Focus stays in the section the card went from.
+  it.each([
+    ['the project folder', project, 'Work here'],
+    [
+      'a separate folder',
+      withCards(worktree('w1', 'feature/x', project.workstreams[0].sessions)),
+      'New workstream',
+    ],
+  ])(
+    'hands focus to its create button when the focused last card, in %s, goes',
+    async (_case, shown, button) => {
+      const { card, rerender } = await renderList(shown);
+      act(() => card.focus());
 
-    await rerender({ ...project, workstreams: [] });
+      await rerender(withCards());
 
-    // The empty state's, after the header's.
-    expect(document.activeElement).toBe(
-      screen.getAllByRole('button', { name: 'New workstream' })[1],
-    );
-  });
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: button }),
+      );
+    },
+  );
 
   // Blank page is a deliberate place to put focus; a later removal must not
   // pull it back into the list.
@@ -444,7 +579,8 @@ describe('ProjectView rename', () => {
                 error:
                   'a workstream with this name already exists in this project: "Copy one"',
                 fields: {
-                  '/name': '"Copy one" is already used in this project; enter another',
+                  '/name':
+                    '"Copy one" is already used in this project; enter another',
                 },
               }),
             }
@@ -523,13 +659,14 @@ describe('ProjectView rename', () => {
   // D is an item's Delete: once the last item was gone, Alt+D would delete
   // the project instead. The project has no F2, with nothing selected to
   // press it on.
-  it("gives the header's Delete no letter, and the name no F2", async () => {
+  it("shows the header's Delete as an icon with no letter, and the name no F2", async () => {
     stubDaemon();
     await act(async () => {
       render(view(project));
     });
     const remove = screen.getByRole('button', { name: 'Delete project alpha' });
     expect(remove.title).toBe('Stop tracking this project');
+    expect(remove.textContent).toBe('');
     expect(remove.hasAttribute('data-mnemonic')).toBe(false);
     const title = screen.getByRole('heading', { level: 1, name: 'alpha' });
     expect(title.title).toBe('alpha\n\nDouble-click to rename');
@@ -712,8 +849,7 @@ describe('ProjectView create draft', () => {
 });
 
 describe('ProjectView focus around creating', () => {
-  const opener = () =>
-    screen.getAllByRole('button', { name: 'New workstream' })[0];
+  const opener = () => screen.getByRole('button', { name: 'New workstream' });
   const nameBox = () => screen.findByRole('textbox', { name: 'Name' });
 
   it('keeps New workstream enabled, and asking again refocuses the form', async () => {
@@ -740,6 +876,18 @@ describe('ProjectView focus around creating', () => {
     fireEvent.keyDown(await nameBox(), { key: 'Escape' });
 
     await waitFor(() => expect(document.activeElement).toBe(focused));
+  });
+
+  // The form is in the list, but it is not an item: closing it must not hand
+  // focus to the card holding the tab stop on the way back.
+  it('gives focus back to New workstream on Escape, selecting no card', async () => {
+    stubCreates(() => ({}));
+    await renderLive(project);
+    fireEvent.click(opener());
+    fireEvent.keyDown(await nameBox(), { key: 'Escape' });
+
+    await waitFor(() => expect(document.activeElement).toBe(opener()));
+    expect(document.querySelector('[aria-current="true"]')).toBeNull();
   });
 
   // The placeholder the daemon answered with, and then the real workstream
@@ -1218,7 +1366,9 @@ describe('ProjectView restart with settings', () => {
 
   it('names the session as it is now, and closes once it is gone', async () => {
     stubRestart(unrecorded);
-    const show = await renderLive(withCards(card('w1', 'x', [restartable('s1')])));
+    const show = await renderLive(
+      withCards(card('w1', 'x', [restartable('s1')])),
+    );
     act(() => screen.getAllByRole('listitem')[0].focus());
     await waitFor(() => expect(restartCommand()).toBeDefined());
     await act(async () => restartCommand()?.run());
@@ -1275,7 +1425,9 @@ describe('ProjectView restart with settings', () => {
       undefined,
       new Promise<void>((resolve) => (answer = resolve)),
     );
-    const show = await renderLive(withCards(card('w1', 'x', [restartable('s1')])));
+    const show = await renderLive(
+      withCards(card('w1', 'x', [restartable('s1')])),
+    );
     act(() => screen.getAllByRole('listitem')[0].focus());
     await waitFor(() => expect(restartCommand()).toBeDefined());
     act(() => {

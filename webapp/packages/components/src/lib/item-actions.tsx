@@ -1,4 +1,7 @@
 import { type KeyboardEvent, type MouseEvent, useState } from 'react';
+import controls from './controls.module.css';
+import { cx } from './cx';
+import { EllipsisIcon } from './icons';
 import { closestNavItem } from './list-navigation';
 import { Menu } from './menu-button';
 
@@ -40,13 +43,24 @@ export function runAction(
   return true;
 }
 
+export interface MoreActionsButtonOptions {
+  /** -1 takes it out of the Tab order. */
+  tabIndex?: number;
+  /** Its tooltip; "More actions" when unset. */
+  title?: string;
+  /** The smaller size of a session row's buttons. */
+  compact?: boolean;
+}
+
 /**
  * The focused item's actions as a menu, opened as a context menu is everywhere
  * else. `openOn` takes the item's keydown, Shift+F10, and reports whether it
  * opened the menu; `openOnContextMenu` its contextmenu event, which the menu
  * key and a right-click raise. Either hangs the menu under `anchor`. Focus goes
- * back to the item when the menu closes by keyboard or a choice. What deletes
- * or removes comes last, after a separator.
+ * back to the item when the menu closes by keyboard or a choice.
+ * `moreActionsButton` renders the item's "More actions" button, which hangs
+ * the menu under itself, gets focus back, and is disabled while nothing is
+ * offered. What deletes or removes comes last, after a separator.
  */
 export function useActionsMenu(label: string, actions: readonly ItemAction[]) {
   const [open, setOpen] = useState<{
@@ -102,6 +116,26 @@ export function useActionsMenu(label: string, actions: readonly ItemAction[]) {
     }
   };
 
+  const moreActionsButton = ({
+    tabIndex,
+    title,
+    compact,
+  }: MoreActionsButtonOptions = {}) => (
+    <button
+      type="button"
+      className={cx(controls.bareButton, compact && controls.compact)}
+      tabIndex={tabIndex}
+      onClick={(event) => show(event, event.currentTarget)}
+      disabled={offered.length === 0}
+      aria-label="More actions"
+      aria-haspopup="menu"
+      aria-expanded={Boolean(open)}
+      title={title ?? 'More actions'}
+    >
+      <EllipsisIcon size={16} />
+    </button>
+  );
+
   const menu = open && (
     <Menu
       label={label}
@@ -115,5 +149,5 @@ export function useActionsMenu(label: string, actions: readonly ItemAction[]) {
     />
   );
 
-  return { openOn, openOnContextMenu, menu };
+  return { openOn, openOnContextMenu, moreActionsButton, menu };
 }

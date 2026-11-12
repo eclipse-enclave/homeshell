@@ -100,20 +100,29 @@ describe('useListTabStop', () => {
   const workstream = (id: string) =>
     ({ id, name: id, sessions: [] }) as unknown as Workstream;
 
+  /** `inside`: the list stays on the page, New in it, once it is empty. */
   function List({
     workstreams,
     resetKey = 'p1',
+    inside = false,
   }: {
     workstreams: Workstream[];
     resetKey?: string;
+    inside?: boolean;
   }) {
     const empty = useRef<HTMLButtonElement>(null);
     const list = useListTabStop(workstreams, {
       resetKey,
       emptyFocus: () => empty.current,
     });
-    return workstreams.length > 0 ? (
+    const newButton = (
+      <button ref={empty} type="button">
+        New
+      </button>
+    );
+    return inside || workstreams.length > 0 ? (
       <div {...list.listProps}>
+        {inside && newButton}
         {workstreams.map(({ id }) => (
           <section
             key={id}
@@ -125,9 +134,7 @@ describe('useListTabStop', () => {
         ))}
       </div>
     ) : (
-      <button ref={empty} type="button">
-        New
-      </button>
+      newButton
     );
   }
 
@@ -160,6 +167,15 @@ describe('useListTabStop', () => {
     expect(document.activeElement).toBe(item('one'));
 
     rerender(<List workstreams={[]} />);
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'New' }),
+    );
+  });
+
+  it('focuses New when the last item goes from a list that stays', () => {
+    const { rerender } = render(<List workstreams={[two[0]]} inside />);
+    act(() => item('one').focus());
+    rerender(<List workstreams={[]} inside />);
     expect(document.activeElement).toBe(
       screen.getByRole('button', { name: 'New' }),
     );

@@ -68,19 +68,49 @@
   position: absolute;
 }
 
-.headerActions {
-  display: flex;
-  gap: 0.4rem;
-  align-items: flex-start;
-}
-
-.path {
+.path,
+.emptyText {
   font-size: 0.8rem;
   color: var(--hs-text-muted);
 }
 
-.workstreams {
+.emptyText {
+  margin: 0;
+}
+
+/* The list, and each of its sections: a heading, then its cards. */
+.workstreams,
+.section {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.section + .section {
+  margin-top: 0.75rem;
+}
+
+/* A section's heading line, and the line that stands in for its cards. */
+.sectionHeader,
+.emptySection {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.sectionTitle {
+  composes: capsTitle from './app.module.css';
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.72rem;
+}
+
+.count {
+  font-weight: normal;
+  letter-spacing: normal;
+}
+
+.newWorkstream {
+  margin-left: auto;
 }

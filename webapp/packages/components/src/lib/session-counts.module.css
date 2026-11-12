@@ -1,0 +1,22 @@
+.counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex: none;
+  cursor: default;
+}
+
+.count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--hs-text, #dbe4ee);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+.count[data-kind='waiting'] {
+  color: var(--hs-state-waiting-text, #fbbf24);
+  font-weight: 600;
+}
