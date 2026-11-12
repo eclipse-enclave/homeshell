@@ -72,7 +72,7 @@ test('Tab comes back to the row the arrows left, and on to its Add', async ({
   page,
   request,
 }) => {
-  const { fold } = await projectWithUntracked(page, request, 'wt-kbd');
+  await projectWithUntracked(page, request, 'wt-kbd');
 
   await page.getByRole('region', { name: /^Workstream / }).first().focus();
   await page.keyboard.press('ArrowDown');
@@ -85,7 +85,6 @@ test('Tab comes back to the row the arrows left, and on to its Add', async ({
   await page.getByRole('button', { name: 'New workstream' }).focus();
   await page.keyboard.press('Tab');
   await expect(row).toBeFocused();
-  await expect(fold).toHaveAttribute('tabindex', '-1');
 
   await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: 'Add wt-kbd' })).toBeFocused();

@@ -176,7 +176,9 @@ describe('useListTabStop', () => {
   });
 
   it('keeps the tab stop on an item after the cards that focus went to', () => {
-    const { rerender } = render(<List workstreams={two} trailing={['extra']} />);
+    const { rerender } = render(
+      <List workstreams={two} trailing={['extra']} />,
+    );
     act(() => item('extra').focus());
     rerender(<List workstreams={two} trailing={['extra']} />);
     expect(tabStopItem(document)).toBe(item('extra'));

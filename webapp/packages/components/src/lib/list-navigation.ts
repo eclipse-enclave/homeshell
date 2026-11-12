@@ -168,10 +168,8 @@ function cardItems(workstream: Workstream): string[] {
 interface TabStop {
   id: string;
   index: number;
-  /** The card it is in; unset for a trailing item. */
-  workstreamId?: string;
-  /** Among its card's items. */
-  position?: number;
+  /** The card it is in, and where among its items; unset for a trailing item. */
+  card?: { workstreamId: string; position: number };
 }
 
 /** Every item of the list in page order: the cards' items, then `trailing`. */
@@ -192,7 +190,7 @@ function placeTabStop(
   for (const workstream of workstreams) {
     const position = cardItems(workstream).indexOf(id);
     if (position !== -1) {
-      return { id, index, workstreamId: workstream.id, position };
+      return { id, index, card: { workstreamId: workstream.id, position } };
     }
   }
   return { id, index };
@@ -213,11 +211,11 @@ function tabStopHolder(
   if (!stop) return navIds[0];
   if (navIds.includes(stop.id)) return stop.id;
   const card = workstreams.find(
-    (workstream) => workstream.id === stop.workstreamId,
+    (workstream) => workstream.id === stop.card?.workstreamId,
   );
-  if (card && stop.position !== undefined) {
+  if (card && stop.card) {
     const items = cardItems(card);
-    return items[Math.min(stop.position, items.length - 1)];
+    return items[Math.min(stop.card.position, items.length - 1)];
   }
   return navIds[Math.min(stop.index, navIds.length - 1)];
 }

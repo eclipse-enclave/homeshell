@@ -444,7 +444,9 @@ describe('ProjectView sections', () => {
         -1, -1, 0,
       ]);
       expect(
-        screen.getByRole('button', { name: 'Add wt-a' }).getAttribute('tabindex'),
+        screen
+          .getByRole('button', { name: 'Add wt-a' })
+          .getAttribute('tabindex'),
       ).toBeNull();
     });
 

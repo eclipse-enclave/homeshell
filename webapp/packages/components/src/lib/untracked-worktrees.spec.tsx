@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { UntrackedWorktree } from '@homeshell/model';
 import {
@@ -59,7 +59,7 @@ describe('UntrackedWorktrees', () => {
     expect(items).toHaveLength(3);
     expect(items[0].textContent).toContain('/work/feature');
     // Named after its branch, it does not show the branch twice.
-    expect(items[0].textContent?.match(/feature/g)).toHaveLength(2);
+    expect(within(items[0]).getAllByText('feature')).toHaveLength(1);
     expect(items[0].textContent).toContain('2 sessions');
     expect(items[1].textContent).toContain('detached');
     expect(items[1].textContent).not.toMatch(/session/);
@@ -200,9 +200,12 @@ describe('UntrackedWorktrees', () => {
       },
     );
 
-    it('folded, gives the tab stop of a row to the fold', () => {
-      const { fold } = renderFold({ tabStopId: 'untracked:/work/loose' });
-      expect(fold.tabIndex).toBe(0);
+    it('takes focus when clicked, so the tab stop leaves a row it folds', () => {
+      const { fold } = renderFold();
+      fireEvent.keyDown(fold, { key: 'ArrowRight' });
+      fireEvent.keyDown(fold, { key: 'ArrowRight' });
+      fireEvent.click(fold);
+      expect(document.activeElement).toBe(fold);
     });
 
     it('Enter does nothing while an Add is in flight', () => {

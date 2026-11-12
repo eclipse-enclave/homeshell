@@ -57,14 +57,11 @@ export function UntrackedWorktrees({
   if (worktrees.length === 0) return null;
 
   const blocked = Boolean(adding) || Boolean(disabledReason);
-  const navigable = tabStopId !== undefined;
+  // As WorkstreamCard's tabIndexFor: unset outside a navigable list.
+  const tabIndexFor = (navId: string) =>
+    tabStopId === undefined ? undefined : navId === tabStopId ? 0 : -1;
   const rowTabIndex = (worktree: UntrackedWorktree) =>
-    navigable ? (rowNavId(worktree) === tabStopId ? 0 : -1) : undefined;
-  // Folded away, a row holding the tab stop leaves it to the fold.
-  const foldHoldsStop =
-    tabStopId === FOLD_NAV_ID ||
-    (!expanded && worktrees.some((w) => rowNavId(w) === tabStopId));
-  const foldTabIndex = navigable ? (foldHoldsStop ? 0 : -1) : undefined;
+    tabIndexFor(rowNavId(worktree));
   // The fold and its rows are items of the workstream list's arrow-key tree
   // (see handleListKeyDown), which walks [data-nav-id]: Up and Down reach them
   // from the cards. Right and Left work as on a card and its session rows.
@@ -101,10 +98,15 @@ export function UntrackedWorktrees({
         ref={foldRef}
         type="button"
         className={foldStyles.foldButton}
-        tabIndex={foldTabIndex}
+        tabIndex={tabIndexFor(FOLD_NAV_ID)}
         aria-expanded={expanded}
         data-nav-id={FOLD_NAV_ID}
-        onClick={() => setExpanded((open) => !open)}
+        onClick={(event) => {
+          // Focused, so the list's tab stop leaves a row that folds away
+          // (not every browser focuses a button it clicks).
+          event.currentTarget.focus();
+          setExpanded((open) => !open);
+        }}
         onKeyDown={handleFoldKeyDown}
       >
         <ChevronDownIcon size={14} />
