@@ -5,6 +5,7 @@ import {
   selectProject,
   unique,
 } from './workstream-helpers';
+import { addEmptyProject } from '../projects';
 
 /**
  * The workstream note in the browser: the card renders the actions the daemon
@@ -62,9 +63,7 @@ test('a workstream with no files on the host offers no note', async ({
   request,
 }) => {
   const dir = await tempProjectDir('hs-ui-note-none-');
-  const projectId = (
-    await (await request.post('/api/projects', { data: { path: dir } })).json()
-  ).id;
+  const projectId = await addEmptyProject(request, dir);
   const workstreamName = unique('noteless');
   await request.post(`/api/projects/${projectId}/workstreams`, {
     data: {

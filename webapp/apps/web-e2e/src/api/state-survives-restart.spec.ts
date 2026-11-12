@@ -75,20 +75,9 @@ test.describe('persisted state survives a restart', () => {
     });
     expect(renamed.status).toBe(204);
 
-    const createdWorkstream = await daemon.api(
-      `/api/projects/${projectId}/workstreams`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          providerId: 'core',
-          name: 'in place',
-          config: { strategy: 'in-place' },
-        }),
-      },
-    );
-    expect(createdWorkstream.status).toBe(201);
+    // The default workstream the daemon gives a new project.
     const workstream = await realWorkstream(daemon, projectId);
-    expect(workstream.name).toBe('in place');
+    expect(workstream.provider).toBe('core');
 
     // Killed rather than stopped: the state has to be written before the API
     // answers, not only on a clean shutdown.
@@ -102,7 +91,7 @@ test.describe('persisted state survives a restart', () => {
     expect(after[0].path).toBe(path);
     const restored = after[0].workstreams.find((w) => w.id === workstream.id);
     expect(restored).toBeDefined();
-    expect(restored?.name).toBe('in place');
+    expect(restored?.name).toBe(workstream.name);
     expect(restored?.provider).toBe('core');
 
     await daemon.stop();

@@ -1,6 +1,8 @@
 import { expect, type APIRequestContext } from '@playwright/test';
 
 import { tempProjectDir } from '../fixtures';
+import { isPlaceholderSession } from '../placeholders';
+import { addEmptyProject } from '../projects';
 
 /**
  * Shared setup for the api specs that need a project with a workstream, and
@@ -22,27 +24,25 @@ export async function createProject(
   request: APIRequestContext,
   prefix = 'hs-e2e-',
 ): Promise<string> {
-  return addProject(request, await tempProjectDir(prefix));
-}
-
-/** Adds a project over an existing directory and returns its ID. */
-export async function addProject(
-  request: APIRequestContext,
-  path: string,
-): Promise<string> {
-  const res = await request.post('/api/projects', { data: { path } });
-  expect(res.status()).toBe(201);
-  return (await res.json()).id as string;
+  return addEmptyProject(request, await tempProjectDir(prefix));
 }
 
 export interface RealWorkstream {
   id: string;
   name: string;
+  strategyId?: string;
+  strategy?: string;
   provider: string;
   providerLabel?: string;
   branch: string;
   workingDir?: string;
-  openModes: { id: string; label: string }[];
+  inProjectFolder?: boolean;
+  openModes: {
+    id: string;
+    label: string;
+    opensInBrowser?: boolean;
+    default?: boolean;
+  }[];
   /** The workstream-level actions the daemon offers right now (e.g. the note). */
   actions?: { id: string; label: string; description?: string }[];
   sessions?: ListedSession[];
@@ -76,7 +76,8 @@ export async function awaitRealWorkstream(
 
 /**
  * Creates a workstream via the fake provider, waits for the asynchronous
- * creation to finish, and returns the real workstream's ID.
+ * creation to finish, and returns the real workstream's ID. Found by name, as
+ * the project may hold others (its default one, say).
  */
 export async function createWorkstream(
   request: APIRequestContext,
@@ -87,7 +88,77 @@ export async function createWorkstream(
     data: { providerId: 'fake', name, config: { branch: 'main' } },
   });
   expect(res.status()).toBe(201);
-  return (await awaitRealWorkstream(request, projectId)).id;
+  return (await awaitWorkstreamNamed(request, projectId, name)).id;
+}
+
+/**
+ * Polls until the project lists a real (no longer creating) workstream under
+ * `name`, and returns it. Creation swaps the placeholder for a workstream with
+ * another ID, so it is found by name.
+ */
+export async function awaitWorkstreamNamed(
+  request: APIRequestContext,
+  projectId: string,
+  name: string,
+): Promise<RealWorkstream> {
+  return pollFor(`workstream ${name}`, async () => {
+    const state = await (await request.get('/api/projects')).json();
+    return state.projects
+      ?.find((project: { id: string }) => project.id === projectId)
+      ?.workstreams?.find(
+        (workstream: { id: string; name: string }) =>
+          workstream.name === name && !workstream.id.startsWith('creating-'),
+      ) as RealWorkstream | undefined;
+  });
+}
+
+/**
+ * Starts a fake-provider Claude session in the workstream and returns it once
+ * it is a real session rather than its placeholder.
+ */
+export async function createSession(
+  request: APIRequestContext,
+  projectId: string,
+  workstreamId: string,
+): Promise<ListedSession> {
+  const before = new Set(
+    (await sessionsOf(request, projectId, workstreamId)).map(
+      (session) => session.id,
+    ),
+  );
+  const res = await request.post(
+    `/api/projects/${projectId}/workstreams/${workstreamId}/sessions`,
+    { data: { providerId: 'fake', optionId: 'claude', config: {} } },
+  );
+  expect(res.status()).toBe(202);
+  return pollFor('the new session', async () =>
+    (await sessionsOf(request, projectId, workstreamId)).find(
+      (session) => !isPlaceholderSession(session.id) && !before.has(session.id),
+    ),
+  );
+}
+
+/** The core's create-form strategy property, as the project's form serves it. */
+interface StrategyProperty {
+  enum: string[];
+  enumNames: string[];
+  default: string;
+}
+
+/** The strategy property of the core's create form for the project. */
+export async function coreStrategy(
+  request: APIRequestContext,
+  projectId: string,
+): Promise<StrategyProperty> {
+  const res = await request.get(
+    `/api/projects/${projectId}/workstream-providers`,
+  );
+  expect(res.status()).toBe(200);
+  const providers = await res.json();
+  const core = providers.find(
+    (descriptor: { id: string }) => descriptor.id === 'core',
+  );
+  return core.workstreamSchema.properties.strategy;
 }
 
 /** Polls until `pick` returns something, then returns it. */
@@ -136,6 +207,8 @@ export interface ListedSession {
   placeholderId?: string;
   restartable?: boolean;
   outdatedSettings?: string[];
+  /** When the daemon saw the session end; absent while it is live. */
+  endedAt?: string;
 }
 
 /** The workstream's sessions as GET /api/projects lists them right now. */

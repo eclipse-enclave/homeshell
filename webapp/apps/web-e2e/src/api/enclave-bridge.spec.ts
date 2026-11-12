@@ -9,6 +9,7 @@ import {
   buildEnclaveFixture,
   calls,
   createEnclaveSession,
+  type EnclaveWorkstream,
   fixtureFiles,
   isolatedDaemon,
   observeSession,
@@ -29,10 +30,10 @@ test.describe('Enclave host bridge', () => {
   test('keeps the conversation through bridge/daemon loss and cleans up input, stop, start and exit', async () => {
     test.setTimeout(90_000);
     const daemon = await isolatedDaemon();
-    let project: string | undefined;
+    let removeProject: (() => Promise<void>) | undefined;
     try {
       const ws = await projectAndWorkstream(daemon);
-      project = ws.id;
+      removeProject = ws.remove;
       await createEnclaveSession(daemon.api, ws.base);
       const session = await pollFor('idle Enclave session', async () =>
         (await ws.sessions()).find(
@@ -119,6 +120,12 @@ test.describe('Enclave host bridge', () => {
         fixtureFiles(daemon.fixture, 'container-', 'gateway-'),
       ).toHaveLength(0);
 
+      // A session that ended on its own continues like a stopped one.
+      expect((await daemon.api.post(`${path}/start`)).status()).toBe(204);
+      await expect.poll(countRuns).toBe(3);
+      expect(calls(daemon.fixture, 'continue')).toHaveLength(2);
+      await expect.poll(async () => (await current())?.state).toBe('idle');
+
       expect((await daemon.api.delete(path)).status()).toBe(204);
       await expect.poll(current).toBeUndefined();
       const forbidden = calls(daemon.fixture).filter(
@@ -129,7 +136,7 @@ test.describe('Enclave host bridge', () => {
       );
       expect(forbidden).toEqual([]);
     } finally {
-      if (project) await daemon.api.delete(`/api/projects/${project}`);
+      await removeProject?.();
       await daemon.stop();
     }
   });
@@ -138,11 +145,11 @@ test.describe('Enclave host bridge', () => {
     test.setTimeout(45_000);
     const daemon = await isolatedDaemon();
     const env = { ...process.env, HOMESHELL_ENCLAVE_FIXTURE: daemon.fixture };
-    let project: string | undefined;
+    let removeProject: (() => Promise<void>) | undefined;
     let external: string | undefined;
     try {
       const ws = await projectAndWorkstream(daemon);
-      project = ws.id;
+      removeProject = ws.remove;
       const started = await exec(
         join(binaries, 'enclave'),
         [
@@ -180,7 +187,7 @@ test.describe('Enclave host bridge', () => {
       const leftovers = fixtureFiles(daemon.fixture, 'container-', 'gateway-');
       expect(leftovers.filter((name) => name.includes(managed.id))).toEqual([]);
     } finally {
-      if (project) await daemon.api.delete(`/api/projects/${project}`);
+      await removeProject?.();
       if (external) {
         await exec(join(binaries, 'enclave'), ['stop', external], { env });
       }
@@ -192,10 +199,10 @@ test.describe('Enclave host bridge', () => {
     test.setTimeout(45_000);
     const daemon = await isolatedDaemon();
     const marker = (name: string) => join(daemon.fixture, name);
-    let project: string | undefined;
+    let removeProject: (() => Promise<void>) | undefined;
     try {
       const ws = await projectAndWorkstream(daemon);
-      project = ws.id;
+      removeProject = ws.remove;
       await createIdleSessions(ws, daemon.api, 2);
       const [lost, healthy] = await ws.sessions();
 
@@ -264,7 +271,7 @@ test.describe('Enclave host bridge', () => {
     } finally {
       rmSync(marker('block-inventory'), { force: true });
       rmSync(marker('refuse-inventory'), { force: true });
-      if (project) await daemon.api.delete(`/api/projects/${project}`);
+      await removeProject?.();
       await daemon.stop();
     }
   });
@@ -273,12 +280,12 @@ test.describe('Enclave host bridge', () => {
     test(`SSE state updates continue while another session's ${stalled} is stalled`, async () => {
       test.setTimeout(45_000);
       const daemon = await isolatedDaemon();
-      let project: string | undefined;
+      let removeProject: (() => Promise<void>) | undefined;
       let stream: Awaited<ReturnType<typeof observeSession>> | undefined;
       let block: string | undefined;
       try {
         const ws = await projectAndWorkstream(daemon);
-        project = ws.id;
+        removeProject = ws.remove;
         await createIdleSessions(ws, daemon.api, 2);
         const [lost, healthy] = await ws.sessions();
         stream = await observeSession(daemon, healthy.id);
@@ -323,7 +330,7 @@ test.describe('Enclave host bridge', () => {
       } finally {
         await stream?.close();
         if (block) rmSync(block, { force: true });
-        if (project) await daemon.api.delete(`/api/projects/${project}`);
+        await removeProject?.();
         await daemon.stop();
       }
     });
@@ -333,10 +340,10 @@ test.describe('Enclave host bridge', () => {
     test.setTimeout(45_000);
     const daemon = await isolatedDaemon();
     const blockContinue = join(daemon.fixture, 'block-continue');
-    let project: string | undefined;
+    let removeProject: (() => Promise<void>) | undefined;
     try {
       const ws = await projectAndWorkstream(daemon);
-      project = ws.id;
+      removeProject = ws.remove;
       await createEnclaveSession(daemon.api, ws.base);
       const session = await pollFor('idle Enclave session', async () =>
         (await ws.sessions()).find(
@@ -362,7 +369,7 @@ test.describe('Enclave host bridge', () => {
       expect(calls(daemon.fixture, 'run', 'continue')).toHaveLength(2);
     } finally {
       rmSync(blockContinue, { force: true });
-      if (project) await daemon.api.delete(`/api/projects/${project}`);
+      await removeProject?.();
       await daemon.stop();
     }
   });
@@ -370,11 +377,11 @@ test.describe('Enclave host bridge', () => {
   test('reports refused starts with stderr and leaves no container or gateway', async () => {
     test.setTimeout(45_000);
     const daemon = await isolatedDaemon();
-    let project: string | undefined;
+    let removeProject: (() => Promise<void>) | undefined;
     try {
       writeFileSync(join(daemon.fixture, 'refuse-start'), '');
       const ws = await projectAndWorkstream(daemon);
-      project = ws.id;
+      removeProject = ws.remove;
       await createEnclaveSession(daemon.api, ws.base);
       const session = await pollFor('failed start', async () =>
         (await ws.sessions()).find((s) => s.state === 'error'),
@@ -387,7 +394,7 @@ test.describe('Enclave host bridge', () => {
         fixtureFiles(daemon.fixture, 'container-', 'gateway-'),
       ).toHaveLength(0);
     } finally {
-      if (project) await daemon.api.delete(`/api/projects/${project}`);
+      await removeProject?.();
       await daemon.stop();
     }
   });
@@ -395,11 +402,11 @@ test.describe('Enclave host bridge', () => {
   test('fails a session whose container dies at startup and keeps the container for its logs', async () => {
     test.setTimeout(45_000);
     const daemon = await isolatedDaemon();
-    let project: string | undefined;
+    let removeProject: (() => Promise<void>) | undefined;
     try {
       writeFileSync(join(daemon.fixture, 'crash-on-start'), '');
       const ws = await projectAndWorkstream(daemon);
-      project = ws.id;
+      removeProject = ws.remove;
       await createEnclaveSession(daemon.api, ws.base);
       const session = await pollFor('failed startup', async () =>
         (await ws.sessions()).find((s) => s.state === 'error'),
@@ -413,14 +420,14 @@ test.describe('Enclave host bridge', () => {
       expect(removed.status()).toBe(204);
       expect(containers()).toHaveLength(0);
     } finally {
-      if (project) await daemon.api.delete(`/api/projects/${project}`);
+      await removeProject?.();
       await daemon.stop();
     }
   });
 });
 
 async function createIdleSessions(
-  ws: Awaited<ReturnType<typeof projectAndWorkstream>>,
+  ws: EnclaveWorkstream,
   api: Awaited<ReturnType<typeof isolatedDaemon>>['api'],
   count: number,
 ) {

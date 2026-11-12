@@ -2,7 +2,14 @@ import { basename } from 'node:path';
 import { type APIRequestContext, type Page } from '@playwright/test';
 import { expect, tempProjectDir, test } from '../fixtures';
 import { controlEventStream } from './event-stream';
-import { selectProject } from './workstream-helpers';
+import { openLogs } from './keyboard-helpers';
+import {
+  openMoreActions,
+  selectProject,
+  sessionRows,
+} from './workstream-helpers';
+import { addEmptyProject } from '../projects';
+import { createSession, createWorkstream } from '../api/workstream-helpers';
 
 /**
  * What the UI does when it cannot reach the daemon: every action that would call
@@ -30,56 +37,13 @@ async function projectWithSession(
   request: APIRequestContext,
 ): Promise<{ dirName: string }> {
   const dir = await tempProjectDir('hs-ui-offline-');
-  const created = await request.post('/api/projects', { data: { path: dir } });
-  expect(created.status()).toBe(201);
-  const projectId = (await created.json()).id as string;
+  const projectId = await addEmptyProject(request, dir);
 
-  const res = await request.post(`/api/projects/${projectId}/workstreams`, {
-    data: {
-      providerId: 'fake',
-      name: 'ui-offline',
-      config: { branch: 'main' },
-    },
-  });
-  expect(res.status()).toBe(201);
-
-  const deadline = Date.now() + 5000;
-  let workstreamId = '';
-  while (Date.now() < deadline) {
-    const state = await (await request.get('/api/projects')).json();
-    const ws = state.projects
-      ?.find((p: { id: string }) => p.id === projectId)
-      ?.workstreams?.find((w: { id: string }) => !w.id.startsWith('creating-'));
-    if (ws) {
-      workstreamId = ws.id as string;
-      break;
-    }
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  if (!workstreamId) throw new Error('timed out waiting for the workstream');
-
-  const created2 = await request.post(
-    `/api/projects/${projectId}/workstreams/${workstreamId}/sessions`,
-    { data: { providerId: 'fake', optionId: 'claude', config: {} } },
-  );
-  expect(created2.status()).toBe(202);
-
-  // Wait for the real session (the e2e fake delays startup): a starting
-  // placeholder deliberately offers no per-session actions to assert on.
-  const sessionDeadline = Date.now() + 15_000;
-  while (Date.now() < sessionDeadline) {
-    const state = await (await request.get('/api/projects')).json();
-    const sessions =
-      state.projects
-        ?.find((p: { id: string }) => p.id === projectId)
-        ?.workstreams?.find((w: { id: string }) => w.id === workstreamId)
-        ?.sessions ?? [];
-    if (sessions.some((s: { id: string }) => !s.id.startsWith('starting-'))) {
-      return { dirName: basename(dir) };
-    }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error('timed out waiting for the session');
+  const workstreamId = await createWorkstream(request, projectId, 'ui-offline');
+  // The real session, not its placeholder: a starting placeholder deliberately
+  // offers no per-session actions to assert on.
+  await createSession(request, projectId, workstreamId);
+  return { dirName: basename(dir) };
 }
 
 /**
@@ -177,10 +141,13 @@ test('every daemon-backed action goes disabled while the daemon is unreachable',
     // is no default open and the control is the modes menu alone; the split
     // button's two halves are covered by the card's unit test.
     /^Open workstream [^ ]+$/,
-    /^Delete session/,
   ]) {
     await expect(card.getByRole('button', { name })).toBeDisabled();
   }
+  // The session's menu leaves out what cannot run.
+  await openMoreActions(sessionRows(card).first());
+  await expect(page.getByRole('menuitem', { name: 'Delete' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
   // Text boxes go with the buttons: they exist to feed a request. The session's
   // send-text box is the one reachable without opening a form.
   await card
@@ -205,9 +172,8 @@ test('every daemon-backed action goes disabled while the daemon is unreachable',
 
   // Local controls keep working — the log pane especially, since a dead daemon is
   // exactly when someone opens it.
-  await expect(page.getByRole('button', { name: 'Logs' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Settings' })).toBeEnabled();
-  await page.getByRole('button', { name: 'Logs' }).click();
+  await openLogs(page);
   await expect(
     page.getByRole('button', { name: 'Close logs pane' }),
   ).toBeVisible();

@@ -18,6 +18,7 @@ import { promisify } from 'node:util';
 import { awaitRealWorkstream, sessionsOf } from './api/workstream-helpers';
 import { homeshellBin as binary, scratchDir } from './e2e-env';
 import { isolatedHome, runtimeEnv, trackIsolatedHome } from './isolated-daemon';
+import { addEmptyProject } from './projects';
 
 const exec = promisify(execFile);
 /** The fixture `enclave` CLI and terminal, first on the daemon's PATH. */
@@ -114,9 +115,8 @@ export async function projectAndWorkstream(daemon: {
 }) {
   const path = join(daemon.root, 'project');
   mkdirSync(path);
-  const response = await daemon.api.post('/api/projects', { data: { path } });
-  expect(response.status()).toBe(201);
-  const id = (await response.json()).id as string;
+  // Without its default workstream, so the in-place one below can be made.
+  const id = await addEmptyProject(daemon.api, path);
   const created = await daemon.api.post(`/api/projects/${id}/workstreams`, {
     data: {
       providerId: 'core',
@@ -127,15 +127,27 @@ export async function projectAndWorkstream(daemon: {
   expect(created.status()).toBe(201);
   const ws = await awaitRealWorkstream(daemon.api, id);
   const sessions = () => sessionsOf(daemon.api, id, ws.id);
+  const base = `/api/projects/${id}/workstreams/${ws.id}/sessions`;
   return {
     id,
     ws,
-    base: `/api/projects/${id}/workstreams/${ws.id}/sessions`,
+    base,
     sessions,
     session: async (sessionId: string) =>
       (await sessions()).find((s) => s.id === sessionId),
+    // Removing a project leaves its sessions running, and the daemon's stop
+    // leaves their bridges up, so each session is removed first.
+    remove: async () => {
+      for (const s of await sessions())
+        await daemon.api.delete(`${base}/${s.id}`);
+      await daemon.api.delete(`/api/projects/${id}`);
+    },
   };
 }
+
+export type EnclaveWorkstream = Awaited<
+  ReturnType<typeof projectAndWorkstream>
+>;
 
 // Answers 202 before the container is up; poll for the session's state.
 export async function createEnclaveSession(

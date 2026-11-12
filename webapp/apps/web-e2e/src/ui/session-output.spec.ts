@@ -2,6 +2,8 @@ import { basename } from 'node:path';
 import { type APIRequestContext, type Locator, type Page } from '@playwright/test';
 import { expect, tempProjectDir, test } from '../fixtures';
 import { selectProject } from './workstream-helpers';
+import { addEmptyProject } from '../projects';
+import { createWorkstream } from '../api/workstream-helpers';
 
 /**
  * A session's output has to read as the *session* speaking, never as HomeShell.
@@ -33,37 +35,15 @@ async function sessionWithOutput(
   page: Page,
 ): Promise<Locator> {
   const dir = await tempProjectDir('hs-ui-output-');
-  const created = await request.post('/api/projects', { data: { path: dir } });
-  expect(created.status()).toBe(201);
-  const projectId = (await created.json()).id as string;
+  const projectId = await addEmptyProject(request, dir);
 
-  const madeWs = await request.post(`/api/projects/${projectId}/workstreams`, {
-    data: {
-      providerId: 'fake',
-      name: 'ui-output',
-      config: { branch: 'main' },
-    },
-  });
-  expect(madeWs.status()).toBe(201);
-
-  const deadline = Date.now() + 15_000;
-  let workstreamId = '';
-  while (Date.now() < deadline && !workstreamId) {
-    const state = await (await request.get('/api/projects')).json();
-    workstreamId =
-      state.projects
-        ?.find((p: { id: string }) => p.id === projectId)
-        ?.workstreams?.find(
-          (w: { id: string }) => !w.id.startsWith('creating-'),
-        )?.id ?? '';
-    if (!workstreamId) await new Promise((r) => setTimeout(r, 50));
-  }
-  expect(workstreamId).toBeTruthy();
+  const workstreamId = await createWorkstream(request, projectId, 'ui-output');
 
   await request.post(
     `/api/projects/${projectId}/workstreams/${workstreamId}/sessions`,
     { data: { providerId: 'fake', optionId: 'codex', config: {} } },
   );
+  const deadline = Date.now() + 15_000;
   let sessionId = '';
   while (Date.now() < deadline && !sessionId) {
     const state = await (await request.get('/api/projects')).json();

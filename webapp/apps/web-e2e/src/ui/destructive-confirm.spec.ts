@@ -8,8 +8,7 @@ import { materializedWorkstream, selectProject } from './workstream-helpers';
  * A confirm that destroys something is drawn apart from the accent's harmless
  * primary, and still reads, in both themes.
  */
-const backgroundOf = (button: Locator) =>
-  styleOf(button, 'background-color');
+const backgroundOf = (button: Locator) => styleOf(button, 'background-color');
 
 for (const theme of ['dark', 'light'] as const) {
   test(`destructive confirms look it in the ${theme} theme`, async ({
@@ -26,7 +25,7 @@ for (const theme of ['dark', 'light'] as const) {
     await selectProject(page, dirName);
     const main = page.getByRole('main');
     const primary = await backgroundOf(
-      main.getByRole('button', { name: 'New workstream' }),
+      main.getByRole('button', { name: 'New session' }),
     );
 
     await main

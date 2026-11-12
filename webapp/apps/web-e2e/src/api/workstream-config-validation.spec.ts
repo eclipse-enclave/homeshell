@@ -423,7 +423,11 @@ test('a destination another workstream works in is refused on the path', async (
   expect(
     (
       await request.post(`/api/projects/${projectId}/workstreams`, {
-        data: { providerId: 'core', name: 'here', config: {} },
+        data: {
+          providerId: 'core',
+          name: 'here',
+          config: { strategy: 'in-place' },
+        },
       })
     ).status(),
   ).toBe(201);

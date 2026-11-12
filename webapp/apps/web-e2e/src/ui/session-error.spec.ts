@@ -1,7 +1,13 @@
 import { basename } from 'node:path';
 import { type APIRequestContext, type Page } from '@playwright/test';
 import { expect, tempProjectDir, test } from '../fixtures';
-import { selectProject } from './workstream-helpers';
+import {
+  deleteSession,
+  selectProject,
+  sessionRows,
+} from './workstream-helpers';
+import { addEmptyProject } from '../projects';
+import { createWorkstream } from '../api/workstream-helpers';
 
 /**
  * A session whose creation failed, on the card: the row keeps its place, badges
@@ -14,29 +20,14 @@ async function projectWithWorkstream(
   request: APIRequestContext,
 ): Promise<{ dirName: string; projectId: string; workstreamId: string }> {
   const dir = await tempProjectDir('hs-ui-session-error-');
-  const created = await request.post('/api/projects', { data: { path: dir } });
-  expect(created.status()).toBe(201);
-  const projectId = (await created.json()).id as string;
+  const projectId = await addEmptyProject(request, dir);
 
-  const res = await request.post(`/api/projects/${projectId}/workstreams`, {
-    data: {
-      providerId: 'fake',
-      name: 'ui-session-error',
-      config: { branch: 'main' },
-    },
-  });
-  expect(res.status()).toBe(201);
-
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    const state = await (await request.get('/api/projects')).json();
-    const ws = state.projects
-      ?.find((p: { id: string }) => p.id === projectId)
-      ?.workstreams?.find((w: { id: string }) => !w.id.startsWith('creating-'));
-    if (ws) return { dirName: basename(dir), projectId, workstreamId: ws.id };
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error('timed out waiting for the workstream');
+  const workstreamId = await createWorkstream(
+    request,
+    projectId,
+    'ui-session-error',
+  );
+  return { dirName: basename(dir), projectId, workstreamId };
 }
 
 /** An unknown optionId is accepted (202) and fails in the provider. */
@@ -90,11 +81,13 @@ test('the × on the error removes the session completely', async ({
   const card = await openCard(page, dirName);
 
   await startFailingSession(request, projectId, workstreamId);
-  const remove = card.getByRole('button', { name: /Delete failed session/ });
-  await expect(remove).toBeVisible({ timeout: 15_000 });
+  await expect(card.getByTestId('session-error')).toBeVisible({
+    timeout: 15_000,
+  });
 
   // No confirmation: there is no runtime behind the row to lose.
-  await remove.click();
+  await deleteSession(sessionRows(card));
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // The whole row goes, not just the message — and on the daemon's own state
   // push, which is what makes it survive a reload.
@@ -102,10 +95,7 @@ test('the × on the error removes the session completely', async ({
     timeout: 10_000,
   });
   await expect(card.getByTestId('session-state')).toHaveCount(0);
-  await expect(card.getByTestId('workstream-sessions')).toHaveAttribute(
-    'aria-label',
-    'Sessions: No sessions',
-  );
+  await expect(card.getByTestId('workstream-sessions')).toHaveCount(0);
 
   await page.reload();
   const reloaded = page.getByRole('region', {

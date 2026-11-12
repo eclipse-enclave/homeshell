@@ -5,11 +5,16 @@ import { type Locator, type Page } from '@playwright/test';
  * on: its own background composited over its ancestors'. A helper module, not
  * a spec (see workstream-helpers.ts).
  */
-export async function textContrast(element: Locator): Promise<number> {
-  const layers = await element.evaluate((node) => {
+export async function textContrast(
+  element: Locator,
+  /** The colour to measure: the text's by default, or e.g. a border's. */
+  property: 'color' | 'borderTopColor' = 'color',
+): Promise<number> {
+  const layers = await element.evaluate((node, property) => {
     const view = globalThis as unknown as {
       getComputedStyle: (e: unknown) => {
         color: string;
+        borderTopColor: string;
         backgroundColor: string;
       };
     };
@@ -18,8 +23,8 @@ export async function textContrast(element: Locator): Promise<number> {
     for (let at: Node | null = node as Node; at; at = at.parentElement) {
       backgrounds.push(view.getComputedStyle(at).backgroundColor);
     }
-    return { color: view.getComputedStyle(node).color, backgrounds };
-  });
+    return { color: view.getComputedStyle(node)[property], backgrounds };
+  }, property);
   const parse = (css: string) => {
     const [r, g, b, a = 1] = (css.match(/[\d.]+/g) ?? []).map(Number);
     return { r, g, b, a };

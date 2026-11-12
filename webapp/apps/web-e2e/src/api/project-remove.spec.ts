@@ -1,8 +1,8 @@
 import type { APIRequestContext } from '@playwright/test';
 import { expect, test, tempProjectDir } from '../fixtures';
 import { isPlaceholderSession } from '../placeholders';
+import { addEmptyProject } from '../projects';
 import {
-  addProject,
   createProject,
   createWorkstream,
   pollFor,
@@ -37,7 +37,7 @@ test.describe('project removal API', () => {
     request,
   }) => {
     const path = await tempProjectDir('hs-project-remove-e2e-');
-    const projectId = await addProject(request, path);
+    const projectId = await addEmptyProject(request, path);
     const wsId = await createWorkstream(request, projectId, 'remove');
     const base = `/api/projects/${projectId}/workstreams/${wsId}/sessions`;
     const realSessions = async () =>
@@ -100,7 +100,7 @@ test.describe('project removal API', () => {
       ),
     );
 
-    const again = await addProject(request, path);
+    const again = await addEmptyProject(request, path);
     const found = await pollFor(
       'the sessions left running to be found again',
       async () => {

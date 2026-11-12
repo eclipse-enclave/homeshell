@@ -90,7 +90,9 @@ for (const state of ['unknown', 'starting', 'stopped'] as const) {
         await open.click();
         await expect.poll(() => opens).toBe(1);
       } else {
-        await expect(open).toBeDisabled();
+        // An ended session offers Continue in Open's place.
+        if (state === 'stopped') await expect(open).toHaveCount(0);
+        else await expect(open).toBeDisabled();
         expect(opens).toBe(0);
       }
     } finally {

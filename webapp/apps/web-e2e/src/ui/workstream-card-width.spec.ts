@@ -40,7 +40,7 @@ async function expectWhole(card: Locator, actions: Locator[]) {
 }
 
 /**
- * A narrow window takes its width out of the workstream's name and pills, never
+ * A narrow window takes its width out of the workstream's name and branch, never
  * out of its actions: every one stays whole on screen, wrapping to a line of
  * their own and then onto more.
  */
@@ -79,6 +79,7 @@ test('a narrow window keeps every workstream action in view', async ({
     card.getByRole('button', { name: 'New session' }),
     card.getByRole('button', { name: `Notes for workstream ${name}` }),
     card.getByRole('button', { name: `Delete workstream ${name}` }),
+    card.getByRole('button', { name: 'More actions' }).first(),
   ];
   await expectWhole(card, actions);
   await page.setViewportSize(NARROW);
@@ -120,8 +121,8 @@ test('a narrow window keeps every session action in view', async ({
 });
 
 // The name is no wider than its text, so a short one leaves no gap before its
-// pills.
-test('a short workstream name sits right against its pills', async ({
+// branch.
+test('a short workstream name sits right against its branch', async ({
   page,
   request,
 }) => {
@@ -135,12 +136,15 @@ test('a short workstream name sits right against its pills', async ({
   await loadApp(page);
   await selectProject(page, projectPrefix);
   const card = page.getByRole('region', { name: 'Workstream ab' });
-  const [headingBox, pillBox] = await Promise.all([
+  const [headingBox, branchBox] = await Promise.all([
     box(card.getByRole('heading', { name: 'ab' })),
-    box(card.getByText('Fake Provider', { exact: true })),
+    // The branch with its icon.
+    box(card.getByText('main', { exact: true }).locator('..')),
   ]);
   // No more than the header's gap between them.
-  expect(pillBox.x - (headingBox.x + headingBox.width)).toBeLessThanOrEqual(9);
+  expect(branchBox.x - (headingBox.x + headingBox.width)).toBeLessThanOrEqual(
+    10,
+  );
 });
 
 test('the project name sits against its git pill', async ({

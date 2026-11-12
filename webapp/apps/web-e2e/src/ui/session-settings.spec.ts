@@ -7,7 +7,11 @@ import {
 import { expect, test } from '../fixtures';
 import { pollFor, sessionsOf } from '../api/workstream-helpers';
 import { loadApp } from './keyboard-helpers';
-import { selectProject, workstreamWithSessions } from './workstream-helpers';
+import {
+  selectProject,
+  waitForRealCard,
+  workstreamWithSessions,
+} from './workstream-helpers';
 
 /**
  * A session option's nested settings — the fake's "Sandboxed demo" serves the
@@ -31,9 +35,7 @@ async function emptyCard(page: Page, request: APIRequestContext) {
   const card = page.getByRole('region', {
     name: `Workstream ${created.workstreamName}`,
   });
-  await expect(card.getByTestId('workstream-sessions')).toBeVisible({
-    timeout: 20_000,
-  });
+  await waitForRealCard(card);
   return { ...created, card };
 }
 

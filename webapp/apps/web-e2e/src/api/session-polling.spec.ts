@@ -5,16 +5,17 @@ import {
   type APIRequestContext,
 } from '@playwright/test';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homeshellBin } from '../e2e-env';
+import { projectAndWorkstream } from '../enclave-helpers';
 import {
   disposeIsolatedDaemons,
   isolatedHome,
   runtimeEnv,
   trackIsolatedHome,
 } from '../isolated-daemon';
-import { awaitRealWorkstream, pollFor, sessionsOf } from './workstream-helpers';
+import { pollFor } from './workstream-helpers';
 
 type Daemon = Awaited<ReturnType<typeof startDaemon>>;
 
@@ -145,8 +146,6 @@ async function startScriptedSession(
   ready: (state: string) => boolean = (state) => state === 'running',
   agentFields: Record<string, unknown> = {},
 ) {
-  const projectDir = join(daemon.root, 'project');
-  mkdirSync(projectDir);
   const agent = join(daemon.root, 'scripted-agent');
   writeFileSync(agent, script, { mode: 0o755 });
   const agentResponse = await daemon.api.post('/api/agents', {
@@ -159,32 +158,16 @@ async function startScriptedSession(
     },
   });
   expect(agentResponse.status()).toBe(201);
-  const project = await daemon.api.post('/api/projects', {
-    data: { path: projectDir },
-  });
-  expect(project.status()).toBe(201);
-  const projectId = (await project.json()).id as string;
+  const project = await projectAndWorkstream(daemon);
+  const { base } = project;
   const abort = new AbortController();
   let eventsDone: Promise<void> | undefined;
   const close = async () => {
     abort.abort();
     await eventsDone;
-    await daemon.api.delete(`/api/projects/${projectId}`);
+    await project.remove();
   };
   try {
-    const created = await daemon.api.post(
-      `/api/projects/${projectId}/workstreams`,
-      {
-        data: {
-          providerId: 'core',
-          name: 'polling',
-          config: { strategy: 'in-place' },
-        },
-      },
-    );
-    expect(created.status()).toBe(201);
-    const ws = await awaitRealWorkstream(daemon.api, projectId);
-    const base = `/api/projects/${projectId}/workstreams/${ws.id}/sessions`;
     expect(
       (
         await daemon.api.post(base, {
@@ -193,7 +176,7 @@ async function startScriptedSession(
       ).status(),
     ).toBe(202);
     const session = await pollFor('ready local session', async () =>
-      (await sessionsOf(daemon.api, projectId, ws.id)).find(
+      (await project.sessions()).find(
         (s) => s.provider === 'local' && ready(s.state),
       ),
     );
@@ -244,10 +227,7 @@ async function startScriptedSession(
           })
         ).status(),
       ).toBe(204);
-    const listed = async () =>
-      (await sessionsOf(daemon.api, projectId, ws.id)).find(
-        (s) => s.id === session.id,
-      );
+    const listed = () => project.session(session.id);
     const frame = (
       what: string,
       match: (f: Frame) => boolean,

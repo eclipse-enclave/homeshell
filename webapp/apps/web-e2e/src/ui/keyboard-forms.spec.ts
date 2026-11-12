@@ -6,6 +6,7 @@ import {
   openWorkstreamCard,
   selectEmptyProject,
   unique,
+  waitForRealCard,
 } from './workstream-helpers';
 
 /**
@@ -23,7 +24,7 @@ const TREE: Record<string, string[]> = {
 /** Opens a fresh, empty project's new-workstream form by keyboard. */
 async function openWorkstreamForm(page: Page, request: APIRequestContext) {
   await selectEmptyProject(page, request, 'hs-ui-kbd-form-');
-  await page.getByRole('button', { name: 'New workstream' }).first().focus();
+  await page.getByRole('button', { name: 'New workstream' }).focus();
   await page.keyboard.press('Enter');
   const form = page.getByRole('form', { name: 'New workstream' });
   const name = form.getByLabel('Name');
@@ -40,7 +41,7 @@ test('Escape closes the new-workstream form, back on its opener', async ({
   await page.keyboard.press('Escape');
   await expect(form).toHaveCount(0);
   await expect(
-    page.getByRole('button', { name: 'New workstream' }).first(),
+    page.getByRole('button', { name: 'New workstream' }),
   ).toBeFocused();
 });
 
@@ -85,13 +86,10 @@ test('a workstream created by keyboard alone ends up focused', async ({
   await page.keyboard.type('main');
   await createWorkstreamInForm(page, () => page.keyboard.press('Enter'));
 
-  // The footer is what the real workstream has and its placeholder does not.
   const card = page.getByRole('region', {
     name: `Workstream ${workstreamName}`,
   });
-  await expect(card.getByTestId('workstream-sessions')).toBeVisible({
-    timeout: 20_000,
-  });
+  await waitForRealCard(card);
   await expect(card).toBeFocused();
 });
 

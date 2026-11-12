@@ -2,6 +2,7 @@ import { expect, tempProjectDir, test } from '../fixtures';
 import { type Page } from '@playwright/test';
 import { isPlaceholderSession } from '../placeholders';
 import { createWorkstreamInForm, selectProject } from './workstream-helpers';
+import { addEmptyProject } from '../projects';
 
 // The daemon seed. release-tools is the demo simulator's target, so its state
 // cycles and is not pinned here.
@@ -178,7 +179,9 @@ test('switching the project swaps the workstream panel', async ({ page }) => {
   ).toBeVisible();
 
   await nav.getByRole('button', { name: /notes/ }).click();
-  await expect(page.getByText('No workstreams yet')).toBeVisible();
+  await expect(
+    page.getByText('Nothing works in the project folder.'),
+  ).toBeVisible();
 });
 
 test('streams live demo updates without a reload', async ({ page }) => {
@@ -267,7 +270,7 @@ test('the New workstream and New session actions are functional', async ({
   page,
 }) => {
   await expect(
-    page.getByRole('button', { name: 'New workstream' }).first(),
+    page.getByRole('button', { name: 'New workstream' }),
   ).toBeEnabled();
   // The fake provider supports session creation.
   await expect(
@@ -288,9 +291,12 @@ test('new workstream: creates one via the fake provider', async ({ page }) => {
 
   const nav = page.getByRole('navigation', { name: 'Projects' });
   await nav.getByRole('button', { name: new RegExp(dirName) }).click();
-  await expect(page.getByText('No workstreams yet')).toBeVisible();
+  // It comes with a workstream in place, named after its folder.
+  await expect(
+    page.getByRole('region', { name: `Workstream ${dirName}` }),
+  ).toBeVisible();
 
-  await page.getByRole('button', { name: 'New workstream' }).first().click();
+  await page.getByRole('button', { name: 'New workstream' }).click();
   // Pick the fake provider explicitly: Enclave, where it is installed, also
   // offers to create here and its schema collides on "Name".
   await page.getByRole('radio', { name: 'Fake Provider' }).click();
@@ -314,9 +320,7 @@ test('new session: create one through the UI form', async ({
   const dirName = basename(dir);
 
   // A project and empty workstream via the API, then drive the UI.
-  const projectId = (
-    await (await request.post('/api/projects', { data: { path: dir } })).json()
-  ).id;
+  const projectId = await addEmptyProject(request, dir);
   await request.post(`/api/projects/${projectId}/workstreams`, {
     data: {
       providerId: 'fake',
@@ -349,9 +353,7 @@ test('a session state change reaches a second window without a reload', async ({
   const dir = await tempProjectDir('hs-ui-live-');
   const dirName = basename(dir);
 
-  const projectId = (
-    await (await request.post('/api/projects', { data: { path: dir } })).json()
-  ).id;
+  const projectId = await addEmptyProject(request, dir);
   await request.post(`/api/projects/${projectId}/workstreams`, {
     data: { providerId: 'fake', name: 'live-ws', config: { branch: 'main' } },
   });
@@ -661,9 +663,7 @@ test('rename workstream: inline edit updates the card name', async ({
   const dir = await mkdtemp(join(tmpdir(), 'hs-ui-wsren-'));
   const dirName = basename(dir);
 
-  const projectId = (
-    await (await request.post('/api/projects', { data: { path: dir } })).json()
-  ).id;
+  const projectId = await addEmptyProject(request, dir);
   await request.post(`/api/projects/${projectId}/workstreams`, {
     data: {
       providerId: 'fake',
@@ -737,9 +737,7 @@ test('a workstream offers the one open choice the daemon declares', async ({
   const dirName = basename(dir);
 
   // A throwaway project and fake workstream, so the seed data is left alone.
-  const projectId = (
-    await (await request.post('/api/projects', { data: { path: dir } })).json()
-  ).id;
+  const projectId = await addEmptyProject(request, dir);
   await request.post(`/api/projects/${projectId}/workstreams`, {
     data: { providerId: 'fake', name: 'open-ws', config: { branch: 'main' } },
   });
@@ -768,7 +766,8 @@ test('a workstream offers the one open choice the daemon declares', async ({
   );
   await expect(openAction).toBeVisible();
 
-  // Open leads the header action row, and Delete ends it, as in the menu.
+  // Open leads the header action row, and Delete then More actions end it.
+  // (The meta line's Copy path sits before the row, on the left.)
   const labels = await workstream
     .getByRole('button')
     .evaluateAll((nodes) =>
@@ -777,11 +776,14 @@ test('a workstream offers the one open choice the daemon declares', async ({
           node.getAttribute('aria-label') ?? node.textContent?.trim() ?? '',
       ),
     );
-  const header = labels.slice(
-    0,
-    labels.indexOf('Delete workstream open-ws') + 1,
-  );
+  const header = labels
+    .slice(0, labels.indexOf('More actions') + 1)
+    .filter((label) => label !== 'Copy path');
   expect(header[0]).toBe('Open workstream open-ws');
+  expect(header.slice(-2)).toEqual([
+    'Delete workstream open-ws',
+    'More actions',
+  ]);
   // Then creating, as on every item; no Rename button among them.
   expect(header.indexOf('New session')).toBeGreaterThan(0);
   expect(header).not.toContain('Rename');

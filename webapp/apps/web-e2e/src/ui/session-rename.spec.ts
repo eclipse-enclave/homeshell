@@ -2,6 +2,8 @@ import { basename } from 'node:path';
 import { type APIRequestContext, type Page } from '@playwright/test';
 import { expect, tempProjectDir, test } from '../fixtures';
 import { selectProject } from './workstream-helpers';
+import { addEmptyProject } from '../projects';
+import { createWorkstream } from '../api/workstream-helpers';
 
 /**
  * Renaming a session from the card: the title becomes a text box, Enter commits,
@@ -14,29 +16,9 @@ async function projectWithSession(
   request: APIRequestContext,
 ): Promise<{ dirName: string; projectId: string; workstreamId: string }> {
   const dir = await tempProjectDir('hs-ui-rename-');
-  const created = await request.post('/api/projects', { data: { path: dir } });
-  expect(created.status()).toBe(201);
-  const projectId = (await created.json()).id as string;
+  const projectId = await addEmptyProject(request, dir);
 
-  const res = await request.post(`/api/projects/${projectId}/workstreams`, {
-    data: { providerId: 'fake', name: 'ui-rename', config: { branch: 'main' } },
-  });
-  expect(res.status()).toBe(201);
-
-  let workstreamId = '';
-  const wsDeadline = Date.now() + 5000;
-  while (Date.now() < wsDeadline) {
-    const state = await (await request.get('/api/projects')).json();
-    const ws = state.projects
-      ?.find((p: { id: string }) => p.id === projectId)
-      ?.workstreams?.find((w: { id: string }) => !w.id.startsWith('creating-'));
-    if (ws) {
-      workstreamId = ws.id as string;
-      break;
-    }
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  if (!workstreamId) throw new Error('timed out waiting for the workstream');
+  const workstreamId = await createWorkstream(request, projectId, 'ui-rename');
 
   await request.post(
     `/api/projects/${projectId}/workstreams/${workstreamId}/sessions`,

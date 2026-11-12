@@ -26,7 +26,7 @@ async function openForm(page: Page, request: APIRequestContext) {
   // The demo daemon also registers the fake, and the pick-list remembers a
   // last-used choice.
   await form.getByRole('radio', { name: 'Default' }).click();
-  await form.getByRole('radio', { name: 'worktree' }).click();
+  await form.getByRole('radio', { name: 'Worktree' }).click();
   return { dir, form };
 }
 
@@ -97,7 +97,10 @@ test('a branch left empty is named after the workstream', async ({
   const { dir, form } = await openForm(page, request);
   const suffix = unique('');
   await form.getByLabel('Name').fill(`Fix login bug${suffix}`);
-  await expect(form.getByRole('combobox', { name: 'Branch' })).toHaveValue('');
+  // Left untouched, it shows the branch the daemon derives from the name.
+  await expect(form.getByRole('combobox', { name: 'Branch' })).toHaveValue(
+    `fix-login-bug${suffix}`,
+  );
 
   await createWorkstreamInForm(page, () =>
     form.getByRole('button', { name: /^Create$/ }).click(),

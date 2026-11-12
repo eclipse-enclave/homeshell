@@ -8,8 +8,9 @@ import {
 } from './workstream-helpers';
 
 /**
- * The provider pill on a workstream card: the provider's display name, and none
- * at all for the built-in provider, whose strategy pill already says it all.
+ * The provider on a workstream card: the provider's display name, and none at
+ * all for the built-in provider. The card in the project folder names no kind
+ * either: its section says where it works.
  */
 test('names a non-default provider and leaves the built-in one unmarked', async ({
   page,
@@ -33,7 +34,10 @@ test('names a non-default provider and leaves the built-in one unmarked', async 
   const coreCard = page.getByRole('region', {
     name: `Workstream ${workstreamName}`,
   });
-  await expect(coreCard.getByText('in place', { exact: true })).toBeVisible();
+  await expect(
+    coreCard.getByRole('heading', { name: workstreamName }),
+  ).toBeVisible();
+  await expect(coreCard.getByText('in place', { exact: true })).toHaveCount(0);
   // The built-in provider's display name.
   await expect(coreCard.getByText('Default', { exact: true })).toHaveCount(0);
 });
