@@ -180,7 +180,7 @@ func TestMemorySaverRecordsAndFails(t *testing.T) {
 // so adding one to the domain is a conscious choice at this table.
 func TestSnapshotDropsOnlyLiveState(t *testing.T) {
 	dropped := map[string][]string{
-		"Project":    {"State", "RuntimeState", "Effective"},
+		"Project":    {"State", "RuntimeState", "Effective", "UntrackedWorktrees"},
 		"Workstream": {"ProviderLabel", "Strategy", "InProjectFolder", "State", "RuntimeState", "Effective", "StatusMessage", "OpenModes", "Actions", "PlaceholderID", "CreateFailed"},
 		"Session":    {"State", "Ended", "Preview", "Error", "PlaceholderID", "Restartable", "OutdatedSettings", "ObservationData"},
 	}

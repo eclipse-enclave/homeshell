@@ -550,7 +550,7 @@ func (p *pausingRefresher) Refresh(_ context.Context, _ ProjectRef, ws domain.Wo
 
 // A rename made while a projection pass is in flight outlives the pass, and the
 // next pass moves the branch under it. The store's rules for what a pass keeps
-// are tested with store.ReplaceWorkstreams; this is the reconciler handing over
+// are tested with store.ReplaceProjection; this is the reconciler handing over
 // its read.
 func TestReconcileKeepsARenameMadeDuringThePass(t *testing.T) {
 	st := store.NewTestStore(t, []domain.Project{{ID: "p1", Path: "/p1", Workstreams: []domain.Workstream{

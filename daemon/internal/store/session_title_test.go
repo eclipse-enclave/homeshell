@@ -116,8 +116,8 @@ func TestRenameSurvivesReprojection(t *testing.T) {
 			State: domain.SessionRunning,
 		}},
 	}}
-	if err := s.ReplaceWorkstreams("p1", nil, reprojected); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	if err := s.ReplaceProjection("p1", nil, reprojected, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 
 	if got := sessionTitle(t, s, "sess-1"); got != "Port the CLI" {
@@ -156,11 +156,11 @@ func TestResetSessionTitle(t *testing.T) {
 	}
 	// The provider's title returns with the next cycle — that is when the provider
 	// next says what it is.
-	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
+	if err := s.ReplaceProjection("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/tmp/p1",
 		Sessions: []domain.Session{{ID: "sess-1", Title: "claude session", Agent: "claude", Provider: "enclave"}},
-	}}); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	}}, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	if got := sessionTitle(t, s, "sess-1"); got != "claude session" {
 		t.Errorf("title after a reset = %q; want the provider's own title back", got)
@@ -189,11 +189,11 @@ func TestReprojectionForgetsTitlesOfVanishedSessions(t *testing.T) {
 		t.Fatalf("RenameSession: %v", err)
 	}
 	// The container is torn down: the provider reports nothing for this directory.
-	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
+	if err := s.ReplaceProjection("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/tmp/p1",
 		Sessions: []domain.Session{},
-	}}); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	}}, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	if len(s.sessionTitles) != 0 {
 		t.Errorf("sessionTitles = %+v; want the vanished session's name forgotten", s.sessionTitles)
@@ -202,11 +202,11 @@ func TestReprojectionForgetsTitlesOfVanishedSessions(t *testing.T) {
 	// A session that later reappears under the same ID (a provider that had simply
 	// gone quiet is a different case — the reconciler retains those) is a new
 	// session as far as naming goes.
-	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
+	if err := s.ReplaceProjection("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/tmp/p1",
 		Sessions: []domain.Session{{ID: "sess-1", Title: "claude session", Agent: "claude", Provider: "enclave"}},
-	}}); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	}}, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	if got := sessionTitle(t, s, "sess-1"); got != "claude session" {
 		t.Errorf("title = %q; want the provider's title for a session that came back", got)
@@ -235,8 +235,8 @@ func TestReprojectionKeepsOtherProjectsTitles(t *testing.T) {
 		t.Fatalf("RenameSession: %v", err)
 	}
 	// p1 re-projects with no sessions at all; p2's name must be untouched.
-	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{}); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	if err := s.ReplaceProjection("p1", nil, []domain.Workstream{}, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	if got := sessionTitle(t, s, "sess-2"); got != "the other project" {
 		t.Errorf("other project's title = %q; want it kept", got)
@@ -409,5 +409,64 @@ func TestRenameSessionAllowsItsOwnTitle(t *testing.T) {
 	s := twoSessionStore(t)
 	if err := s.RenameSession("p1", "ws-1", "sess-1", "claude session"); err != nil {
 		t.Errorf("renaming a session to its own title: %v", err)
+	}
+}
+
+// Project hands out one project as Projects does: a copy, down to its sessions.
+func TestProjectReturnsACopyOfOneProject(t *testing.T) {
+	s := titledStore(t)
+	got, err := s.Project("p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got.Workstreams[0].Sessions[0].Title = "scribbled"
+	if title := sessionTitle(t, s, "sess-1"); title != "claude session" {
+		t.Errorf("a caller's edit reached the store: title %q", title)
+	}
+	if _, err := s.Project("nope"); err == nil {
+		t.Error("Project of an unknown ID succeeded, want an error")
+	}
+}
+
+// A projection computed before a workstream was removed does not bring it
+// back; the one after that decides alone.
+func TestReplaceProjectionDoesNotRestoreAWorkstreamRemovedMeanwhile(t *testing.T) {
+	s := titledStore(t)
+	inFlight := s.Projects()[0].Workstreams
+	if err := s.RemoveWorkstream("p1", "ws-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceProjection("p1", nil, inFlight, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Projects()[0].Workstreams; len(got) != 0 {
+		t.Fatalf("workstreams = %+v, want the removed one not brought back", got)
+	}
+	if err := s.ReplaceProjection("p1", nil, s.Projects()[0].Workstreams, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddWorkstream("p1", domain.Workstream{ID: "ws-1", Name: "ws", WorkingDir: "/tmp/p1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceProjection("p1", nil, s.Projects()[0].Workstreams, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Projects()[0].Workstreams; len(got) != 1 {
+		t.Errorf("workstreams = %+v, want one listed again kept", got)
+	}
+}
+
+// A projection computed before a workstream was added does not drop it.
+func TestReplaceProjectionKeepsAWorkstreamAddedMeanwhile(t *testing.T) {
+	s := titledStore(t)
+	inFlight := s.Projects()[0].Workstreams
+	if err := s.AddWorkstream("p1", domain.Workstream{ID: "ws-2", Name: "two", WorkingDir: "/tmp/p1-two"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceProjection("p1", nil, inFlight, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Projects()[0].Workstreams; len(got) != 2 {
+		t.Errorf("workstreams = %+v, want ws-2, added meanwhile, kept", got)
 	}
 }

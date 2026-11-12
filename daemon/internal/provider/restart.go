@@ -604,7 +604,9 @@ func (s *Service) beginProjectRemoval(projectID string) {
 // it was started in: a container listed under two projects sharing a directory
 // keeps the other project's restart, and one started in this project is left to
 // finish, as the other project still lists its session; it then shows in the
-// project the store moved the session's records to.
+// project the store moved the session's records to. One the other project only
+// hides on an untracked worktree is cancelled: no workstream there could show
+// how it went.
 //
 // Under s.mu, store call included, so a restart is either cancelled before it
 // runs or caught running (markRestartRunning), and records its launch under a
@@ -621,7 +623,7 @@ func (s *Service) removeProjectFromStore(projectID string) ([]restartInFlight, e
 		if restart.ref.ProjectID != projectID {
 			continue
 		}
-		if home, ok := rehomed[sessionID]; ok {
+		if home, ok := rehomed[sessionID]; ok && !home.Hidden() {
 			// Its slot moves with it, for the workstream it now shows in to count it.
 			if restart.reservedSlot {
 				s.releaseSlotLocked(concurrencyKey(restart.ref.ProjectID, restart.ref.WorkstreamID))

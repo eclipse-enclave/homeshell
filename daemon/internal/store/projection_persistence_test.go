@@ -28,7 +28,7 @@ func TestPreviewAndStateProjectionDoesNotRewriteStateFile(t *testing.T) {
 					}},
 				}}
 			}
-			if err := s.ReplaceWorkstreams("p", nil, projection("session", "first", domain.SessionRunning)); err != nil {
+			if err := s.ReplaceProjection("p", nil, projection("session", "first", domain.SessionRunning), nil); err != nil {
 				t.Fatal(err)
 			}
 			written, err := os.Stat(path)
@@ -36,7 +36,7 @@ func TestPreviewAndStateProjectionDoesNotRewriteStateFile(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, state := range []domain.SessionState{domain.SessionRunning, domain.SessionIdle, domain.SessionWaiting} {
-				if err := s.ReplaceWorkstreams("p", nil, projection("session", string(state)+" preview", state)); err != nil {
+				if err := s.ReplaceProjection("p", nil, projection("session", string(state)+" preview", state), nil); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -51,7 +51,7 @@ func TestPreviewAndStateProjectionDoesNotRewriteStateFile(t *testing.T) {
 			if got := s.Projects()[0].Workstreams[0].Sessions[0]; got.State != domain.SessionWaiting || got.Preview != "waiting preview" {
 				t.Fatalf("live projection not updated: %+v", got)
 			}
-			if err := s.ReplaceWorkstreams("p", nil, projection("new title", "latest", domain.SessionIdle)); err != nil {
+			if err := s.ReplaceProjection("p", nil, projection("new title", "latest", domain.SessionIdle), nil); err != nil {
 				t.Fatal(err)
 			}
 			restored, err := persist.LoadState(path)
@@ -100,7 +100,7 @@ func TestOnlyDurableFieldsRewriteStateFile(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "state.json")
 			s := New([]domain.Project{{ID: "p", Name: "project", Path: "/tmp/p"}}, persist.NewFileSaver(path))
-			if err := s.ReplaceWorkstreams("p", nil, base()); err != nil {
+			if err := s.ReplaceProjection("p", nil, base(), nil); err != nil {
 				t.Fatal(err)
 			}
 			before, err := os.Stat(path)
@@ -109,7 +109,7 @@ func TestOnlyDurableFieldsRewriteStateFile(t *testing.T) {
 			}
 			next := base()
 			tc.change(&next[0], &next[0].Sessions[0])
-			if err := s.ReplaceWorkstreams("p", nil, next); err != nil {
+			if err := s.ReplaceProjection("p", nil, next, nil); err != nil {
 				t.Fatal(err)
 			}
 			after, err := os.Stat(path)

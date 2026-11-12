@@ -360,6 +360,11 @@ type ProjectRef struct {
 	FolderTaken bool
 }
 
+// projectRefOf is the reference to project a provider is handed.
+func projectRefOf(project domain.Project) ProjectRef {
+	return ProjectRef{ID: project.ID, Path: project.Path, GitBacked: project.GitBacked}
+}
+
 // WorkstreamRef identifies a workstream within a project.
 type WorkstreamRef struct {
 	ProjectID    string
@@ -398,6 +403,11 @@ type CreateRequest struct {
 	WorkingDirUser func(dir string) string
 	Config         json.RawMessage // user-supplied values, valid against the provider's schema
 	OnProgress     func(string)    // optional callback for intermediate status updates
+	// HoldClaim, when set, is handed the release of the folder the provider holds while it creates
+	// there, and the caller releases it once the workstream is stored or the create failed. Unset, the
+	// provider releases it as Create returns. Why: until stored, no workstream claims the folder, and a
+	// survey in between would suggest it.
+	HoldClaim func(release func())
 }
 
 // Capabilities is the data-only capability declaration. Behavioural flags are

@@ -740,6 +740,39 @@ func TestCoreCreatesClaimDistinctManagedDirs(t *testing.T) {
 	}
 }
 
+// A create given a path holds it while it runs, so a survey does not suggest
+// the worktree being made there, and lets go of it however it ends.
+func TestCoreCreateReleasesTheClaimOnAPath(t *testing.T) {
+	tests := []struct {
+		name      string
+		gitBacked bool
+		wantErr   bool
+	}{
+		{"created", true, false},
+		{"failed", false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &core{root: t.TempDir()}
+			dest := filepath.Join(t.TempDir(), "wt")
+			config, err := json.Marshal(map[string]string{"strategy": "worktree", "branch": "wt-a", "path": dest})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = provider.Create(context.Background(), CreateRequest{
+				Project: ProjectRef{Path: gitProject(t), GitBacked: tt.gitBacked},
+				Config:  config,
+			})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Create: err = %v; want error %v", err, tt.wantErr)
+			}
+			if len(provider.claimed) != 0 {
+				t.Errorf("claims left after the create: %v", provider.claimed)
+			}
+		})
+	}
+}
+
 // A branch derived from a long name is capped, at a separator where one is near
 // the end, and keeps the number a name ends in; one typed is kept as it is.
 func TestCoreNameAndBranchCapsADerivedBranch(t *testing.T) {

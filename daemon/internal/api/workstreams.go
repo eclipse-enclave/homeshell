@@ -15,6 +15,9 @@ func init() {
 	register("POST /api/projects/{projectId}/default-workstream", func(deps Deps) http.HandlerFunc {
 		return addDefaultWorkstreamHandler(deps)
 	})
+	register("POST /api/projects/{projectId}/worktree-workstreams", func(deps Deps) http.HandlerFunc {
+		return addUntrackedWorktreeHandler(deps)
+	})
 	register("POST /api/projects/{projectId}/workstream-draft", func(deps Deps) http.HandlerFunc {
 		return workstreamDraftHandler(deps)
 	})
@@ -73,6 +76,35 @@ func addDefaultWorkstreamHandler(deps Deps) http.HandlerFunc {
 			return
 		}
 		writeJSON(writer, http.StatusCreated, created)
+	}
+}
+
+// addUntrackedWorktreeHandler makes a workstream of one of a project's
+// untracked worktrees, the one at the body's path.
+func addUntrackedWorktreeHandler(deps Deps) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		if deps.Providers == nil {
+			jsonError(writer, "no providers are available", http.StatusServiceUnavailable)
+			return
+		}
+		var body struct {
+			Path string `json:"path"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			jsonError(writer, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		path := strings.TrimSpace(body.Path)
+		if path == "" {
+			jsonError(writer, "path must not be empty", http.StatusBadRequest)
+			return
+		}
+		added, err := deps.Providers.AddUntrackedWorktree(request.Context(), request.PathValue("projectId"), path)
+		if err != nil {
+			writeProviderError(writer, err)
+			return
+		}
+		writeJSON(writer, http.StatusCreated, added)
 	}
 }
 

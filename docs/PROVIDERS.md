@@ -72,6 +72,7 @@ Capabilities are what clients gate on. Two kinds:
 | `DraftResolver` | Workstream | Names and fills what a blank create would derive |
 | `StrategyTeller` | Workstream | A create's strategy, for its placeholder to carry |
 | `Refresher` | Workstream | Brings a workstream up to date on each projection, e.g. its branch |
+| `FolderSurveyor` | Workstream | Lists folders; says which are untracked and which workstreams lost theirs |
 | `WorkstreamStartStopper` | Workstream | Only the fake has it and the daemon never calls it; `startStop` is false |
 
 - Why `ConfigValidator`: JSON Schema cannot state git's branch-name rules, and a rule checked in
@@ -181,6 +182,17 @@ strategies ([CONTEXT.md](../CONTEXT.md#working-directory)) through `provider/wor
   core gave (`coreCreatorData.GivenName`: the branch, or the folder's or a numbered name where the
   branch was missing or taken) and no other workstream in the project has it; a renamed
   workstream keeps its name. A detached HEAD clears the branch and keeps the name.
+- **Untracked worktrees.** Core is a `FolderSurveyor`: one `git worktree list` per project per
+  refresh (bounded to 500 ms–1 s; an Add's own listing to 5 s, as a user waits on it). Every entry
+  but git's first, the main worktree, whose folder is there and that no project or workstream
+  holds, nor a create in flight, is suggested, named after its branch or, detached, its folder. A
+  create holds its folder until its workstream is stored (`CreateRequest.HoldClaim`), so a pass in
+  between does not suggest it. A listing without even the main worktree counts as failed
+  (`git.LinkedWorktrees`), so it vanishes nothing. A `worktree` workstream vanishes once its folder
+  is unlisted or deleted. A folder only out of reach (git keeps it registered, e.g. on an unmounted
+  drive) is not suggested, and its workstream stays. Adding a suggestion (`TrackFolder`) creates
+  nothing on disk and makes a `worktree` workstream like a created one, its name numbered past
+  those taken (`name-2`, …).
 - Removing an `in-place` workstream never deletes the project directory; `worktree` needs a
   git-backed project.
 - Managed worktree and copy directories go under the `workstreams.location` setting, read live,

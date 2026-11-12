@@ -19,6 +19,7 @@ type stubSessionProvider struct {
 	discoverErr    error
 	caps           Capabilities
 	sessionSchemas []SessionSchemaOption
+	removed        []string // the session IDs RemoveSession was asked for
 }
 
 func (s *stubSessionProvider) ID() string    { return s.id }
@@ -38,7 +39,10 @@ func (s *stubSessionProvider) CreateSession(_ context.Context, _ CreateSessionRe
 	return domain.Session{}, nil
 }
 
-func (s *stubSessionProvider) RemoveSession(_ context.Context, _ SessionRef) error { return nil }
+func (s *stubSessionProvider) RemoveSession(_ context.Context, ref SessionRef) error {
+	s.removed = append(s.removed, ref.SessionID)
+	return nil
+}
 
 func (s *stubSessionProvider) SessionState(context.Context, SessionRef) (domain.Session, error) {
 	return domain.Session{}, nil

@@ -681,7 +681,7 @@ func TestRefreshGitBackedRejectsUnknownID(t *testing.T) {
 		t.Error("unknown project not rejected")
 	}
 }
-func TestReplaceWorkstreamsPreservesSessionProviderData(t *testing.T) {
+func TestReplaceProjectionPreservesSessionProviderData(t *testing.T) {
 	providerData := json.RawMessage(`{"pid":42}`)
 	seed := []domain.Project{{
 		ID:   "p1",
@@ -706,7 +706,7 @@ func TestReplaceWorkstreamsPreservesSessionProviderData(t *testing.T) {
 
 	// Replace workstreams with the same set — simulates a refresh cycle.
 	replacement := seed[0].Workstreams
-	if err := store.ReplaceWorkstreams("p1", nil, replacement); err != nil {
+	if err := store.ReplaceProjection("p1", nil, replacement, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -760,12 +760,12 @@ func TestSnapshotHoldsRealWorkstreamsAndNoPlaceholders(t *testing.T) {
 	same := func() []domain.Workstream {
 		return []domain.Workstream{cloneWorkstream(real), {ID: "ws-2", Name: "other", Provider: "core", StrategyID: "in-place", WorkingDir: "/p1/other"}}
 	}
-	if err := s.ReplaceWorkstreams("p1", nil, same()); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	if err := s.ReplaceProjection("p1", nil, same(), nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	saves := saver.Saves
-	if err := s.ReplaceWorkstreams("p1", nil, same()); err != nil {
-		t.Fatalf("ReplaceWorkstreams(again): %v", err)
+	if err := s.ReplaceProjection("p1", nil, same(), nil); err != nil {
+		t.Fatalf("ReplaceProjection(again): %v", err)
 	}
 	if saver.Saves != saves {
 		t.Errorf("an unchanged projection saved %d times, want none", saver.Saves-saves)
@@ -781,8 +781,8 @@ func TestSnapshotHoldsRealWorkstreamsAndNoPlaceholders(t *testing.T) {
 	}
 	withoutSession := same()
 	withoutSession[0].Sessions = nil
-	if err := s.ReplaceWorkstreams("p1", nil, withoutSession); err != nil {
-		t.Fatalf("ReplaceWorkstreams(without session): %v", err)
+	if err := s.ReplaceProjection("p1", nil, withoutSession, nil); err != nil {
+		t.Fatalf("ReplaceProjection(without session): %v", err)
 	}
 	if _, ok := saver.Last.SessionTitles["sess-1"]; ok {
 		t.Error("a title whose session is gone survived in the snapshot")
@@ -868,8 +868,8 @@ func TestRestoreRoundTrips(t *testing.T) {
 	if err := s.AddProject(&project); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/alpha",
-		Sessions: []domain.Session{{ID: "sess-1", Title: "t", Agent: "claude", Provider: "enclave", State: domain.SessionRunning}}}}); err != nil {
+	if err := s.ReplaceProjection("p1", nil, []domain.Workstream{{ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/alpha",
+		Sessions: []domain.Session{{ID: "sess-1", Title: "t", Agent: "claude", Provider: "enclave", State: domain.SessionRunning}}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RenameSession("p1", "ws-1", "sess-1", "named"); err != nil {
@@ -904,7 +904,7 @@ func endedAtWorkstream(state domain.SessionState) domain.Workstream {
 // observeEndedAt reports state for s1 and returns the EndedAt the store keeps.
 func observeEndedAt(t *testing.T, s *Store, state domain.SessionState) *time.Time {
 	t.Helper()
-	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{endedAtWorkstream(state)}); err != nil {
+	if err := s.ReplaceProjection("p1", nil, []domain.Workstream{endedAtWorkstream(state)}, nil); err != nil {
 		t.Fatal(err)
 	}
 	return s.Projects()[0].Workstreams[0].Sessions[0].EndedAt
@@ -919,7 +919,7 @@ var (
 	stampClock   = time.Date(2026, 6, 7, 8, 9, 10, 0, time.UTC)
 )
 
-func TestReplaceWorkstreamsStampsEndedAt(t *testing.T) {
+func TestReplaceProjectionStampsEndedAt(t *testing.T) {
 	tests := []struct {
 		name      string
 		before    domain.SessionState // "": the session is new to this projection
@@ -949,7 +949,7 @@ func TestReplaceWorkstreamsStampsEndedAt(t *testing.T) {
 			s.now = func() time.Time { return stampClock }
 			workstream := endedAtWorkstream(tt.after)
 			workstream.Sessions[0].EndedAt = tt.reported
-			if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{workstream}); err != nil {
+			if err := s.ReplaceProjection("p1", nil, []domain.Workstream{workstream}, nil); err != nil {
 				t.Fatal(err)
 			}
 			if got := s.Projects()[0].Workstreams[0].Sessions[0].EndedAt; !sameTime(got, tt.want) {
@@ -973,7 +973,7 @@ func TestEndedAtStampDoesNotMove(t *testing.T) {
 	}
 	select {
 	case event := <-events:
-		t.Errorf("an identical ReplaceWorkstreams broadcast %q", event.Type)
+		t.Errorf("an identical ReplaceProjection broadcast %q", event.Type)
 	default:
 	}
 }
@@ -1018,7 +1018,7 @@ func TestRestoredSessionKeepsItsPersistedEnd(t *testing.T) {
 		// stored session as is, with the projection's derived fields filled in.
 		carried := s.Projects()[0].Workstreams
 		carried[0].Sessions[0].Restartable = true
-		if err := s.ReplaceWorkstreams("p1", nil, carried); err != nil {
+		if err := s.ReplaceProjection("p1", nil, carried, nil); err != nil {
 			t.Fatal(err)
 		}
 		if got := observeEndedAt(t, s, domain.SessionStopped); !sameTime(got, &persistedEnd) {
@@ -1041,7 +1041,7 @@ func TestRestoredSessionKeepsItsPersistedEnd(t *testing.T) {
 // A projection is derived from a read of the store. What changed in the store
 // since that read is newer than the projection and is kept; what nobody changed
 // is the projection's to settle.
-func TestReplaceWorkstreamsKeepsChangesSinceTheRead(t *testing.T) {
+func TestReplaceProjectionKeepsChangesSinceTheRead(t *testing.T) {
 	seed := func() []domain.Project {
 		return []domain.Project{{ID: "p1", Path: "/p1", Workstreams: []domain.Workstream{{
 			ID: "ws1", Name: "feature", Branch: "feature", WorkingDir: "/p1", StatusMessage: "Restarting failed",
@@ -1164,8 +1164,8 @@ func TestReplaceWorkstreamsKeepsChangesSinceTheRead(t *testing.T) {
 			projected := s.Projects()[0].Workstreams
 			projected[0].Name, projected[0].Branch = "main", "main"
 			tt.change(t, s)
-			if err := s.ReplaceWorkstreams("p1", read, projected); err != nil {
-				t.Fatalf("ReplaceWorkstreams: %v", err)
+			if err := s.ReplaceProjection("p1", read, projected, nil); err != nil {
+				t.Fatalf("ReplaceProjection: %v", err)
 			}
 			tt.check(t, s)
 		})

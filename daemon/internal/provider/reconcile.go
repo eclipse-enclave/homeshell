@@ -5,7 +5,9 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"log/slog"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +20,17 @@ import (
 // never drops one.
 func isPlaceholder(ws domain.Workstream) bool {
 	return strings.HasPrefix(ws.ID, PlaceholderIDPrefix)
+}
+
+// adoptedIDPrefix marks a workstream the reconciler adopted for sessions found
+// in a folder no workstream claimed (adoptedWorkstreamID).
+const adoptedIDPrefix = "disc-"
+
+// isAdopted reports whether workstream is a workstream the reconciler adopted. It does
+// not claim its folder: a folder that turns out to be an untracked worktree is
+// suggested instead, and the adopted workstream dropped.
+func isAdopted(workstream domain.Workstream) bool {
+	return strings.HasPrefix(workstream.ID, adoptedIDPrefix)
 }
 
 // Reconciler keeps the store's workstreams in sync with session-provider state:
@@ -38,39 +51,68 @@ type Reconciler struct {
 	// and sessions (open modes, materialization, restartability). The owning
 	// Service supplies it; nil leaves them empty.
 	annotate func(projectID string, workstreams []domain.Workstream)
-	// projectLocks serializes projection passes per project: each ends in
-	// ReplaceWorkstreams, which writes a whole list derived from its own read, so
-	// two interleaved passes over one project would have the later revert the
-	// earlier. Per project rather than global, so a reconcile triggered by an API
-	// call does not queue behind an unrelated project's provider calls.
-	locksMu      sync.Mutex
-	projectLocks map[string]*sync.Mutex
+	// projects holds what passes keep of each project (projectState).
+	projectsMu sync.Mutex
+	projects   map[string]*projectState
+	// cachedListings caches each FolderSurveyor's folder listing of each project.
+	cachedListings *listingCache
+	// retire starts removing a workstream whose folder vanished, unless a
+	// removal of it is under way. Passes keep it listed until the removal drops
+	// its record. The owning Service supplies it; nil leaves it listed.
+	retire func(ctx context.Context, ref WorkstreamRef)
 }
 
-// projectLock returns the mutex guarding projection passes for a project.
-func (r *Reconciler) projectLock(projectID string) *sync.Mutex {
-	r.locksMu.Lock()
-	defer r.locksMu.Unlock()
-	if r.projectLocks == nil {
-		r.projectLocks = map[string]*sync.Mutex{}
+// projectState is what the reconciler keeps of a project between passes.
+type projectState struct {
+	// passLock serializes projection passes over the project: each ends in
+	// ReplaceProjection, which writes a whole list derived from its own read, so
+	// two interleaved passes would have the later revert the earlier. Per project
+	// rather than global, so a reconcile triggered by an API call does not queue
+	// behind an unrelated project's provider calls.
+	passLock sync.Mutex
+	// firstSeen is when a pass first saw each of the project's workstreams, by
+	// ID; held under passLock.
+	firstSeen map[string]time.Time
+}
+
+// sight stamps the workstreams a pass sees for the first time with now, drops
+// those gone, and returns when each was first seen. Called with passLock held.
+func (ps *projectState) sight(workstreams []domain.Workstream) map[string]time.Time {
+	now := time.Now()
+	present := map[string]bool{}
+	for _, workstream := range workstreams {
+		present[workstream.ID] = true
+		if _, seen := ps.firstSeen[workstream.ID]; !seen {
+			ps.firstSeen[workstream.ID] = now
+		}
 	}
-	lock, ok := r.projectLocks[projectID]
+	maps.DeleteFunc(ps.firstSeen, func(workstreamID string, _ time.Time) bool { return !present[workstreamID] })
+	return ps.firstSeen
+}
+
+// projectState returns what passes keep of a project.
+func (r *Reconciler) projectState(projectID string) *projectState {
+	r.projectsMu.Lock()
+	defer r.projectsMu.Unlock()
+	state, ok := r.projects[projectID]
 	if !ok {
-		lock = &sync.Mutex{}
-		r.projectLocks[projectID] = lock
+		state = &projectState{firstSeen: map[string]time.Time{}}
+		r.projects[projectID] = state
 	}
-	return lock
+	return state
 }
 
 // NewReconciler builds a reconciler. A poll of 0 disables periodic polling
 // (the reconciler then refreshes only on explicit calls and Sink.Changed).
 func NewReconciler(st *store.Store, reg *Registry, poll time.Duration) *Reconciler {
 	return &Reconciler{
-		store:        st,
-		registry:     reg,
-		poll:         poll,
-		refreshEvery: 2 * time.Second,
-		trigger:      make(chan struct{}, 1),
+		store:          st,
+		registry:       reg,
+		poll:           poll,
+		refreshEvery:   2 * time.Second,
+		trigger:        make(chan struct{}, 1),
+		projects:       map[string]*projectState{},
+		cachedListings: newListingCache(),
 	}
 }
 
@@ -130,169 +172,224 @@ func (r *Reconciler) reconcileOnly(ctx context.Context, only dirtySet) {
 		return
 	}
 	for _, project := range r.store.Projects() {
-		r.reconcileProjectOnly(ctx, project, only)
+		r.reconcileProjectOnly(ctx, projectRefOf(project), only)
 	}
 	r.store.RetryUnsavedWrite()
 }
 
 // ReconcileProject reconciles a single project by ID.
 func (r *Reconciler) ReconcileProject(ctx context.Context, projectID string) error {
-	for _, project := range r.store.Projects() {
-		if project.ID == projectID {
-			r.reconcileProject(ctx, project)
-			return nil
-		}
+	project, err := r.store.Project(projectID)
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("project %q not found", projectID)
+	r.reconcileProjectOnly(ctx, projectRefOf(project), dirtySet{all: true})
+	return nil
 }
 
-func (r *Reconciler) reconcileProject(ctx context.Context, project domain.Project) {
-	r.reconcileProjectOnly(ctx, project, dirtySet{all: true})
+// reconcileProjectOnly lists the project's folders, projects it, then has the
+// workstreams whose folder vanished retired. Why around the pass: listing runs
+// git and retiring is service work, and neither must hold up the pass lock.
+// Listing first also means a workstream the pass sees for the first time is
+// stamped after the listing began, so that listing cannot vanish it.
+func (r *Reconciler) reconcileProjectOnly(ctx context.Context, project ProjectRef, only dirtySet) {
+	listings, listErr := r.listings(ctx, project, r.listing)
+	vanished := r.projectPass(ctx, project, only, listings, listErr)
+	if r.retire == nil {
+		return
+	}
+	for _, workstreamID := range vanished {
+		r.retire(ctx, WorkstreamRef{ProjectID: project.ID, WorkstreamID: workstreamID})
+	}
 }
 
-func (r *Reconciler) reconcileProjectOnly(ctx context.Context, project domain.Project, only dirtySet) {
-	lock := r.projectLock(project.ID)
-	lock.Lock()
-	defer lock.Unlock()
-	ref := ProjectRef{ID: project.ID, Path: project.Path, GitBacked: project.GitBacked}
+// discovery is what the session providers reported in one pass.
+type discovery struct {
+	// sessions are the sessions reported, by the cleaned folder they run in.
+	sessions map[string][]domain.Session
+	// refreshed are the providers that reported, so one that hit a transient
+	// error does not flush its sessions from the store.
+	refreshed map[string]bool
+	// superseded are the IDs of sessions reported from a folder: a fresh report
+	// supersedes any retained session with the same ID, wherever it sits, so an
+	// ID cannot land in the result set twice. Empty-dir reports are excluded:
+	// neither pass attaches them anywhere, so letting them supersede would drop
+	// the stored session outright.
+	superseded map[string]bool
+}
 
-	// Gather the sessions every available session provider observes, keyed by
-	// the cleaned working directory they run in. refreshed records which
-	// providers reported this cycle, so a provider that hit a transient error
-	// does not flush its sessions from the store.
-	refreshed := map[string]bool{}
-	discovered := map[string][]domain.Session{}
-	for _, p := range r.registry.SessionProviders() {
-		if !only.has(p.ID()) {
+// discover gathers the sessions every available session provider in only
+// observes in the project.
+func (r *Reconciler) discover(ctx context.Context, project ProjectRef, only dirtySet) discovery {
+	found := discovery{
+		sessions:   map[string][]domain.Session{},
+		refreshed:  map[string]bool{},
+		superseded: map[string]bool{},
+	}
+	for _, sessionProvider := range r.registry.SessionProviders() {
+		if !only.has(sessionProvider.ID()) {
 			continue
 		}
-		available, err := p.Available(ctx)
+		available, err := sessionProvider.Available(ctx)
 		if err != nil {
-			slog.Warn("provider availability check failed", "provider", p.ID(), "error", err)
+			slog.Warn("provider availability check failed", "provider", sessionProvider.ID(), "error", err)
 			continue
 		}
 		if !available {
 			// Its sessions are gone, so count it as refreshed with none.
-			refreshed[p.ID()] = true
+			found.refreshed[sessionProvider.ID()] = true
 			continue
 		}
 		var sessions []DiscoveredSession
-		if watched, ok := p.(WatchedDiscoverer); !only.all && ok {
-			sessions, err = watched.DiscoverWatchedSessions(ctx, ref)
+		if watched, ok := sessionProvider.(WatchedDiscoverer); !only.all && ok {
+			sessions, err = watched.DiscoverWatchedSessions(ctx, project)
 		} else {
-			sessions, err = p.DiscoverSessions(ctx, ref)
+			sessions, err = sessionProvider.DiscoverSessions(ctx, project)
 		}
 		if err != nil {
-			slog.Warn("provider failed to discover sessions", "provider", p.ID(), "project", project.ID, "error", err)
+			slog.Warn("provider failed to discover sessions",
+				"provider", sessionProvider.ID(), "project", project.ID, "error", err)
 			continue
 		}
-		refreshed[p.ID()] = true
-		for _, ds := range sessions {
-			sess := ds.Session
-			sess.Provider = p.ID()
-			dir := cleanDir(ds.WorkingDir)
-			discovered[dir] = append(discovered[dir], sess)
+		found.refreshed[sessionProvider.ID()] = true
+		for _, discovered := range sessions {
+			session := discovered.Session
+			session.Provider = sessionProvider.ID()
+			dir := cleanDir(discovered.WorkingDir)
+			found.sessions[dir] = append(found.sessions[dir], session)
+			if dir != "" {
+				found.superseded[session.ID] = true
+			}
 		}
 	}
+	return found
+}
 
-	// A fresh discovery supersedes any retained session with the same ID,
-	// wherever it sits, so an ID cannot land in the result set twice.
-	// Empty-dir discoveries are excluded: neither pass attaches them anywhere,
-	// so letting them supersede would drop the stored session outright.
-	superseded := map[string]bool{}
-	for dir, sessions := range discovered {
-		if dir == "" {
-			continue
-		}
-		for _, sess := range sessions {
-			superseded[sess.ID] = true
-		}
-	}
+// projectPass is one projection pass over a project, against its listings
+// (listErr: one failed). It returns the IDs of the workstreams whose folder
+// vanished; they stay listed, with the sessions there, until their removal
+// drops them.
+func (r *Reconciler) projectPass(ctx context.Context, project ProjectRef, only dirtySet,
+	listings surveyorListings, listErr error) []string {
+	state := r.projectState(project.ID)
+	state.passLock.Lock()
+	defer state.passLock.Unlock()
+
+	found := r.discover(ctx, project, only)
 
 	// Discovery can be slow and workstreams land concurrently, so re-read the
-	// store: ReplaceWorkstreams below writes the whole list, and deriving it
-	// from the pre-discovery snapshot would erase anything added in between.
-	// ReplaceWorkstreams is handed this read, so it keeps what changes after it
+	// store: ReplaceProjection below writes the whole list, and deriving it
+	// from a pre-discovery snapshot would erase anything added in between.
+	// ReplaceProjection is handed this read, so it keeps what changes after it
 	// while the pass refreshes and annotates (store.keepChangesSinceRead).
-	workstreams := project.Workstreams
-	for _, current := range r.store.Projects() {
-		if current.ID == project.ID {
-			workstreams = current.Workstreams
-			break
-		}
+	projects := r.store.Projects()
+	index := slices.IndexFunc(projects, func(candidate domain.Project) bool { return candidate.ID == project.ID })
+	if index < 0 {
+		r.forgetProject(project.ID) // removed meanwhile
+		return nil
 	}
+	stored := projects[index]
+	firstSeen := state.sight(stored.Workstreams)
+
+	// A failed listing is no empty listing: nothing vanishes, and the stored
+	// suggestions stay, unless claimed since.
+	claimed := claimedFolders(projects)
+	var survey folderSurvey
+	if listErr != nil {
+		survey.untracked = unclaimedSuggestions(stored.UntrackedWorktrees, claimed)
+	} else {
+		survey = listings.survey(project, stored.Workstreams, claimed, firstSeen)
+	}
+	if survey.stale {
+		r.cachedListings.forget(project.ID)
+	}
+	suggested, unhidden := r.hideSessions(survey.untracked, stored, found)
 
 	result := []domain.Workstream{}
-	matchedDirs := map[string]bool{}
+	var vanished []string
+	matchedDirs := maps.Clone(suggested)
 
 	// Pass 1: existing workstreams keep their identity; re-attach sessions by
-	// matching working directory.
-	for _, ws := range workstreams {
-		if isPlaceholder(ws) {
-			result = append(result, ws)
+	// matching working directory. One working in a folder suggested until now
+	// takes the sessions hidden there; one adopted in a folder suggested now
+	// gave its sessions to the suggestion. One whose folder vanished stays,
+	// and holds its folder's sessions, until its removal is done.
+	for _, workstream := range stored.Workstreams {
+		if isPlaceholder(workstream) {
+			result = append(result, workstream)
 			continue
 		}
-		dir := cleanDir(ws.WorkingDir)
-		discoveredHere := discovered[dir]
-
-		sessions := []domain.Session{}
-		// Retain a session only while a registered provider could still confirm it
-		// but did not report this cycle, and no fresh discovery supersedes it. A
-		// session whose provider is not in the registry is dropped: nothing can
-		// ever confirm it or route to it.
-		for _, sess := range ws.Sessions {
-			// A starting placeholder is retained unconditionally: no provider reports it
-			// (it stands for a session that does not exist yet), so the rule above would
-			// drop it on the first cycle after a create — mid-build, which is exactly
-			// when it is the only thing the user has to look at.
-			// Service.finishCreateSession is what ends its life — except when the create
-			// fails, where the same row stays on as the `error` record of the attempt and
-			// only a removal by the user clears it. Because it is never persisted a daemon
-			// restart cannot leave one behind either way.
-			//
-			// This covers the placeholders that existed when the snapshot was taken. One
-			// that appears *while* the providers are being asked is invisible here, and is
-			// carried over by the store instead (store.retainInFlightLocked) — the only
-			// place that can see it, since it is the only one holding the live state.
-			if IsStartingPlaceholder(sess) {
-				sessions = append(sessions, sess)
-				continue
-			}
-			if _, known := r.registry.SessionProvider(sess.Provider); !known {
-				continue
-			}
-			if refreshed[sess.Provider] || superseded[sess.ID] {
-				continue
-			}
-			sessions = append(sessions, sess)
+		dir := cleanDir(workstream.WorkingDir)
+		if isAdopted(workstream) && suggested[dir] {
+			continue
 		}
+		sessions := r.retainedSessions(slices.Concat(workstream.Sessions, unhidden[dir]), found)
 		if dir != "" {
-			sessions = append(sessions, discoveredHere...)
+			sessions = append(sessions, found.sessions[dir]...)
 			matchedDirs[dir] = true
 		}
-		ws.Sessions = sessions
-		result = append(result, ws)
+		workstream.Sessions = sessions
+		result = append(result, workstream)
+		if survey.vanished[workstream.ID] {
+			vanished = append(vanished, workstream.ID)
+		}
 	}
 
 	// Pass 2: discovered sessions whose directory matches no known workstream
-	// get a workstream adopted for them.
-	for dir, sessions := range discovered {
+	// or suggestion get a workstream adopted for them.
+	for dir, sessions := range found.sessions {
 		if dir == "" || matchedDirs[dir] {
 			continue
 		}
 		result = append(result, adoptedWorkstream(dir, sessions))
 	}
 
-	r.refresh(ctx, ref, result)
+	r.refresh(ctx, project, result)
 
 	// Derived last, so it sees each workstream's final session set.
 	if r.annotate != nil {
 		r.annotate(project.ID, result)
 	}
 
-	if err := r.store.ReplaceWorkstreams(project.ID, workstreams, result); err != nil {
+	if err := r.store.ReplaceProjection(project.ID, stored.Workstreams, result, survey.untracked); err != nil {
 		slog.Warn("projecting workstreams failed", "project", project.ID, "error", err)
 	}
+	return vanished
+}
+
+// retainedSessions are the stored sessions a pass keeps: only while a
+// registered provider could still confirm one but did not report in found,
+// and no fresh discovery supersedes it. A session whose provider is not in the
+// registry is dropped: nothing can ever confirm it or route to it.
+func (r *Reconciler) retainedSessions(stored []domain.Session, found discovery) []domain.Session {
+	sessions := []domain.Session{}
+	for _, session := range stored {
+		// A starting placeholder is retained unconditionally: no provider reports it
+		// (it stands for a session that does not exist yet), so the retention rule
+		// would drop it on the first cycle after a create — mid-build, which is
+		// exactly when it is the only thing the user has to look at.
+		// Service.finishCreateSession is what ends its life — except when the create
+		// fails, where the same row stays on as the `error` record of the attempt and
+		// only a removal by the user clears it. Because it is never persisted a daemon
+		// restart cannot leave one behind either way.
+		//
+		// This covers the placeholders that existed when the snapshot was taken. One
+		// that appears *while* the providers are being asked is invisible here, and is
+		// carried over by the store instead (store.retainInFlightLocked) — the only
+		// place that can see it, since it is the only one holding the live state.
+		if IsStartingPlaceholder(session) {
+			sessions = append(sessions, session)
+			continue
+		}
+		if _, known := r.registry.SessionProvider(session.Provider); !known {
+			continue
+		}
+		if found.refreshed[session.Provider] || found.superseded[session.ID] {
+			continue
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions
 }
 
 // refresh has each workstream's provider bring it up to date (Refresher). A
@@ -325,9 +422,10 @@ func (r *Reconciler) refresh(ctx context.Context, project ProjectRef, workstream
 // branchMoved reports whether a refresh would move any of providerID's
 // workstreams to another branch. The branch is what moves a name too, so it is
 // all that is compared.
-func (r *Reconciler) branchMoved(ctx context.Context, providerID string, refresher Refresher) bool {
-	for _, project := range r.store.Projects() {
-		ref := ProjectRef{ID: project.ID, Path: project.Path, GitBacked: project.GitBacked}
+func (r *Reconciler) branchMoved(ctx context.Context, projects []domain.Project, providerID string,
+	refresher Refresher) bool {
+	for _, project := range projects {
+		ref := projectRefOf(project)
 		for _, workstream := range project.Workstreams {
 			if workstream.Provider != providerID || isPlaceholder(workstream) {
 				continue
@@ -361,7 +459,7 @@ func adoptedWorkstream(dir string, sessions []domain.Session) domain.Workstream 
 // adopted workstream keeps the same identity across reconcile cycles.
 func adoptedWorkstreamID(dir string) string {
 	sum := sha1.Sum([]byte(dir))
-	return fmt.Sprintf("disc-%x", sum[:8])
+	return fmt.Sprintf("%s%x", adoptedIDPrefix, sum[:8])
 }
 
 func cleanDir(dir string) string {
@@ -381,12 +479,19 @@ func (r *Reconciler) Run(ctx context.Context) {
 		}
 	}
 	for _, workstreamProvider := range r.registry.WorkstreamProviders() {
-		if refresher, ok := workstreamProvider.(Refresher); ok {
-			sink := watcherSink{reconciler: r, providerID: workstreamProvider.ID()}
-			go WatchLoop(ctx, sink, refresher.RefreshInterval, r.refreshEvery, func(ctx context.Context) bool {
-				return r.branchMoved(ctx, workstreamProvider.ID(), refresher)
-			})
+		refresher, ok := workstreamProvider.(Refresher)
+		if !ok {
+			continue
 		}
+		providerID := workstreamProvider.ID()
+		surveyor, surveys := workstreamProvider.(FolderSurveyor)
+		sink := watcherSink{reconciler: r, providerID: providerID}
+		go WatchLoop(ctx, sink, refresher.RefreshInterval, r.refreshEvery, func(ctx context.Context) bool {
+			projects := r.store.Projects()
+			// Both asked every tick: the folder listings are refreshed on each.
+			changed := surveys && r.foldersChanged(ctx, projects, surveyor)
+			return r.branchMoved(ctx, projects, providerID, refresher) || changed
+		})
 	}
 	r.Reconcile(ctx)
 

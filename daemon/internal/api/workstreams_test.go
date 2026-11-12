@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -379,5 +382,76 @@ func TestCreatedWorkstreamAppearsOnEventStream(t *testing.T) {
 	}
 	if !strings.Contains(update.Data, "streamed") {
 		t.Errorf("pushed state lacks the new workstream: %s", update.Data)
+	}
+}
+
+// worktreeHandler builds a handler over a git project proj-git with one linked
+// worktree on branch wt-a, and returns the worktree's path.
+func worktreeHandler(t *testing.T) (http.Handler, string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	repo, dir := t.TempDir(), filepath.Join(t.TempDir(), "wt")
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"commit", "-q", "--allow-empty", "-m", "initial"},
+		{"worktree", "add", "-q", "-b", "wt-a", dir},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	projectStore := store.NewTestStore(t, []domain.Project{{
+		ID: "proj-git", Name: "git", Path: repo, GitBacked: true, Workstreams: []domain.Workstream{},
+	}})
+	service := provider.NewService(projectStore, provider.NewRegistry(), 0)
+	service.Reconcile(context.Background())
+	return handlerForTest(Deps{Version: "test", Store: projectStore, Heartbeat: time.Minute, Providers: service,
+		Notifications: notify.NewHub()}), dir
+}
+
+func TestAddUntrackedWorktree(t *testing.T) {
+	handler, dir := worktreeHandler(t)
+	body, _ := json.Marshal(map[string]string{"path": dir})
+
+	recorder := do(t, handler, http.MethodPost, "/api/projects/proj-git/worktree-workstreams", string(body))
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d (%s), want 201", recorder.Code, recorder.Body.String())
+	}
+	var added domain.Workstream
+	if err := json.Unmarshal(recorder.Body.Bytes(), &added); err != nil {
+		t.Fatal(err)
+	}
+	if added.ID == "" || added.Name != "wt-a" || added.WorkingDir != dir {
+		t.Errorf("workstream = %+v, want wt-a in %s", added, dir)
+	}
+}
+
+func TestAddUntrackedWorktreeRefusals(t *testing.T) {
+	handler, _ := worktreeHandler(t)
+	tests := []struct {
+		name string
+		body string
+		want int
+	}{
+		{name: "no path", body: `{}`, want: http.StatusBadRequest},
+		{name: "a blank path", body: `{"path":"  "}`, want: http.StatusBadRequest},
+		{name: "not an untracked worktree", body: `{"path":"/nowhere"}`, want: http.StatusConflict},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := do(t, handler, http.MethodPost, "/api/projects/proj-git/worktree-workstreams", tt.body)
+			var body struct {
+				Error string `json:"error"`
+			}
+			if recorder.Code != tt.want || json.Unmarshal(recorder.Body.Bytes(), &body) != nil || body.Error == "" {
+				t.Errorf("status = %d (%s), want %d with an error", recorder.Code, recorder.Body.String(), tt.want)
+			}
+		})
 	}
 }

@@ -18,11 +18,11 @@ func TestLaunchConfigRoundTripsAndSurvivesReprojection(t *testing.T) {
 		t.Fatalf("SetLaunchConfig: %v", err)
 	}
 	// The session is re-reported by its provider, as every reconcile cycle does.
-	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
+	if err := s.ReplaceProjection("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/tmp/p1",
 		Sessions: []domain.Session{{ID: "sess-1", Title: "claude session", Agent: "claude", Provider: "enclave"}},
-	}}); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	}}, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	got, ok := s.LaunchConfig("sess-1")
 	if !ok {
@@ -45,10 +45,10 @@ func TestReprojectionForgetsLaunchConfigsOfVanishedSessions(t *testing.T) {
 	if err := s.SetLaunchConfig("p1", "sess-1", domain.LaunchConfig{ProviderID: "enclave", OptionID: "claude"}); err != nil {
 		t.Fatalf("SetLaunchConfig: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
+	if err := s.ReplaceProjection("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/tmp/p1",
-	}}); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	}}, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	if _, ok := s.LaunchConfig("sess-1"); ok {
 		t.Error("LaunchConfig of a session no provider reports any more: want it forgotten")
@@ -98,11 +98,11 @@ func TestRemoveProjectMovesTheRecordsOfASessionAnotherProjectLists(t *testing.T)
 		{ID: "p2", Name: "p2", Path: "/tmp/shared"},
 	})
 	// Projected into the other project sharing its directory, as discovery does.
-	if err := s.ReplaceWorkstreams("p2", nil, []domain.Workstream{{
+	if err := s.ReplaceProjection("p2", nil, []domain.Workstream{{
 		ID: "ws-2", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/tmp/shared",
 		Sessions: []domain.Session{shared},
-	}}); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	}}, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	if err := s.SetLaunchConfig("p1", "sess-1", domain.LaunchConfig{ProviderID: "enclave", OptionID: "claude"}); err != nil {
 		t.Fatalf("SetLaunchConfig: %v", err)
@@ -128,11 +128,11 @@ func TestRemoveProjectMovesTheRecordsOfASessionAnotherProjectLists(t *testing.T)
 		t.Errorf("persisted title = %+v; want it moved to p2", titles["sess-1"])
 	}
 	// The other project's next projection shows the title, and keeps both.
-	if err := s.ReplaceWorkstreams("p2", nil, []domain.Workstream{{
+	if err := s.ReplaceProjection("p2", nil, []domain.Workstream{{
 		ID: "ws-2", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/tmp/shared",
 		Sessions: []domain.Session{shared},
-	}}); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	}}, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	if title := sessionTitle(t, s, "sess-1"); title != "named" {
 		t.Errorf("title = %q; want the custom one kept", title)
@@ -202,8 +202,8 @@ func TestStaleProjectionKeepsAJustPromotedSessionsLaunchConfig(t *testing.T) {
 		t.Fatalf("PromoteEphemeralSession: %v", err)
 	}
 
-	if err := s.ReplaceWorkstreams("p1", nil, staleProjection()); err != nil {
-		t.Fatalf("ReplaceWorkstreams (stale): %v", err)
+	if err := s.ReplaceProjection("p1", nil, staleProjection(), nil); err != nil {
+		t.Fatalf("ReplaceProjection (stale): %v", err)
 	}
 	if got, ok := s.LaunchConfig("sess-1"); !ok || string(got.Config) != `{"model":"opus"}` {
 		t.Errorf("LaunchConfig after a stale projection = %+v, %v; want the recorded one", got, ok)
@@ -216,8 +216,8 @@ func TestStaleProjectionKeepsAJustPromotedSessionsLaunchConfig(t *testing.T) {
 	}
 
 	// The session has really gone: the next projection drops it, and its record.
-	if err := s.ReplaceWorkstreams("p1", nil, staleProjection()); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	if err := s.ReplaceProjection("p1", nil, staleProjection(), nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	if _, ok := s.LaunchConfig("sess-1"); ok {
 		t.Error("LaunchConfig of a session no projection lists: want it forgotten")
