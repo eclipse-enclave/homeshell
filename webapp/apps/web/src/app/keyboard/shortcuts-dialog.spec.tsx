@@ -47,12 +47,12 @@ describe('ShortcutsDialog', () => {
   });
 
   it.each([
-    ['Move between workstreams and sessions', '↑↓'],
+    ['Move between workstreams, sessions and untracked worktrees', '↑↓'],
     ['Go to the first or last item', 'HomeEnd'],
     ['Expand, or go to the first session', '→'],
     ['Collapse, or go to the workstream', '←'],
     [
-      "Open the focused workstream or session, or show an ended one's details",
+      "Open the focused workstream or session, show an ended one's details, or add an untracked worktree",
       'Enter',
     ],
     ['Rename the focused workstream or session', 'F2'],

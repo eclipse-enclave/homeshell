@@ -282,6 +282,19 @@ export interface Project {
   /** Combined display state (runtime + session), derived by the daemon. */
   effectiveState: EffectiveState;
   workstreams: Workstream[];
+  /** Git worktrees of the project that no workstream works in, offered for adding. */
+  untrackedWorktrees: UntrackedWorktree[];
+}
+
+/** A git worktree of a project's repository that HomeShell does not track yet. */
+export interface UntrackedWorktree {
+  /** The name Add would give the workstream: the branch, else the folder's name. */
+  name: string;
+  /** Absent when HEAD is detached. */
+  branch?: string;
+  path: string;
+  /** Sessions found running in the folder. */
+  sessionCount: number;
 }
 
 /**

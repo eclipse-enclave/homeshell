@@ -71,6 +71,27 @@ export async function addDefaultWorkstream(
   projectId: string,
 ): Promise<Workstream | string> {
   const result = await postWorkstream(projectId, 'default-workstream');
+  return refusalMessage(result);
+}
+
+/**
+ * Gives the project a workstream in the untracked git worktree at `path`; the
+ * daemon refuses a path that is not one (any more).
+ */
+export async function addUntrackedWorktree(
+  projectId: string,
+  path: string,
+): Promise<Workstream | string> {
+  const result = await postWorkstream(projectId, 'worktree-workstreams', {
+    path,
+  });
+  return refusalMessage(result);
+}
+
+/** A refusal as the message it carries, which is all these callers show. */
+function refusalMessage(
+  result: Workstream | string | Refusal,
+): Workstream | string {
   return typeof result !== 'string' && 'message' in result
     ? result.message
     : result;

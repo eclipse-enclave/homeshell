@@ -18,6 +18,7 @@ const projectWith = (...sessions: Session[]): Project => ({
   state: 'idle',
   runtimeState: 'running',
   effectiveState: 'idle',
+  untrackedWorktrees: [],
   workstreams: [
     {
       id: 'w',

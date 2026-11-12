@@ -12,6 +12,7 @@ const projects: Project[] = [
     state: 'running',
     runtimeState: 'running',
     effectiveState: 'running',
+    untrackedWorktrees: [],
     workstreams: [
       {
         id: 'w1',
@@ -36,6 +37,7 @@ const projects: Project[] = [
     state: 'idle',
     runtimeState: 'idle',
     effectiveState: 'idle',
+    untrackedWorktrees: [],
     workstreams: [],
   },
 ];
@@ -81,6 +83,7 @@ describe('ProjectList', () => {
         state: 'done',
         runtimeState: 'stopped',
         effectiveState: 'stopped',
+        untrackedWorktrees: [],
         workstreams: [],
       },
     ];

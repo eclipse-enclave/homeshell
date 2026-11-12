@@ -1,6 +1,7 @@
 import { type Session, splitSessions } from '@homeshell/model';
 import { type KeyboardEvent, type ReactNode, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
+import foldStyles from './fold.module.css';
 import { ChevronDownIcon } from './icons';
 import { isModified } from './keys';
 import { controlTabIndexFor, focusNavItem } from './list-navigation';
@@ -84,10 +85,10 @@ export function SessionList({
         ),
         ...shownEnded.map(renderRow),
         foldable && (showAll || folded.length > 0) && (
-          <li key="fold" className={styles.fold}>
+          <li key="fold" className={foldStyles.fold}>
             <button
               type="button"
-              className={styles.foldButton}
+              className={foldStyles.foldButton}
               tabIndex={foldTabIndex}
               aria-expanded={showAll}
               onClick={() => setShowAll(!showAll)}

@@ -16,7 +16,8 @@ import {
   platformKeys,
 } from './keys';
 
-const NAV_ITEM_SELECTOR = '[data-nav-id]';
+/** What marks an item of the workstream list: its card, row or worktree ID. */
+export const NAV_ITEM_SELECTOR = '[data-nav-id]';
 
 function navItems(root: ParentNode): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>(NAV_ITEM_SELECTOR));
@@ -39,10 +40,13 @@ export function tabStopItem(root: ParentNode): HTMLElement | undefined {
   return navItems(root).find((item) => item.tabIndex === 0);
 }
 
+/** What an item of the workstream list is: a card, a session row, or an untracked worktree. */
+export type ListItemKind = 'card' | 'session' | 'worktree';
+
 /** A key of the workstream list, described for the user. */
 export interface ListKey extends KeyHelp {
   /** The items that handle it themselves; unset for the list's own keys. */
-  on?: readonly ('card' | 'session')[];
+  on?: readonly ListItemKind[];
 }
 
 /**
@@ -52,7 +56,7 @@ export interface ListKey extends KeyHelp {
 export const LIST_KEYS: readonly ListKey[] = [
   {
     keys: ['arrowup', 'arrowdown'],
-    label: 'Move between workstreams and sessions',
+    label: 'Move between workstreams, sessions and untracked worktrees',
   },
   { keys: ['home', 'end'], label: 'Go to the first or last item' },
   {
@@ -68,8 +72,8 @@ export const LIST_KEYS: readonly ListKey[] = [
   {
     keys: ['enter'],
     label:
-      "Open the focused workstream or session, or show an ended one's details",
-    on: ['card', 'session'],
+      "Open the focused workstream or session, show an ended one's details, or add an untracked worktree",
+    on: ['card', 'session', 'worktree'],
   },
   {
     keys: ['f2'],
@@ -91,7 +95,7 @@ export const LIST_KEYS: readonly ListKey[] = [
 
 /** The keys a focused `item` of the list answers, as aria-keyshortcuts. */
 export function listItemKeyShortcuts(
-  item: 'card' | 'session',
+  item: ListItemKind,
   mac = isMac(),
 ): string {
   return LIST_KEYS.filter((key) => key.on?.includes(item))
