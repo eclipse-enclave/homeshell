@@ -626,6 +626,15 @@ describe('WorkstreamCard', () => {
     expect(onOpenSession).toHaveBeenCalledWith('s1');
   });
 
+  it('says when its folder is gone, and only then', () => {
+    const { rerender } = render(<Card workstream={idle()} />);
+    expect(screen.queryByText(/folder is gone/)).toBeNull();
+    rerender(<Card workstream={idle({ folderMissing: true })} />);
+    expect(
+      screen.getByText('Its folder is gone. It is removed once its sessions end.'),
+    ).toBeTruthy();
+  });
+
   it('shows status message when present', () => {
     render(
       <Card

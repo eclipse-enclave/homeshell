@@ -267,6 +267,11 @@ export interface Workstream {
    * workstream, so it offers nothing but its removal, and statusMessage says why.
    */
   createFailed?: boolean;
+  /**
+   * Set on a worktree workstream whose folder is gone: the daemon keeps it
+   * listed while a session in it has not ended, and removes it after.
+   */
+  folderMissing?: boolean;
 }
 
 /** A named, persisted reference to a codebase. */

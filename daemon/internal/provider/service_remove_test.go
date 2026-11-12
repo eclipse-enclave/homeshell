@@ -260,9 +260,10 @@ func git(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// A worktree removed outside HomeShell takes its workstream with it, and the
-// sessions there are stopped rather than adopted into a workstream of their own.
-func TestServiceRetiresAVanishedWorktreeWithItsSessions(t *testing.T) {
+// A worktree removed outside HomeShell leaves its workstream listed, marked, while
+// a session there runs: HomeShell stops none, and adopts none into a workstream
+// of its own. Once the session is stopped, the workstream goes.
+func TestServiceKeepsAVanishedWorktreeUntilItsSessionsEnd(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
@@ -316,23 +317,35 @@ func TestServiceRetiresAVanishedWorktreeWithItsSessions(t *testing.T) {
 	go svc.Run(ctx)
 	git(t, repo, "worktree", "remove", "--force", dir)
 
-	deadline := time.Now().Add(5 * time.Second)
-	for len(st.Projects()[0].Workstreams) != 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if workstreams := st.Projects()[0].Workstreams; len(workstreams) != 0 {
-		t.Fatalf("workstreams = %+v, want the vanished one gone and none adopted", workstreams)
-	}
-	for time.Now().Before(deadline) {
-		if _, err := fp.SessionState(context.Background(), sref); err != nil {
-			break
+	await := func(want string, done func([]domain.Workstream) bool) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for !done(st.Projects()[0].Workstreams) && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
 		}
-		time.Sleep(10 * time.Millisecond)
+		if workstreams := st.Projects()[0].Workstreams; !done(workstreams) {
+			t.Fatalf("workstreams = %+v, want %s", workstreams, want)
+		}
 	}
-	if _, err := fp.SessionState(context.Background(), sref); err == nil {
-		t.Error("the provider still runs the session of the vanished workstream")
+	await("the vanished one marked, holding its session", func(workstreams []domain.Workstream) bool {
+		return len(workstreams) == 1 && workstreams[0].FolderMissing &&
+			len(workstreams[0].Sessions) == 1 && workstreams[0].Sessions[0].ID == sess.ID
+	})
+	// Passes after the mark retire nothing and adopt nothing.
+	svc.Reconcile(context.Background())
+	if workstreams := st.Projects()[0].Workstreams; len(workstreams) != 1 || workstreams[0].ID != ws.ID {
+		t.Errorf("workstreams after another pass = %+v, want only %s", workstreams, ws.ID)
 	}
-	// Passes after the retirement adopt nothing either.
+	if _, err := fp.SessionState(context.Background(), sref); err != nil {
+		t.Errorf("the session of the vanished workstream was stopped: %v", err)
+	}
+
+	if err := svc.StopSession(context.Background(), sref); err != nil {
+		t.Fatalf("StopSession: %v", err)
+	}
+	await("the vanished one gone once its session ended", func(workstreams []domain.Workstream) bool {
+		return len(workstreams) == 0
+	})
 	svc.Reconcile(context.Background())
 	if workstreams := st.Projects()[0].Workstreams; len(workstreams) != 0 {
 		t.Errorf("workstreams after another pass = %+v, want none", workstreams)

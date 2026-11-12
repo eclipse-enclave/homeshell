@@ -1406,12 +1406,13 @@ func (s *Service) Remove(ctx context.Context, ref WorkstreamRef, opts RemoveOpti
 }
 
 // retireVanished starts removing, in the background, a workstream whose
-// worktree a reconcile pass found gone: its sessions stopped and torn down,
-// forced, files kept as there are none. Passes keep it listed until its record
-// goes, as they do one a Remove tears down. One a removal is under way for
-// already, a Remove's or an earlier retire's, is left to it; a Remove arriving
-// meanwhile waits for it. Why: a provider
-// would otherwise keep reporting its sessions and they would be adopted back.
+// worktree a reconcile pass found gone, once every session in it is terminal:
+// their records torn down, files kept as there are none. While one is not, it
+// is left listed, marked FolderMissing, for a later pass or the user's Remove.
+// Why: HomeShell never stops a session on its own, and a workstream kept
+// listed still holds its folder's sessions, so none is adopted back. One a
+// removal is under way for already, a Remove's or an earlier retire's, is left
+// to it; a Remove arriving meanwhile waits for it.
 func (s *Service) retireVanished(ctx context.Context, ref WorkstreamRef) {
 	if !s.tryBeginRetire(ref) {
 		return
@@ -1424,9 +1425,12 @@ func (s *Service) retireVanished(ctx context.Context, ref WorkstreamRef) {
 		if err != nil {
 			return // removed since the pass saw it
 		}
+		if !domain.AllTerminal(workstream.Sessions) {
+			return // left to a later pass, once its sessions end
+		}
 		slog.Info("removing a workstream whose worktree is gone",
 			"project", ref.ProjectID, "workstream", ref.WorkstreamID, "dir", workstream.WorkingDir)
-		err = s.removeWorkstream(detached, ref, workstream, RemoveOptions{Force: true, KeepFiles: true})
+		err = s.removeWorkstream(detached, ref, workstream, RemoveOptions{KeepFiles: true})
 		if err != nil && !errors.Is(err, ErrWorkstreamNotFound) {
 			slog.Warn("removing a vanished workstream failed",
 				"project", ref.ProjectID, "workstream", ref.WorkstreamID, "error", err)

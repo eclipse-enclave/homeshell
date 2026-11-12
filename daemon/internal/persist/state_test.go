@@ -181,7 +181,7 @@ func TestMemorySaverRecordsAndFails(t *testing.T) {
 func TestSnapshotDropsOnlyLiveState(t *testing.T) {
 	dropped := map[string][]string{
 		"Project":    {"State", "RuntimeState", "Effective", "UntrackedWorktrees"},
-		"Workstream": {"ProviderLabel", "Strategy", "InProjectFolder", "State", "RuntimeState", "Effective", "StatusMessage", "OpenModes", "Actions", "PlaceholderID", "CreateFailed"},
+		"Workstream": {"ProviderLabel", "Strategy", "InProjectFolder", "State", "RuntimeState", "Effective", "StatusMessage", "OpenModes", "Actions", "PlaceholderID", "CreateFailed", "FolderMissing"},
 		"Session":    {"State", "Ended", "Preview", "Error", "PlaceholderID", "Restartable", "OutdatedSettings", "ObservationData"},
 	}
 	tests := []struct {

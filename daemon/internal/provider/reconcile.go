@@ -313,7 +313,7 @@ func (r *Reconciler) projectPass(ctx context.Context, project ProjectRef, only d
 	// matching working directory. One working in a folder suggested until now
 	// takes the sessions hidden there; one adopted in a folder suggested now
 	// gave its sessions to the suggestion. One whose folder vanished stays,
-	// and holds its folder's sessions, until its removal is done.
+	// marked, and holds its folder's sessions until it is removed.
 	for _, workstream := range stored.Workstreams {
 		if isPlaceholder(workstream) {
 			result = append(result, workstream)
@@ -329,6 +329,11 @@ func (r *Reconciler) projectPass(ctx context.Context, project ProjectRef, only d
 			matchedDirs[dir] = true
 		}
 		workstream.Sessions = sessions
+		// A failed listing proves nothing either way: the mark stays, and
+		// nothing is retired.
+		if listErr == nil {
+			workstream.FolderMissing = survey.vanished[workstream.ID]
+		}
 		result = append(result, workstream)
 		if survey.vanished[workstream.ID] {
 			vanished = append(vanished, workstream.ID)

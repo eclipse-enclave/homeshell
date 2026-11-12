@@ -311,6 +311,30 @@ func TestSessionStateBusy(t *testing.T) {
 	}
 }
 
+func TestAllTerminal(t *testing.T) {
+	tests := []struct {
+		name   string
+		states []SessionState
+		want   bool
+	}{
+		{"none", nil, true},
+		{"all terminal", []SessionState{SessionDone, SessionStopped, SessionError}, true},
+		{"one idle", []SessionState{SessionStopped, SessionIdle}, false},
+		{"one running", []SessionState{SessionRunning}, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var sessions []Session
+			for _, state := range test.states {
+				sessions = append(sessions, Session{ID: "s", State: state})
+			}
+			if got := AllTerminal(sessions); got != test.want {
+				t.Errorf("AllTerminal = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestSessionStateTerminal(t *testing.T) {
 	// Error is terminal: the session never started, so it holds no slot.
 	terminal := []SessionState{SessionDone, SessionStopped, SessionError}

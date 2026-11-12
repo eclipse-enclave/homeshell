@@ -347,9 +347,39 @@ func TestReconcileRetiresAVanishedWorktreeWorkstream(t *testing.T) {
 		t.Errorf("retired = %q, want ws-1 by each pass from a listing newer than it", *retired)
 	}
 	workstreams := st.Projects()[0].Workstreams
-	if len(workstreams) != 1 || workstreams[0].ID != "ws-1" ||
+	if len(workstreams) != 1 || workstreams[0].ID != "ws-1" || !workstreams[0].FolderMissing ||
 		!slices.Equal(sessionIDs(workstreams[0].Sessions), []string{"s1"}) {
-		t.Errorf("workstreams = %+v, want ws-1 holding s1 until removed, none adopted", workstreams)
+		t.Errorf("workstreams = %+v, want ws-1 marked, holding s1 until removed, none adopted", workstreams)
+	}
+}
+
+// The mark follows the listings: a failed one keeps it, one that lists the
+// folder again clears it.
+func TestReconcileMarksAVanishedFolderUntilAListingHasItAgain(t *testing.T) {
+	reconciler, st, surveyor, _ := surveyedReconciler(t, []domain.Project{surveyedProject(worktreeAt("ws-1", "/wt/gone"))}, nil)
+	surveyor.vanished = []string{"ws-1"}
+	retirements(reconciler)
+	marked := func() bool { return st.Projects()[0].Workstreams[0].FolderMissing }
+	relist := func() {
+		reconciler.cachedListings.forget("p1")
+		reconciler.Reconcile(context.Background())
+	}
+	reconciler.Reconcile(context.Background())
+	relist()
+	if !marked() {
+		t.Fatal("not marked once a listing newer than it misses its folder")
+	}
+
+	surveyor.listErr = errors.New("git timed out")
+	relist()
+	if !marked() {
+		t.Error("a failed listing cleared the mark")
+	}
+
+	surveyor.listErr, surveyor.vanished = nil, nil
+	relist()
+	if marked() {
+		t.Error("still marked once a listing has its folder again")
 	}
 }
 
@@ -512,11 +542,15 @@ func awaitSuggestions(t *testing.T, st *store.Store, ok func([]domain.UntrackedW
 	t.Fatalf("suggestions = %+v, want %s", st.Projects()[0].UntrackedWorktrees, want)
 }
 
-// A vanished workstream is removed with its sessions, unless a removal of it
-// is under way already, or it is gone.
+// A vanished workstream is removed with its sessions once none of them is left
+// to stop, unless a removal of it is under way already, or it is gone.
 func TestServiceRetiresAVanishedWorkstreamOnce(t *testing.T) {
-	workstream := worktreeAt("ws-1", "/wt/gone")
-	workstream.Sessions = []domain.Session{{ID: "s1", Provider: "prov", State: domain.SessionRunning}}
+	withSession := func(state domain.SessionState) domain.Workstream {
+		workstream := worktreeAt("ws-1", "/wt/gone")
+		workstream.Sessions = []domain.Session{{ID: "s1", Provider: "prov", State: state}}
+		return workstream
+	}
+	ended := withSession(domain.SessionStopped)
 	ref := WorkstreamRef{ProjectID: "p1", WorkstreamID: "ws-1"}
 	tests := []struct {
 		name        string
@@ -525,9 +559,13 @@ func TestServiceRetiresAVanishedWorkstreamOnce(t *testing.T) {
 		wantRemoved []string
 		wantLeft    int
 	}{
-		{name: "alone", stored: []domain.Workstream{workstream}, wantRemoved: []string{"s1"}},
-		{name: "while removed", stored: []domain.Workstream{workstream}, removing: true, wantLeft: 1},
+		{name: "alone", stored: []domain.Workstream{ended}, wantRemoved: []string{"s1"}},
+		{name: "a failed session is terminal too", stored: []domain.Workstream{withSession(domain.SessionError)},
+			wantRemoved: []string{"s1"}},
+		{name: "while removed", stored: []domain.Workstream{ended}, removing: true, wantLeft: 1},
 		{name: "gone already"},
+		{name: "a session running", stored: []domain.Workstream{withSession(domain.SessionRunning)}, wantLeft: 1},
+		{name: "a session idle", stored: []domain.Workstream{withSession(domain.SessionIdle)}, wantLeft: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

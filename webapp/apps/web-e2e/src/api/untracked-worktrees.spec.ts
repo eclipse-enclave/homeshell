@@ -257,7 +257,7 @@ test.describe('untracked worktrees API', () => {
     ]);
   });
 
-  test('a worktree workstream disappears with its sessions when its worktree is removed outside', async ({
+  test('a worktree workstream with no session goes when its worktree is removed outside', async ({
     request,
   }) => {
     const { dir, projectId } = await gitProject(request, 'hs-untracked-');
@@ -267,9 +267,7 @@ test.describe('untracked worktrees API', () => {
     await awaitSuggested(request, projectId, path);
     const added = await addedWorktree(request, projectId, path);
 
-    const sessionIds: string[] = [];
     for (const ws of [made, added]) {
-      sessionIds.push((await createSession(request, projectId, ws.id)).id);
       await git(dir, 'worktree', 'remove', '--force', String(ws.workingDir));
       await pollFor(`${ws.name} to go`, async () =>
         (await workstreamOf(request, projectId, ws.id)) ? undefined : true,
@@ -278,15 +276,43 @@ test.describe('untracked worktrees API', () => {
 
     // A refresh after the removals would have adopted them again.
     await awaitRefresh(request, projectId, dir);
-    const listed = await allWorkstreams(request);
-    expect(listed.map((ws) => ws.workingDir)).not.toContain(made.workingDir);
-    expect(listed.map((ws) => ws.workingDir)).not.toContain(path);
-    const listedSessionIds = listed.flatMap((ws) =>
-      (ws.sessions ?? []).map((session) => session.id),
+    const listed = (await allWorkstreams(request)).map((ws) => ws.workingDir);
+    expect(listed).not.toContain(made.workingDir);
+    expect(listed).not.toContain(path);
+  });
+
+  test('with a session running, it stays, marked, until the session is stopped', async ({
+    request,
+  }) => {
+    const { dir, projectId } = await gitProject(request, 'hs-untracked-');
+    const made = await createOwnWorktree(request, projectId, 'made');
+    const session = await createSession(request, projectId, made.id);
+
+    await git(dir, 'worktree', 'remove', '--force', String(made.workingDir));
+    await pollFor('the workstream to be marked', async () =>
+      (await workstreamOf(request, projectId, made.id))?.folderMissing
+        ? true
+        : undefined,
     );
-    for (const sessionId of sessionIds) {
-      expect(listedSessionIds).not.toContain(sessionId);
-    }
+    // Later refreshes stop nothing, and adopt the session nowhere else.
+    await awaitRefresh(request, projectId, dir);
+    const kept = await workstreamOf(request, projectId, made.id);
+    expect(kept?.folderMissing).toBe(true);
+    expect(kept?.sessions?.map((s) => [s.id, s.ended])).toEqual([
+      [session.id, false],
+    ]);
+    const holders = (await allWorkstreams(request)).filter((ws) =>
+      (ws.sessions ?? []).some((s) => s.id === session.id),
+    );
+    expect(holders.map((ws) => ws.id)).toEqual([made.id]);
+
+    const stopped = await request.post(
+      `/api/projects/${projectId}/workstreams/${made.id}/sessions/${session.id}/stop`,
+    );
+    expect(stopped.ok(), await stopped.text()).toBe(true);
+    await pollFor('the workstream to go', async () =>
+      (await workstreamOf(request, projectId, made.id)) ? undefined : true,
+    );
   });
 
   test('sessions in an untracked worktree are counted, not adopted, and attach once it is added', async ({

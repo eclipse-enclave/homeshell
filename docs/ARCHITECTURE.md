@@ -212,7 +212,9 @@ stateDiagram-v2
     Removed --> Workstream: creation finishes anyway
     Removed --> [*]: creation fails
     Workstream --> [*]: remove (forced if any session is busy)
-    Workstream --> [*]: worktree removed outside HomeShell (forced remove, files kept)
+    Workstream --> FolderMissing: worktree removed outside HomeShell, a session not terminal
+    FolderMissing --> [*]: its sessions terminal (removed, files kept), or remove
+    Workstream --> [*]: worktree removed outside HomeShell, every session terminal (files kept)
 ```
 
 - **Default workstream.** Adding a project creates its `in-place` workstream directly, with no
@@ -234,12 +236,14 @@ stateDiagram-v2
   each session through its provider, then lets the workstream provider discard the directory.
   The workstream stays listed, holding its sessions, until its record is dropped at the end.
 - **Vanish.** A core `worktree` workstream whose worktree git no longer lists, or whose folder
-  is deleted, is removed like a forced Remove that keeps files (`Service.retireVanished`): a
-  pass finds it gone, never on a failed listing, and starts the removal in the background once
-  the pass has let go of the project, unless a removal of it is under way; a Remove arriving
-  meanwhile waits for it. Until then it stays listed, so no pass adopts a session in its
-  folder. Why: a provider would otherwise keep reporting its sessions and they would be adopted
-  back.
+  is deleted, is removed like a Remove that keeps files once every session in it is terminal
+  (`Service.retireVanished`). Until then it stays listed with its sessions, marked
+  `FolderMissing`, for a later pass or the user's Remove. A pass finds it gone, never on a failed
+  listing (which keeps the mark as it was), and starts the removal in the background once the
+  pass has let go of the project, unless a removal of it is under way; a Remove arriving
+  meanwhile waits for it. Why: HomeShell never stops a session on its own (a worktree moved with
+  `git worktree move` vanishes too, its agent still at work); a workstream kept listed holds its
+  folder's sessions, so none is adopted back.
 
 ### State aggregation
 

@@ -41,6 +41,8 @@ export interface RealWorkstream {
   branch: string;
   workingDir?: string;
   inProjectFolder?: boolean;
+  /** Set while its folder is gone and a session in it has not ended. */
+  folderMissing?: boolean;
   openModes: {
     id: string;
     label: string;

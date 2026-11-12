@@ -279,6 +279,10 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
   the project folder and an in-place create's placeholder, pending or failed, which has no
   `workingDir` yet; it is absent on every other. These are what take the folder (see Create). Why: clients group by
   it without re-deriving the daemon's rule.
+- **Folder missing.** `folderMissing: true` marks a `worktree` workstream whose worktree was
+  removed outside HomeShell while a session in it has not reached a terminal state. It stays
+  listed with its sessions until they do, then goes on its own; a Remove takes it sooner, the busy
+  guard included. Absent on every other.
 - **Draft** answers what a create with the same body would derive for its blanks (name, branch,
   path) and creates nothing.
 - **Remove** ([Workstream lifecycle](ARCHITECTURE.md#workstream-lifecycle)): `keepFiles` keeps

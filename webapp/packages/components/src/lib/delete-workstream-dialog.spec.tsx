@@ -47,8 +47,9 @@ describe('DeleteWorkstreamDialog', () => {
 
   it.each<[string, Partial<Workstream>]>([
     ['still being made', { effectiveState: 'creating' }],
-    ['that failed', { createFailed: true }],
-  ])('offers no files to keep for a create %s', (_, state) => {
+    ['whose create failed', { createFailed: true }],
+    ['whose folder is gone', { folderMissing: true }],
+  ])('offers no files to keep for a workstream %s', (_, state) => {
     render(
       <DeleteWorkstreamDialog
         workstream={{ ...workstream('worktree'), ...state }}

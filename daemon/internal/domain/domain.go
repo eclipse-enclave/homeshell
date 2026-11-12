@@ -96,6 +96,17 @@ func (s SessionState) Ended() bool {
 	return s == SessionDone || s == SessionStopped
 }
 
+// AllTerminal reports whether every session is in a terminal state, so none
+// is left to stop; true for none.
+func AllTerminal(sessions []Session) bool {
+	for _, session := range sessions {
+		if !session.State.Terminal() {
+			return false
+		}
+	}
+	return true
+}
+
 // LiveCount is the number of sessions that have not ended (SessionState.Ended).
 func LiveCount(sessions []Session) int {
 	live := 0
@@ -320,6 +331,10 @@ type Workstream struct {
 	// no workstream, so nothing is offered on it but its removal, and its
 	// StatusMessage says why. Not persisted, as placeholders are not.
 	CreateFailed bool `json:"createFailed,omitempty"`
+	// FolderMissing marks a worktree workstream whose folder is gone, kept
+	// listed while a session in it has not ended. Derived by the reconciler;
+	// not persisted.
+	FolderMissing bool `json:"folderMissing,omitempty"`
 }
 
 // OpenMode is one way a workstream can be handed to the user for interactive

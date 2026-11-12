@@ -1,5 +1,9 @@
 import { expect, test } from '../fixtures';
-import { addWorktree, tempGitRepo } from '../git-repo';
+import {
+  addUntrackedWorktree,
+  createSession,
+} from '../api/workstream-helpers';
+import { addWorktree, git, tempGitRepo } from '../git-repo';
 import { selectProjectWithDefault } from './workstream-helpers';
 
 /**
@@ -18,11 +22,11 @@ async function projectWithUntracked(
 ) {
   const dir = await tempGitRepo('hs-ui-untracked-');
   const path = await addWorktree(dir, { branch });
-  await selectProjectWithDefault(page, request, dir);
+  const { projectId } = await selectProjectWithDefault(page, request, dir);
   const separate = page.getByRole('region', { name: /^Separate folders/ });
   const fold = separate.getByRole('button', { name: '1 untracked worktree' });
   await expect(fold).toBeVisible({ timeout: SUGGESTION_TIMEOUT });
-  return { path, separate, fold };
+  return { dir, path, projectId, separate, fold };
 }
 
 test('a worktree made outside HomeShell can be added from the project view', async ({
@@ -95,4 +99,26 @@ test('Tab comes back to the row the arrows left, and on to its controls', async 
   await expect(
     page.getByRole('region', { name: 'Workstream wt-kbd' }),
   ).toBeVisible();
+});
+
+test('a worktree removed outside with a session running says its folder is gone', async ({
+  page,
+  request,
+}) => {
+  const { dir, path, projectId } = await projectWithUntracked(
+    page,
+    request,
+    'wt-gone',
+  );
+  const added = await addUntrackedWorktree(request, projectId, path);
+  expect(added.status(), await added.text()).toBe(201);
+  await createSession(request, projectId, (await added.json()).id);
+  const card = page.getByRole('region', { name: 'Workstream wt-gone' });
+  await expect(card).toBeVisible();
+
+  await git(dir, 'worktree', 'remove', '--force', path);
+
+  await expect(
+    card.getByText('Its folder is gone. It is removed once its sessions end.'),
+  ).toBeVisible({ timeout: SUGGESTION_TIMEOUT });
 });
