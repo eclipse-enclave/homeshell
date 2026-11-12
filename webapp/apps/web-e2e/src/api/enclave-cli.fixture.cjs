@@ -47,6 +47,7 @@ async function runSession() {
     session: flag('--name'),
     dir: process.cwd(),
     status: 'running',
+    background: true,
     text: 'Ready',
     generation: Date.now(),
   });
@@ -76,9 +77,14 @@ async function listSessions() {
       containers.push({
         name: container.name,
         sessionName: container.session,
-        tool: 'codex',
-        projectDir: container.dir,
+        tool: container.tool ?? 'codex',
+        projectHash: '0123456789ab',
+        createdAt: new Date(container.generation ?? 0).toISOString(),
+        worktree: container.dir,
+        projectDir: container.projectDir ?? container.dir,
         status: container.status,
+        background: container.background ?? true,
+        options: container.options,
       });
     }
   }

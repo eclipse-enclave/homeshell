@@ -2,6 +2,7 @@ import { type APIRequestContext, type Page } from '@playwright/test';
 import { expect, test } from '../fixtures';
 import { loadApp } from './keyboard-helpers';
 import {
+  openWorkstreamCard,
   selectProject,
   sessionRows,
   workstreamWithEndedSessions,
@@ -57,6 +58,20 @@ test('an ended session continues from its Continue button', async ({
     'aria-label',
     'Sessions: 2 running, 1 ended',
   );
+});
+
+// The fake creates sessions idle: an agent with nothing to do still runs.
+test('an idle session ends from its Stop button', async ({ page, request }) => {
+  const { card, row } = await openWorkstreamCard(
+    page,
+    request,
+    'hs-ui-idle-stop',
+    'idle-stop',
+  );
+  await expect(row.getByTestId('session-state')).toHaveText('Idle');
+
+  await row.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(card.getByText('Ended · 1')).toBeVisible({ timeout: 15_000 });
 });
 
 test('Enter on an ended row shows its details and leaves it ended', async ({

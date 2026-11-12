@@ -1,11 +1,9 @@
 import { expect, test } from '@playwright/test';
-import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import {
   attachPid,
-  binaries,
+  attaches,
   buildEnclaveFixture,
   calls,
   createEnclaveSession,
@@ -18,8 +16,6 @@ import {
 } from '../enclave-helpers';
 import { disposeIsolatedDaemons } from '../isolated-daemon';
 import { pollFor } from './workstream-helpers';
-
-const exec = promisify(execFile);
 
 test.describe('Enclave host bridge', () => {
   test.skip(process.platform === 'win32', 'Host bridge requires Unix PTYs');
@@ -67,11 +63,7 @@ test.describe('Enclave host bridge', () => {
         .poll(async () => (await current())?.preview)
         .toContain('key:up');
 
-      const attachPids = () =>
-        readFileSync(join(daemon.fixture, 'attaches'), 'utf8')
-          .trim()
-          .split('\n')
-          .map(Number);
+      const attachPids = () => attaches(daemon.fixture).map(Number);
       // Codex reports idle only through its title, which a reattached bridge never
       // repaints: confident idle proves the remembered title was used.
       const confidentlyIdle = async () => {
@@ -141,35 +133,20 @@ test.describe('Enclave host bridge', () => {
     }
   });
 
-  test('does not adopt external sessions or periodically poll container inventory', async () => {
+  test('never polls container inventory between inventory checks', async () => {
     test.setTimeout(45_000);
-    const daemon = await isolatedDaemon();
-    const env = { ...process.env, HOMESHELL_ENCLAVE_FIXTURE: daemon.fixture };
+    // Checks are a minute apart, so none falls in the window below.
+    const daemon = await isolatedDaemon({ inventoryMs: 60_000 });
     let removeProject: (() => Promise<void>) | undefined;
-    let external: string | undefined;
     try {
       const ws = await projectAndWorkstream(daemon);
       removeProject = ws.remove;
-      const started = await exec(
-        join(binaries, 'enclave'),
-        [
-          'run',
-          '--background',
-          '--tool',
-          'codex',
-          '--name',
-          'outside-homeshell',
-        ],
-        { cwd: join(daemon.root, 'project'), env },
-      );
-      external = started.stdout.trim();
       await createEnclaveSession(daemon.api, ws.base);
       const managed = await pollFor('owned session', async () =>
         (await ws.sessions()).find(
           (s) => s.provider === 'enclave' && s.state === 'idle',
         ),
       );
-      expect(managed.id).not.toBe(external);
 
       const inventoryCalls = () =>
         calls(daemon.fixture, 'ps', 'status', 'exec');
@@ -188,9 +165,6 @@ test.describe('Enclave host bridge', () => {
       expect(leftovers.filter((name) => name.includes(managed.id))).toEqual([]);
     } finally {
       await removeProject?.();
-      if (external) {
-        await exec(join(binaries, 'enclave'), ['stop', external], { env });
-      }
       await daemon.stop();
     }
   });
@@ -389,7 +363,7 @@ test.describe('Enclave host bridge', () => {
       expect(session.error).toContain(
         'refusing to mount sensitive host paths: fixture refusal',
       );
-      expect(existsSync(join(daemon.fixture, 'attaches'))).toBe(false);
+      expect(attaches(daemon.fixture)).toEqual([]);
       expect(
         fixtureFiles(daemon.fixture, 'container-', 'gateway-'),
       ).toHaveLength(0);

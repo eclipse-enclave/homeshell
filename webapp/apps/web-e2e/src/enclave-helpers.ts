@@ -15,7 +15,11 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { awaitRealWorkstream, sessionsOf } from './api/workstream-helpers';
+import {
+  awaitRealWorkstream,
+  pollFor,
+  sessionsOf,
+} from './api/workstream-helpers';
 import { homeshellBin as binary, scratchDir } from './e2e-env';
 import { isolatedHome, runtimeEnv, trackIsolatedHome } from './isolated-daemon';
 import { addEmptyProject } from './projects';
@@ -28,7 +32,7 @@ export const binaries = scratchDir('encl-bin-');
 // peer makes container lifetime deterministic without requiring Docker in CI.
 // It rejects the old monitor/status/exec path. Real Docker compatibility is a
 // separate integration check, not something this peer can establish.
-export async function isolatedDaemon() {
+export async function isolatedDaemon(options: { inventoryMs?: number } = {}) {
   const root = isolatedHome('encl');
   const fixture = join(root, 'fixture');
   mkdirSync(fixture);
@@ -58,6 +62,9 @@ export async function isolatedDaemon() {
           TERMINAL: join(binaries, 'fixture-terminal'),
           HOMESHELL_API_TOKEN: 'enclave-bridge-api',
           HOMESHELL_UPDATE_BASE_URL: 'http://127.0.0.1:9/',
+          ...(options.inventoryMs === undefined
+            ? {}
+            : { HOMESHELL_ENCLAVE_INVENTORY_MS: String(options.inventoryMs) }),
         },
       },
     );
@@ -160,6 +167,32 @@ export async function createEnclaveSession(
   expect(response.status()).toBe(202);
 }
 
+// A container as a terminal `enclave` leaves it: what `enclave ps` lists, with no daemon record or bridge.
+export function cliContainer(
+  fixture: string,
+  container: {
+    name: string;
+    session: string;
+    dir: string;
+    background: boolean;
+    tool?: string;
+    options?: Record<string, unknown>;
+    /** The project folder Enclave reports, when `dir` is a worktree of it. */
+    projectDir?: string;
+  },
+) {
+  writeFileSync(
+    join(fixture, `container-${container.name}.json`),
+    JSON.stringify({
+      status: 'running',
+      text: 'Ready',
+      title: '✳ Codex',
+      generation: Date.now(),
+      ...container,
+    }),
+  );
+}
+
 export function calls(fixture: string, ...commands: string[]): string[][] {
   const all = readFileSync(join(fixture, 'calls'), 'utf8')
     .trim()
@@ -169,6 +202,34 @@ export function calls(fixture: string, ...commands: string[]): string[][] {
   return commands.length
     ? all.filter((argv) => commands.includes(argv[0]))
     : all;
+}
+
+// The fixture CLI's `attach` calls so far, one parent PID each.
+export function attaches(fixture: string): string[] {
+  const file = join(fixture, 'attaches');
+  return existsSync(file)
+    ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean)
+    : [];
+}
+
+// Waits for further inventory checks, after which an adoption that was going to happen has.
+export async function afterChecks(fixture: string, count = 3) {
+  const target = calls(fixture, 'ps').length + count;
+  await expect
+    .poll(() => calls(fixture, 'ps').length, { timeout: 15_000 })
+    .toBeGreaterThanOrEqual(target);
+}
+
+// Waits for the session `id` to be in `state`, and returns it.
+export function rowWhere(
+  ws: Awaited<ReturnType<typeof projectAndWorkstream>>,
+  id: string,
+  state: string,
+) {
+  return pollFor(`${id} ${state}`, async () => {
+    const found = await ws.session(id);
+    return found?.state === state ? found : undefined;
+  });
 }
 
 // Marker files the fixture CLI keeps per live container and gateway.
