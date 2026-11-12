@@ -28,9 +28,11 @@ func sessionOptionsOf(ctx context.Context, sessionProvider SessionProvider, ref 
 }
 
 // restartTarget is what a session is restarted as: the option it was last
-// started as, or for a session with no record the option its agent names, with
-// the config a bare restart replays and the option's schema. An option its
-// provider no longer offers is refused with ErrOptionNotOffered. So is one whose
+// started as, or for a session with no record the option its agent names. With
+// it come the config a bare restart replays and the option's schema. The config
+// is the recorded one; for a session with no record, the one its provider
+// observed it running with (LaunchObserver), when it knows the option. An option
+// its provider no longer offers is refused with ErrOptionNotOffered. So is one whose
 // schema the provider cannot report, with ErrProviderUnavailable: a form opened,
 // or a config checked, without the schema would restart the session on defaults
 // and record them in place of its settings.
@@ -52,6 +54,11 @@ func (s *Service) restartTarget(ctx context.Context, sessionProvider SessionProv
 	}
 	if !recorded {
 		launch = domain.LaunchConfig{ProviderID: sessionProvider.ID(), OptionID: restartOptionID(session, options)}
+		if observer, ok := sessionProvider.(LaunchObserver); ok && launch.OptionID != "" {
+			if observed, known := observer.ObservedLaunchConfig(ctx, ref, launch.OptionID); known {
+				launch.Config = observed
+			}
+		}
 	}
 	// A session whose option cannot be told is not refused here: it accepts no
 	// settings (validateAgainstOption), and its provider starts it as its own choice.
@@ -109,8 +116,9 @@ type RestartSettings struct {
 // SessionLaunchConfig returns what a session was last started with, and the
 // schema to change it with. For a session HomeShell has no record of — one it
 // adopted, or one started before launch configs were recorded — it is the option a
-// restart would start it as, with no config. A session that cannot be restarted
-// is refused as a restart of it would be, so the form for it never opens.
+// restart would start it as, with the config its provider observed
+// (LaunchObserver), if any. A session that cannot be restarted is refused as a
+// restart of it would be, so the form for it never opens.
 func (s *Service) SessionLaunchConfig(ctx context.Context, ref SessionRef) (RestartSettings, error) {
 	workstream, err := s.store.Workstream(ref.ProjectID, ref.WorkstreamID)
 	if err != nil {

@@ -1801,3 +1801,134 @@ func TestStartByRestartExplainsAmbiguousConversation(t *testing.T) {
 		t.Fatalf("refused start changed state to %s", got)
 	}
 }
+
+// observingFake is the fake as a LaunchObserver: it reports observed for any session, counts its
+// questions, and keeps the last restart it was asked to prepare.
+type observingFake struct {
+	*fake.Provider
+	observed json.RawMessage
+	known    bool
+	asked    atomic.Int32
+	prepared atomic.Pointer[provider.RestartSessionRequest]
+}
+
+func (observing *observingFake) ObservedLaunchConfig(context.Context, provider.SessionRef, string) (json.RawMessage, bool) {
+	observing.asked.Add(1)
+	return observing.observed, observing.known
+}
+
+func (observing *observingFake) PrepareRestart(ctx context.Context, req provider.RestartSessionRequest) (provider.RestartFunc, error) {
+	observing.prepared.Store(&req)
+	return observing.Provider.PrepareRestart(ctx, req)
+}
+
+// newServiceWithUnrecordedSession is a service listing one session of the given agent that HomeShell
+// never started, so it has no launch config recorded, restarted through observing.
+func newServiceWithUnrecordedSession(t *testing.T, observing *observingFake, agent string) (*provider.Service, *store.Store, provider.SessionRef) {
+	t.Helper()
+	dir := t.TempDir()
+	projectStore := store.NewTestStore(t, []domain.Project{{ID: "p1", Name: "p1", Path: dir, Workstreams: []domain.Workstream{
+		{ID: "ws1", Name: "ws", Provider: "fake", WorkingDir: dir},
+	}}})
+	registry := provider.NewRegistry()
+	observing.Provider = fake.New(fake.Config{Seed: map[string][]domain.Workstream{"p1": {{WorkingDir: dir, Sessions: []domain.Session{
+		{ID: "sess-adopted", Title: "Adopted", Agent: agent, State: domain.SessionRunning},
+	}}}}})
+	if err := registry.RegisterWorkstreamProvider(observing.Provider); err != nil {
+		t.Fatalf("register workstream provider: %v", err)
+	}
+	if err := registry.RegisterSessionProvider(observing); err != nil {
+		t.Fatalf("register session provider: %v", err)
+	}
+	service := provider.NewService(projectStore, registry, 0)
+	service.Reconcile(context.Background())
+	return service, projectStore, provider.SessionRef{ProjectID: "p1", WorkstreamID: "ws1", SessionID: "sess-adopted"}
+}
+
+const observedConfig = `{"enclave":{"allowDomains":["example.org"]}}`
+
+func TestRestartOfAnUnrecordedSessionReplaysAndRecordsTheObservedConfig(t *testing.T) {
+	observing := &observingFake{observed: json.RawMessage(observedConfig), known: true}
+	service, projectStore, ref := newServiceWithUnrecordedSession(t, observing, "Sandboxed demo")
+
+	restartOnceIdle(t, service, provider.RestartSessionInput{Session: ref, Fresh: true})
+
+	if got := observing.prepared.Load(); got == nil || !sameJSON(got.Config, observedConfig) {
+		t.Errorf("config the provider restarted with = %+v; want %s", got, observedConfig)
+	}
+	if launch, _ := projectStore.LaunchConfig(ref.SessionID); !sameJSON(launch.Config, observedConfig) {
+		t.Errorf("recorded launch config = %s; want %s", launch.Config, observedConfig)
+	}
+}
+
+func TestLaunchConfigOfAnUnrecordedSession(t *testing.T) {
+	tests := []struct {
+		name       string
+		agent      string
+		observer   *observingFake
+		wantOption string
+		wantConfig string // empty: none
+		wantAsked  int32
+	}{
+		{"is the observed one", "Sandboxed demo", &observingFake{observed: json.RawMessage(observedConfig), known: true}, "sandboxed", observedConfig, 1},
+		{"is none when unobservable", "Sandboxed demo", &observingFake{known: false}, "sandboxed", "", 1},
+		{"is none, unasked, when the option is unknown", "", &observingFake{observed: json.RawMessage(observedConfig), known: true}, "", "", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service, _, ref := newServiceWithUnrecordedSession(t, tt.observer, tt.agent)
+
+			launch, err := service.SessionLaunchConfig(context.Background(), ref)
+			if err != nil {
+				t.Fatalf("SessionLaunchConfig: %v", err)
+			}
+			if launch.OptionID != tt.wantOption {
+				t.Errorf("option = %q; want %q", launch.OptionID, tt.wantOption)
+			}
+			if tt.wantConfig == "" && launch.Config != nil || tt.wantConfig != "" && !sameJSON(launch.Config, tt.wantConfig) {
+				t.Errorf("config = %s; want %q", launch.Config, tt.wantConfig)
+			}
+			if got := tt.observer.asked.Load(); got != tt.wantAsked {
+				t.Errorf("observer asked %d times; want %d", got, tt.wantAsked)
+			}
+		})
+	}
+}
+
+func TestRecordedLaunchConfigWinsOverTheObservedOne(t *testing.T) {
+	observing := &observingFake{observed: json.RawMessage(observedConfig), known: true}
+	service, projectStore, ref := newServiceWithUnrecordedSession(t, observing, "Sandboxed demo")
+	recorded := `{"model":"opus"}`
+	if err := projectStore.SetLaunchConfig("p1", ref.SessionID, domain.LaunchConfig{
+		ProviderID: "fake", OptionID: "sandboxed", Config: json.RawMessage(recorded),
+	}); err != nil {
+		t.Fatalf("SetLaunchConfig: %v", err)
+	}
+
+	launch, err := service.SessionLaunchConfig(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("SessionLaunchConfig: %v", err)
+	}
+	if !sameJSON(launch.Config, recorded) || observing.asked.Load() != 0 {
+		t.Errorf("config = %s, observer asked %d times; want %s, never asked", launch.Config, observing.asked.Load(), recorded)
+	}
+}
+
+// A restart replaying an observed config that no longer validates is refused before the provider prepares it, so a
+// session running in its terminal is not stopped.
+func TestRestartWithAnObservedConfigThatNoLongerValidatesIsRefused(t *testing.T) {
+	observing := &observingFake{observed: json.RawMessage(`{"model":"no-such-model"}`), known: true}
+	service, projectStore, ref := newServiceWithUnrecordedSession(t, observing, "Sandboxed demo")
+
+	_, err := service.RestartSession(context.Background(), provider.RestartSessionInput{Session: ref})
+	var invalid *provider.ValidationError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("RestartSession = %v; want a ValidationError", err)
+	}
+	if prepared := observing.prepared.Load(); prepared != nil {
+		t.Errorf("the provider prepared %+v; want the restart refused before", prepared)
+	}
+	if state := storedSession(t, projectStore, ref).State; state != domain.SessionRunning {
+		t.Errorf("session = %s; want it running, untouched", state)
+	}
+}

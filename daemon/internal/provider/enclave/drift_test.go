@@ -55,6 +55,11 @@ func driftProvider(t *testing.T, options map[string]json.RawMessage, launch *dom
 	return enclaveProvider, cli
 }
 
+// checkOutdated runs the drift half of an inventory check.
+func checkOutdated(enclaveProvider *Provider) bool {
+	return enclaveProvider.outdatedFrom(context.Background(), enclaveProvider.listInventory(context.Background()))
+}
+
 func discoveredOutdated(t *testing.T, enclaveProvider *Provider) []string {
 	t.Helper()
 	found, err := enclaveProvider.DiscoverSessions(context.Background(), provider.ProjectRef{ID: "proj-1", Path: "/tmp/project"})
@@ -79,8 +84,8 @@ func TestOutdatedSettingsAreThoseARestartWouldChange(t *testing.T) {
 		}}
 	}
 
-	if !enclaveProvider.refreshOutdated(context.Background()) {
-		t.Error("refreshOutdated found nothing new; want the session out of date")
+	if !checkOutdated(enclaveProvider) {
+		t.Error("the check found nothing new; want the session out of date")
 	}
 	if want := []string{"--allow-domain", "api.example.com", "--allow-domain", "cdn.example.com"}; !slices.Equal(asked, want) {
 		t.Errorf("config flags = %q; want the restart's %q", asked, want)
@@ -92,8 +97,8 @@ func TestOutdatedSettingsAreThoseARestartWouldChange(t *testing.T) {
 	if err != nil || !slices.Equal(session.OutdatedSettings, []string{"features"}) {
 		t.Errorf("SessionState = %+v, %v; want features out of date", session, err)
 	}
-	if enclaveProvider.refreshOutdated(context.Background()) {
-		t.Error("refreshOutdated reported a change when the answer was the same")
+	if checkOutdated(enclaveProvider) {
+		t.Error("the check reported a change when the answer was the same")
 	}
 
 	if err := restartNow(enclaveProvider, restartRequest(`{}`, false)); err != nil {
@@ -131,8 +136,8 @@ func TestOutdatedSettingsAskWithTheSensitiveDirARestartWouldPass(t *testing.T) {
 		return ResolvedConfig{Valid: true, Options: sandboxschema.EffectiveConfig{"add_sensitive_dirs": option(string(value), "cli")}}
 	}
 
-	if enclaveProvider.refreshOutdated(context.Background()) {
-		t.Errorf("refreshOutdated found %q out of date; want nothing", enclaveProvider.bridges.outdated)
+	if checkOutdated(enclaveProvider) {
+		t.Errorf("the check found %q out of date; want nothing", enclaveProvider.bridges.outdated)
 	}
 	if want := []string{"--add-sensitive-dir", workingDir}; !slices.Equal(asked, want) {
 		t.Errorf("config flags = %q; want the restart's %q", asked, want)
@@ -157,7 +162,7 @@ func TestOutdatedSettingsOnlyOfSessionsHomeShellStarted(t *testing.T) {
 			cli.configWith = func(string, []string) ResolvedConfig {
 				return ResolvedConfig{Valid: true, Options: sandboxschema.EffectiveConfig{"features": option(`["devtools"]`, "default")}}
 			}
-			enclaveProvider.refreshOutdated(context.Background())
+			checkOutdated(enclaveProvider)
 			if got := discoveredOutdated(t, enclaveProvider); got != nil {
 				t.Errorf("OutdatedSettings = %q; want none", got)
 			}
@@ -180,10 +185,10 @@ func TestOutdatedSettingsOfASessionRestartedMeanwhileAreDropped(t *testing.T) {
 			t.Errorf("restart: %v", err)
 		}
 	}
-	if enclaveProvider.refreshOutdated(context.Background()) {
-		t.Error("refreshOutdated kept what it found about a session restarted meanwhile")
+	if checkOutdated(enclaveProvider) {
+		t.Error("the check kept what it found about a session restarted meanwhile")
 	}
-	if !enclaveProvider.refreshOutdated(context.Background()) {
+	if !checkOutdated(enclaveProvider) {
 		t.Error("the next check found nothing; want the session it lists out of date")
 	}
 }
@@ -200,7 +205,7 @@ func TestOutdatedSettingsDespiteAProjectThatCannotList(t *testing.T) {
 		t.Fatal(err)
 	}
 	cli.listErrIn = map[string]error{"/tmp/gone": errors.New("no such directory")}
-	if !enclaveProvider.refreshOutdated(context.Background()) || !slices.Equal(discoveredOutdated(t, enclaveProvider), []string{"features"}) {
+	if !checkOutdated(enclaveProvider) || !slices.Equal(discoveredOutdated(t, enclaveProvider), []string{"features"}) {
 		t.Error("a project that cannot list kept the session of another from being checked")
 	}
 }
@@ -214,10 +219,10 @@ func TestOutdatedSettingsKeepTheLastResultWhenTheyCannotBeTold(t *testing.T) {
 	cli.configWith = func(string, []string) ResolvedConfig {
 		return ResolvedConfig{Valid: true, Options: sandboxschema.EffectiveConfig{"features": option(`["devtools"]`, "global")}}
 	}
-	enclaveProvider.refreshOutdated(context.Background())
+	checkOutdated(enclaveProvider)
 
 	cli.configWith = func(string, []string) ResolvedConfig { return ResolvedConfig{Error: "timed out"} }
-	if enclaveProvider.refreshOutdated(context.Background()) || !slices.Equal(discoveredOutdated(t, enclaveProvider), []string{"features"}) {
+	if checkOutdated(enclaveProvider) || !slices.Equal(discoveredOutdated(t, enclaveProvider), []string{"features"}) {
 		t.Error("a comparison that could not be made dropped the last result")
 	}
 
@@ -225,7 +230,7 @@ func TestOutdatedSettingsKeepTheLastResultWhenTheyCannotBeTold(t *testing.T) {
 		t.Fatal(err)
 	}
 	cli.listErrIn = map[string]error{"/tmp/project": errors.New("no such directory")}
-	changed := enclaveProvider.refreshOutdated(context.Background())
+	changed := checkOutdated(enclaveProvider)
 	enclaveProvider.bridges.mu.Lock()
 	kept := enclaveProvider.bridges.outdated[restartContainer]
 	enclaveProvider.bridges.mu.Unlock()
@@ -249,12 +254,12 @@ func TestOutdatedSettingsFoundDuringAnAbandonedRestartAreDropped(t *testing.T) {
 		cli.stopErr = errors.New("docker is not running")
 		_ = restartNow(enclaveProvider, restartRequest(`{}`, false))
 	}
-	if enclaveProvider.refreshOutdated(context.Background()) {
-		t.Error("refreshOutdated kept what it found while a restart was abandoned")
+	if checkOutdated(enclaveProvider) {
+		t.Error("the check kept what it found while a restart was abandoned")
 	}
 
 	// What a check found before, about the container left as it was, stands.
-	enclaveProvider.refreshOutdated(context.Background())
+	checkOutdated(enclaveProvider)
 	_ = restartNow(enclaveProvider, restartRequest(`{}`, false))
 	if got := discoveredOutdated(t, enclaveProvider); !slices.Equal(got, []string{"features"}) {
 		t.Errorf("OutdatedSettings after an abandoned restart = %q; want features, as before", got)
@@ -270,7 +275,7 @@ func TestOutdatedSettingsOfASessionWhoseSettingsChangedMeanwhileStand(t *testing
 	cli.configWith = func(string, []string) ResolvedConfig {
 		return ResolvedConfig{Valid: true, Options: sandboxschema.EffectiveConfig{"features": option(`["devtools"]`, "global")}}
 	}
-	enclaveProvider.refreshOutdated(context.Background())
+	checkOutdated(enclaveProvider)
 
 	cli.configWith = func(string, []string) ResolvedConfig {
 		restored := launch
@@ -280,7 +285,7 @@ func TestOutdatedSettingsOfASessionWhoseSettingsChangedMeanwhileStand(t *testing
 		}
 		return ResolvedConfig{Valid: true, Options: sandboxschema.EffectiveConfig{"features": option(`["devtools","node-dev"]`, "global")}}
 	}
-	if enclaveProvider.refreshOutdated(context.Background()) {
+	if checkOutdated(enclaveProvider) {
 		t.Error("a check kept what it found against settings that changed while it ran")
 	}
 	if got := discoveredOutdated(t, enclaveProvider); !slices.Equal(got, []string{"features"}) {
@@ -329,14 +334,14 @@ func TestOutdatedSettingsOfASessionBeingRestartedStand(t *testing.T) {
 	cli.configWith = func(string, []string) ResolvedConfig {
 		return ResolvedConfig{Valid: true, Options: sandboxschema.EffectiveConfig{"features": option(`["devtools"]`, "global")}}
 	}
-	enclaveProvider.refreshOutdated(context.Background())
+	checkOutdated(enclaveProvider)
 	enclaveProvider.bridges.mu.Lock()
 	enclaveProvider.bridges.restarting[restartContainer] = restartProjection{workingDir: "/tmp/project/wt"}
 	enclaveProvider.bridges.mu.Unlock()
 	cli.configWith = func(string, []string) ResolvedConfig {
 		return ResolvedConfig{Valid: true, Options: sandboxschema.EffectiveConfig{"features": option(`["devtools","node-dev"]`, "global")}}
 	}
-	if enclaveProvider.refreshOutdated(context.Background()) {
+	if checkOutdated(enclaveProvider) {
 		t.Error("a check compared a session being restarted against the settings it is to be restarted with")
 	}
 	enclaveProvider.bridges.mu.Lock()
@@ -370,7 +375,7 @@ func TestOutdatedSettingsAskTheBaseOncePerCheck(t *testing.T) {
 
 	for check, wantFeatures := range []int{1, 0} {
 		cli.configCalls, cli.featureCalls, flagged = 0, 0, 0
-		enclaveProvider.refreshOutdated(context.Background())
+		checkOutdated(enclaveProvider)
 		if flagged != 3 {
 			t.Fatalf("check %d resolved %d sessions; want all 3", check+1, flagged)
 		}

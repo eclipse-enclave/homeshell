@@ -290,7 +290,7 @@ func (p *Provider) discoverModels(ctx context.Context, projectID string, a agent
 	project := provider.ProjectRef{ID: projectID, Path: projectDir}
 	projects := p.storeProjects()
 	containers = slices.DeleteFunc(containers, func(container Container) bool {
-		return !ownsDirIn(projects, project, container.Directory)
+		return !ownsContainerIn(projects, project, container)
 	})
 	target, ok := runningContainerFor(containers, a.EnclaveToolName())
 	if !ok {

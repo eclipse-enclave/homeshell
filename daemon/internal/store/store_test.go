@@ -1171,3 +1171,163 @@ func TestReplaceProjectionKeepsChangesSinceTheRead(t *testing.T) {
 		})
 	}
 }
+
+func replacementSeed() []domain.Project {
+	return []domain.Project{{ID: "p1", Name: "test", Path: "/tmp/test", Workstreams: []domain.Workstream{{
+		ID: "ws1", Name: "main", Provider: "test", StrategyID: "in-place",
+		Sessions: []domain.Session{{ID: "old", Title: "session", Agent: "agent", State: domain.SessionRunning}},
+	}}}}
+}
+
+// listing is a workstream listing the given sessions, as a provider's projection would.
+func listing(sessions ...domain.Session) []domain.Workstream {
+	return []domain.Workstream{{ID: "ws1", Name: "main", Provider: "test", StrategyID: "in-place", Sessions: sessions}}
+}
+
+func session(id, replaces string) domain.Session {
+	return domain.Session{ID: id, Title: "session", Agent: "agent", State: domain.SessionRunning, Replaces: replaces}
+}
+
+func TestReplacingSessionTakesOverTitleAndLaunchConfig(t *testing.T) {
+	store := NewTestStore(t, replacementSeed())
+	launch := domain.LaunchConfig{ProviderID: "enclave", OptionID: "codex", Config: json.RawMessage(`{"x":1}`)}
+	if err := store.RenameSession("p1", "ws1", "old", "Mine"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetLaunchConfig("p1", "old", launch); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.ReplaceProjection("p1", nil, listing(session("new", "old")), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, ok := store.LaunchConfig("new"); !ok || got.OptionID != launch.OptionID || string(got.Config) != string(launch.Config) {
+		t.Errorf("LaunchConfig(new) = %+v, %v; want %+v", got, ok, launch)
+	}
+	if _, ok := store.LaunchConfig("old"); ok {
+		t.Error("the replaced session keeps its launch config")
+	}
+	project := findProject(t, decodeProjects(t, store.Snapshot().Data), "p1")
+	if title := project.Workstreams[0].Sessions[0].Title; title != "Mine" {
+		t.Errorf("title of the new session = %q, want Mine", title)
+	}
+	saved := Saved(t, store).SessionTitles
+	if got := saved["new"].Title; got != "Mine" {
+		t.Errorf("persisted title of the new session = %q, want Mine", got)
+	}
+	if _, ok := saved["old"]; ok {
+		t.Error("the replaced session's title is still persisted")
+	}
+}
+
+func TestReplacementKeepsTheNewSessionsOwnRecords(t *testing.T) {
+	store := NewTestStore(t, replacementSeed())
+	if err := store.RenameSession("p1", "ws1", "old", "Old name"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetLaunchConfig("p1", "old", domain.LaunchConfig{ProviderID: "enclave", OptionID: "codex"}); err != nil {
+		t.Fatal(err)
+	}
+	// The new ID was named and launched on its own before the projection carrying it replaced "old".
+	if err := store.ReplaceProjection("p1", nil, listing(session("old", ""), session("new", "")), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RenameSession("p1", "ws1", "new", "New name"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetLaunchConfig("p1", "new", domain.LaunchConfig{ProviderID: "enclave", OptionID: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.ReplaceProjection("p1", nil, listing(session("new", "old")), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, ok := store.LaunchConfig("new"); !ok || got.OptionID != "claude" {
+		t.Errorf("LaunchConfig(new) = %+v, %v; want the claude option", got, ok)
+	}
+	if got := Saved(t, store).SessionTitles["new"].Title; got != "New name" {
+		t.Errorf("persisted title of the new session = %q, want New name", got)
+	}
+}
+
+func TestReplacementOfAHiddenUntrackedSessionCarriesOver(t *testing.T) {
+	store := NewTestStore(t, replacementSeed())
+	if err := store.RenameSession("p1", "ws1", "old", "Mine"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetLaunchConfig("p1", "old", domain.LaunchConfig{ProviderID: "enclave", OptionID: "codex"}); err != nil {
+		t.Fatal(err)
+	}
+	untracked := []domain.UntrackedWorktree{{Name: "wt", Path: "/tmp/test-wt", Sessions: []domain.Session{session("new", "old")}}}
+
+	if err := store.ReplaceProjection("p1", nil, listing(), untracked); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, ok := store.LaunchConfig("new"); !ok || got.OptionID != "codex" {
+		t.Errorf("LaunchConfig(new) = %+v, %v; want the codex option", got, ok)
+	}
+	if got := Saved(t, store).SessionTitles["new"].Title; got != "Mine" {
+		t.Errorf("persisted title of the new session = %q, want Mine", got)
+	}
+}
+
+func TestReplacedSessionStillListedKeepsItsRecords(t *testing.T) {
+	store := NewTestStore(t, replacementSeed())
+	if err := store.RenameSession("p1", "ws1", "old", "Mine"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetLaunchConfig("p1", "old", domain.LaunchConfig{ProviderID: "enclave", OptionID: "codex"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.ReplaceProjection("p1", nil, listing(session("old", ""), session("new", "old")), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, ok := store.LaunchConfig("old"); !ok || got.OptionID != "codex" {
+		t.Errorf("LaunchConfig(old) = %+v, %v; want the codex option", got, ok)
+	}
+	if _, ok := store.LaunchConfig("new"); ok {
+		t.Error("the new session took a launch config from a session still listed")
+	}
+	saved := Saved(t, store).SessionTitles
+	if saved["old"].Title != "Mine" || saved["new"].Title != "" {
+		t.Errorf("persisted titles = %+v; want only old = Mine", saved)
+	}
+}
+
+// Enclave reuses its default container's ID: a second session restarted off it must take the records, not the
+// first one, which still names the same ID as the session it replaced.
+func TestReplacementOfAReusedIDCarriesOverToTheNewSessionOnly(t *testing.T) {
+	store := NewTestStore(t, replacementSeed())
+	if err := store.ReplaceProjection("p1", nil, listing(session("first", "old")), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceProjection("p1", nil, listing(session("first", "old"), session("old", "")), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RenameSession("p1", "ws1", "old", "Bug hunt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetLaunchConfig("p1", "old", domain.LaunchConfig{ProviderID: "enclave", OptionID: "codex"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.ReplaceProjection("p1", nil, listing(session("first", "old"), session("second", "old")), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, ok := store.LaunchConfig("second"); !ok || got.OptionID != "codex" {
+		t.Errorf("LaunchConfig(second) = %+v, %v; want the codex option", got, ok)
+	}
+	if _, ok := store.LaunchConfig("first"); ok {
+		t.Error("the earlier replacement took the launch config")
+	}
+	saved := Saved(t, store).SessionTitles
+	if saved["second"].Title != "Bug hunt" || saved["first"].Title != "" {
+		t.Errorf("persisted titles = %+v; want only second = Bug hunt", saved)
+	}
+}

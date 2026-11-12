@@ -57,5 +57,38 @@
 // is in its output, and the provider can only point at `docker logs`.
 //
 // Request: Add `enclave logs <container-name>`.
+//
+// # GAP 9: `enclave ps --json` does not tell a shell container from an agent's
+//
+// A container `enclave shell` starts runs the tool's image under the tool's
+// profile, and `ps --json` lists it like the agent container of a foreground
+// session. HomeShell adopts sessions started with the CLI from that listing
+// (adopt.go), so such a shell shows as a foreground session.
+//
+// Request: Add the command a container runs (agent or shell) to `ps --json`.
+//
+// # GAP 10: `enclave ps --json` does not say whether a session is attached
+//
+// HomeShell adopts a background session started with the CLI by attaching a
+// bridge to it (adopt.go). Two HomeShell daemons with different data
+// directories whose projects cover the same folder each list the session and
+// each attach: nothing in the listing says another one already has. The `hs-`
+// session names keep each daemon off the sessions the other started, but a
+// CLI session has no such mark.
+//
+// Request: Report in `ps --json` whether, and by how many clients, a background
+// session is attached.
+//
+// # GAP 11: `enclave ps --json` options say less than the create form can set
+//
+// HomeShell restarts a session started with the CLI with the `options` Enclave
+// recorded for its container, as far as the create form models them (features,
+// directories, ports, bridge ports, allowed domains, host config). Lists only
+// extend the configured ones (enclave#99), so an entry the session dropped from
+// a configured list comes back; other options and the tool's own arguments
+// restart with what Enclave resolves now.
+//
+// Request: Let a run take an option to replace a list, and report the tool's
+// arguments in `ps --json`.
 
 package enclave

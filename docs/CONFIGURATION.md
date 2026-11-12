@@ -18,7 +18,8 @@ Everything the daemon persists lives in one directory. The first of these that a
 Which files it holds is in [ARCHITECTURE.md](ARCHITECTURE.md#persistence).
 
 - Two daemons with different data directories are fully separate, including their session
-  bridges. Give each its own `--addr` too.
+  bridges and the Enclave containers each started, but not sessions started with the `enclave` CLI
+  (GAP 10 in `daemon/internal/provider/enclave/gaps.go`). Give each its own `--addr` too.
 - The desktop app passes `HOMESHELL_HOME_DIR` and `HOMESHELL_ADDR` on (see
   [Environment variables](#environment-variables)).
 
@@ -308,4 +309,5 @@ Read by the daemon, meant for automated runs rather than users.
 | `HOMESHELL_SETTINGS_FILE` | Path of the settings file, instead of `settings.json` in the data directory |
 | `HOMESHELL_NO_NATIVE_DIALOG` | `1`, `true`, `yes` or `on` turns the native folder chooser off |
 | `HOMESHELL_UPDATE_BASE_URL` | Download updates from this server instead of `download.eclipse.org` |
+| `HOMESHELL_ENCLAVE_INVENTORY_MS` | How often containers are listed for drift and CLI sessions, instead of every 30 s |
 | `HOMESHELL_FAKE_SESSION_STARTUP_MS` | With `--demo`, new sessions take this many ms to start, with fake output |

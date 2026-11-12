@@ -55,6 +55,16 @@ type bridgeRecord struct {
 	LastTitle string              `json:"lastTitle,omitempty"`
 	State     domain.SessionState `json:"state,omitempty"`
 	Error     string              `json:"error,omitempty"`
+	// Foreground is a session started with the CLI that runs in a user's terminal: it has no bridge, and its
+	// state comes from the inventory (adopt.go). It, not Container.Background, says whether a record is bridged().
+	Foreground bool `json:"foreground,omitempty"`
+	// Replaces is the session this one continues under a new name (restartNames). It stays set, and Enclave may
+	// reuse the old ID (its default container): the store moves records only to a session listed for the first
+	// time, so an earlier replacement does not take what a later session under that ID leaves.
+	Replaces string `json:"replaces,omitempty"`
+	// ReplacingFrom marks a restart under a new name that has not ended (replace); hidden meanwhile. A daemon that
+	// finds it on load crashed in between, and completes the replacement (completeReplacements).
+	ReplacingFrom string `json:"replacingFrom,omitempty"`
 }
 
 // bridgeGuard is one target's per-session state. lifecycle serializes its side
@@ -73,6 +83,9 @@ type bridgeGuard struct {
 	// attachedAt is when this daemon attached the container, cleared once a rule
 	// recognizes the agent's screen. invalidate keeps it.
 	attachedAt time.Time
+	// generation counts the writes of the target's record (setRecord), so a check
+	// that listed the containers before one can tell the record changed meanwhile.
+	generation uint64
 }
 
 // invalidate is called with hostBridges.mu held. Explicit lifecycle changes
@@ -118,7 +131,6 @@ type hostBridges struct {
 	restarting map[string]restartProjection
 	// outdated is the latest drift result, refreshed separately from polling.
 	outdated map[string][]string
-	restarts uint64
 }
 
 // guard is called with b.mu held. Retain guards after removal so an old poll
@@ -134,6 +146,26 @@ func (b *hostBridges) guard(id string) *bridgeGuard {
 		b.guards[id] = guard
 	}
 	return guard
+}
+
+// setRecord writes a target's record and deleteRecord removes it, both with b.mu
+// held. Every write of b.records goes through them, bumping its generation.
+func (b *hostBridges) setRecord(id string, record bridgeRecord) {
+	b.records[id] = record
+	b.guard(id).generation++
+}
+
+func (b *hostBridges) deleteRecord(id string) {
+	delete(b.records, id)
+	b.guard(id).generation++
+}
+
+// dropRecord removes a target's record with what was observed of it, leaving the save to the caller; called with
+// b.mu held.
+func (b *hostBridges) dropRecord(id string) {
+	b.deleteRecord(id)
+	delete(b.observed, id)
+	delete(b.outdated, id)
 }
 
 func (b *hostBridges) guardFor(id string) *bridgeGuard {
@@ -200,6 +232,11 @@ func NewWithBridge(cli CLI, runtime BridgeRuntime, path string) (*Provider, erro
 			bridges.records[record.Container.Name] = record
 		}
 		bridges.last = data
+		if bridges.completeReplacements() {
+			if err := bridges.save(); err != nil {
+				return nil, fmt.Errorf("persist enclave bridge records: %w", err)
+			}
+		}
 	}
 	p := &Provider{cli: cli, bridges: bridges, workstreamsRoot: provider.DefaultWorkstreamsRoot}
 	p.term = terminal.NewOSLauncher(p.TerminalPreference)
@@ -212,6 +249,20 @@ func shortContainerHash(container string) string {
 }
 
 func (r bridgeRecord) target() string { return bridgeTarget(r.Container.Name) }
+
+// bridged reports whether the record's session runs behind a bridge: every one but a foreground one.
+func (r bridgeRecord) bridged() bool { return !r.Foreground }
+
+// takeOver reports whether the record's session runs live in a user's terminal, for HomeShell to take over.
+func (r bridgeRecord) takeOver() bool { return r.Foreground && !r.State.Terminal() }
+
+// stopBridge stops the record's bridge; an unbridged record has none to stop.
+func (b *hostBridges) stopBridge(ctx context.Context, record bridgeRecord) error {
+	if !record.bridged() {
+		return nil
+	}
+	return b.runtime.Stop(ctx, record.target())
+}
 
 func bridgeTarget(container string) string {
 	// Container names can exceed sun_path; keep the runtime target short and
@@ -275,30 +326,14 @@ func (b *hostBridges) write(file recordFile) error {
 	return nil
 }
 
-// registerBridge persists ownership before attachment. A crash between the
-// preceding CLI run and this persistence can still leave an untracked container.
-func (p *Provider) registerBridge(ctx context.Context, container Container) error {
+// registerBridge records a container HomeShell started and attaches its bridge. A crash between the preceding CLI
+// run and the record's save can still leave an untracked container.
+func (p *Provider) registerBridge(ctx context.Context, record bridgeRecord) error {
 	bridges := p.bridges
+	container := record.Container
 	return bridges.withLifecycle(container.Name, func(guard *bridgeGuard) error {
-		bridges.mu.Lock()
-		record := bridgeRecord{Container: container, Sock: bridges.location(bridgeTarget(container.Name))}
-		bridges.records[container.Name] = record
-		delete(bridges.observed, container.Name)
-		persistErr := bridges.save()
-		bridges.mu.Unlock()
-		var err error
-		if persistErr != nil {
-			err = fmt.Errorf("persist enclave bridge: %w", persistErr)
-		} else if startErr := bridges.runtime.Start(ctx, record.target(), container.Directory, p.cli.AttachCommand(container.Name)); startErr != nil {
-			err = fmt.Errorf("attach enclave container: %w", startErr)
-		}
+		err := p.attachRecord(ctx, guard, record, bridgeRecord{}, p.clock())
 		if err == nil {
-			// A poll during the attach found no socket yet; reject and drop that observation.
-			bridges.mu.Lock()
-			guard.invalidate()
-			guard.attachedAt = p.clock()
-			delete(bridges.observed, container.Name)
-			bridges.mu.Unlock()
 			return nil
 		}
 		// This is the single owner of cleanup after either persistence or attachment
@@ -307,20 +342,59 @@ func (p *Provider) registerBridge(ctx context.Context, container Container) erro
 		bridges.mu.Lock()
 		defer bridges.mu.Unlock()
 		if cleanupErr == nil {
-			delete(bridges.records, container.Name)
-			delete(bridges.observed, container.Name)
+			bridges.dropRecord(container.Name)
 			if saveErr := bridges.save(); saveErr != nil {
 				err = errors.Join(err, saveErr)
 			}
 		} else {
+			record := bridges.records[container.Name]
 			record.State = domain.SessionError
 			record.Error = err.Error()
-			bridges.records[container.Name] = record
+			bridges.setRecord(container.Name, record)
 			_ = bridges.save()
 			err = errors.Join(err, fmt.Errorf("cleanup enclave container: %w", cleanupErr))
 		}
 		return err
 	})
+}
+
+// attachRecord records a container and attaches its bridge; the caller holds the container's lifecycle lock.
+// previous is the record this one replaces, if any (see attach). The record is saved before the attach, so ownership
+// outlives a crash during it; on failure it stays written, for the caller to roll back or mark failed. attachedAt is
+// when the agent starts, for an exit soon after to count as a failed start; zero for an agent that ran before.
+func (p *Provider) attachRecord(ctx context.Context, guard *bridgeGuard, record, previous bridgeRecord, attachedAt time.Time) error {
+	bridges := p.bridges
+	name := record.Container.Name
+	bridges.mu.Lock()
+	record.Sock = bridges.location(record.target())
+	bridges.setRecord(name, record)
+	delete(bridges.observed, name)
+	err := bridges.save()
+	bridges.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("persist enclave bridge: %w", err)
+	}
+	if err := p.attach(ctx, record, previous); err != nil {
+		return fmt.Errorf("attach enclave container: %w", err)
+	}
+	bridges.mu.Lock()
+	// A poll during the attach found no socket yet; reject and drop that observation.
+	guard.invalidate()
+	guard.attachedAt = attachedAt
+	delete(bridges.observed, name)
+	bridges.mu.Unlock()
+	return nil
+}
+
+// attach starts the bridge of a recorded container. A bridge of previous that still answers at a socket this daemon
+// no longer resolves refuses it, so a daemon now using another socket directory never attaches a container twice.
+func (p *Provider) attach(ctx context.Context, record, previous bridgeRecord) error {
+	if locator, ok := p.bridges.runtime.(bridgeLocator); ok && previous.Sock != "" {
+		if elsewhere := locator.LocateElsewhere(ctx, previous.target(), previous.Sock); elsewhere != "" {
+			return fmt.Errorf("enclave session is still attached at %s, which this daemon no longer uses; not attaching it again", elsewhere)
+		}
+	}
+	return p.bridges.runtime.Start(ctx, record.target(), record.Container.Directory, p.cli.AttachCommand(record.Container.Name))
 }
 
 func (p *Provider) bridgeSession(record bridgeRecord) domain.Session {
@@ -332,8 +406,19 @@ func (p *Provider) bridgeSession(record bridgeRecord) domain.Session {
 	if title == "" {
 		title = fmt.Sprintf("%s session", record.Container.Tool)
 	}
-	return domain.Session{ID: record.Container.Name, Agent: record.Container.Tool, Title: title, State: state, Error: record.Error}
+	session := domain.Session{ID: record.Container.Name, Agent: record.Container.Tool, Title: title, State: state,
+		Error: record.Error, Replaces: record.Replaces}
+	if record.takeOver() {
+		session.Capabilities = &foregroundCapabilities
+	}
+	return session
 }
+
+// foregroundCapabilities are a live foreground session's, shared by every one of them and never mutated.
+var foregroundCapabilities = domain.SessionCapabilities{TakeOver: true, StopWarning: foregroundStopWarning}
+
+// foregroundStopWarning is what a confirmation before stopping a foreground session says.
+const foregroundStopWarning = "It runs in a terminal; stopping it ends the session there too."
 
 // sampleBridge captures outside the metadata lock. A stopped, removed or
 // restarted target rejects any old observation before classification/publication.
@@ -343,9 +428,10 @@ func (p *Provider) sampleBridge(ctx context.Context, id string, agents map[strin
 	bridges.mu.Lock()
 	guard := bridges.guard(id)
 	record, exists := bridges.records[id]
-	// A restart publishes its own projection; its old bridge is gone on purpose.
+	// A restart publishes its own projection; its old bridge is gone on purpose. A foreground session has no
+	// bridge to sample.
 	_, restarting := bridges.restarting[id]
-	if !exists || restarting || guard.sampling {
+	if !exists || restarting || !record.bridged() || guard.sampling {
 		bridges.mu.Unlock()
 		return
 	}
@@ -461,7 +547,11 @@ func (p *Provider) observeBridge(guard *bridgeGuard, revision uint64, record bri
 			session.ObservationData = data
 		}
 	}
-	bridges.records[id], bridges.observed[id] = record, session
+	// Only a change counts as a write: an unchanged record is written back every poll.
+	if !reflect.DeepEqual(bridges.records[id], record) {
+		bridges.setRecord(id, record)
+	}
+	bridges.observed[id] = session
 	file, err := bridges.encode()
 	bridges.mu.Unlock()
 	// Ownership is unchanged; a lost title or state is retried on the next observation.
@@ -603,12 +693,9 @@ func (p *Provider) recoverBridge(ctx context.Context, guard *bridgeGuard, revisi
 	if found.Status != "running" {
 		return record, fmt.Errorf("enclave container is %s", found.Status)
 	}
-	if locator, ok := bridges.runtime.(bridgeLocator); ok && record.Sock != "" {
-		if elsewhere := locator.LocateElsewhere(budget, record.target(), record.Sock); elsewhere != "" {
-			return record, fmt.Errorf("enclave session is still attached at %s, which this daemon no longer uses; not attaching it again", elsewhere)
-		}
-	}
-	if err := bridges.runtime.Start(budget, record.target(), record.Container.Directory, p.cli.AttachCommand(record.Container.Name)); err != nil {
+	// Not attachRecord: this result is published by observeBridge under the sampled revision, which invalidating
+	// would reject, resetting the backoff too.
+	if err := p.attach(budget, record, record); err != nil {
 		return record, fmt.Errorf("reattach enclave container: %w", err)
 	}
 	record.Sock = bridges.location(record.target())
@@ -616,12 +703,12 @@ func (p *Provider) recoverBridge(ctx context.Context, guard *bridgeGuard, revisi
 }
 
 // sampleBridges captures every owned target once, without holding the shared lock.
-func (p *Provider) sampleBridges(ctx context.Context, agents map[string]string, owns func(dir string) bool, recoverMissing bool) {
+func (p *Provider) sampleBridges(ctx context.Context, agents map[string]string, owns func(Container) bool, recoverMissing bool) {
 	bridges := p.bridges
 	bridges.mu.Lock()
 	var ids []string
 	for _, id := range slices.Sorted(maps.Keys(bridges.records)) {
-		if owns(bridges.records[id].Container.Directory) {
+		if owns(bridges.records[id].Container) {
 			ids = append(ids, id)
 		}
 	}
@@ -641,7 +728,8 @@ func (p *Provider) projectBridges(project provider.ProjectRef, projects []domain
 	var out []provider.DiscoveredSession
 	for _, id := range slices.Sorted(maps.Keys(bridges.records)) {
 		record := bridges.records[id]
-		if !ownsDirIn(projects, project, record.Container.Directory) {
+		// A restart under a new name shows as the session it restarts until it ends.
+		if record.ReplacingFrom != "" || !ownsContainerIn(projects, project, record.Container) {
 			continue
 		}
 		session, ok := bridges.observed[id]
@@ -651,7 +739,8 @@ func (p *Provider) projectBridges(project provider.ProjectRef, projects []domain
 		out = append(out, provider.DiscoveredSession{WorkingDir: record.Container.Directory, Session: bridges.withOutdated(session)})
 	}
 	for name, restarting := range bridges.restarting {
-		if !ownsDirIn(projects, project, restarting.workingDir) {
+		restarted := Container{Directory: restarting.workingDir, ProjectDir: restarting.projectDir}
+		if !ownsContainerIn(projects, project, restarted) {
 			continue
 		}
 		out = slices.DeleteFunc(out, func(discovered provider.DiscoveredSession) bool { return discovered.Session.ID == name })
@@ -676,11 +765,11 @@ func (p *Provider) changeDetector() func(context.Context) bool {
 		snapshot := p.store.Projects()
 		var projects []provider.ProjectRef
 		for _, project := range snapshot {
-			projects = append(projects, provider.ProjectRef{ID: project.ID, Path: project.Path})
+			projects = append(projects, refOf(project))
 		}
 		// A directory owned by two projects is still one target to sample per tick.
-		p.sampleBridges(ctx, p.detectionAgents(), func(dir string) bool {
-			return slices.ContainsFunc(projects, func(project provider.ProjectRef) bool { return ownsDirIn(snapshot, project, dir) })
+		p.sampleBridges(ctx, p.detectionAgents(), func(container Container) bool {
+			return slices.ContainsFunc(projects, func(project provider.ProjectRef) bool { return ownsContainerIn(snapshot, project, container) })
 		}, true)
 		for id := range previous {
 			if !slices.ContainsFunc(projects, func(project provider.ProjectRef) bool { return project.ID == id }) {
@@ -706,7 +795,8 @@ func (p *Provider) bridgeRecordFor(id string) (bridgeRecord, bool) {
 	return record, ok
 }
 
-// liveBridgeRecord centralizes the input/open gate for ended or restarting sessions.
+// liveBridgeRecord centralizes the input/open gate for ended or restarting sessions. A foreground session has no
+// bridge to type into or attach to.
 func (p *Provider) liveBridgeRecord(id string) (bridgeRecord, error) {
 	p.bridges.mu.Lock()
 	defer p.bridges.mu.Unlock()
@@ -716,6 +806,9 @@ func (p *Provider) liveBridgeRecord(id string) (bridgeRecord, error) {
 	}
 	if _, restarting := p.bridges.restarting[id]; record.State != "" || restarting {
 		return record, provider.ErrSessionStopped
+	}
+	if !record.bridged() {
+		return record, provider.ErrCapabilityUnsupported
 	}
 	return record, nil
 }
@@ -745,17 +838,17 @@ func (p *Provider) removeBridge(ctx context.Context, id string, remove bool) err
 				return err
 			}
 		}
-		if err := bridges.runtime.Stop(ctx, record.target()); err != nil {
+		if err := bridges.stopBridge(ctx, record); err != nil {
 			return err
 		}
 		bridges.mu.Lock()
 		defer bridges.mu.Unlock()
 		if remove {
-			delete(bridges.records, id)
-			delete(bridges.observed, id)
+			bridges.dropRecord(id)
 		} else {
 			record.State, record.Error = domain.SessionStopped, ""
-			bridges.records[id], bridges.observed[id] = record, p.bridgeSession(record)
+			bridges.setRecord(id, record)
+			bridges.observed[id] = p.bridgeSession(record)
 		}
 		return bridges.save()
 	})

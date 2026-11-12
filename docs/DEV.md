@@ -210,7 +210,9 @@ flowchart LR
 - Some specs start a daemon of their own on an ephemeral port: `src/isolated-daemon.ts` for
   restarts, `src/enclave-helpers.ts` for Enclave sessions. The latter replaces the `enclave`
   CLI with a fixture script that keeps its state in the directory `HOMESHELL_ENCLAVE_FIXTURE`
-  names, so no Docker is needed.
+  names, so no Docker is needed. `isolatedDaemon({ inventoryMs })` sets the inventory check
+  interval ([test variables](CONFIGURATION.md#for-tests)), and `cliContainer` writes a container
+  as a terminal `enclave` would leave it, for the specs on sessions started with the CLI.
 - `src/global-teardown.ts` stops the shared daemon's bridges, kills and reports any process
   still running from the root (bridges, isolated daemons, fixture scripts), and deletes `h/`.
   A leftover process fails the run.

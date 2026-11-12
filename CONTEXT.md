@@ -154,6 +154,10 @@ option's settings.
 **Restart with settings**:
 A restart of a session from its launch config, optionally changed first.
 
+**Restart in HomeShell**:
+A restart of a session running in a terminal outside HomeShell that ends it there and continues its
+conversation in HomeShell.
+
 **Outdated settings**:
 Provider settings whose current value differs from what a running session started with, so a
 restart would pick up the change.
@@ -200,6 +204,10 @@ or **none**.
 The external tool that runs agents in containers. HomeShell's Enclave session provider wraps it;
 Enclave is not a workstream provider.
 _Avoid_: yoloarena
+
+**CLI session**:
+An Enclave session started with the `enclave` CLI rather than in HomeShell. HomeShell attaches to
+a background one and runs it as its own; a foreground one runs in the user's terminal.
 
 **Sandbox**:
 The container an Enclave session runs in, together with its settings, which Enclave owns and

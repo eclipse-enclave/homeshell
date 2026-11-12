@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -41,6 +42,7 @@ var (
 	_ provider.WatchedDiscoverer    = (*Provider)(nil)
 	_ provider.SessionRestarter     = (*Provider)(nil)
 	_ provider.ContinueRefuser      = (*Provider)(nil)
+	_ provider.LaunchObserver       = (*Provider)(nil)
 	_ provider.OptionSchemaProvider = (*Provider)(nil)
 	_ provider.SessionProvider      = (*Provider)(nil)
 	_ provider.Watcher              = (*Provider)(nil)
@@ -94,13 +96,24 @@ type Provider struct {
 	// settings' defaults (sandbox.go).
 	bases sandboxBases
 	now   func() time.Time
+
+	// inventoryEvery overrides driftCheckInterval when positive (inventory.go).
+	inventoryEvery time.Duration
 }
 
 // restartProjection publishes the in-flight replacement of an owned session.
 type restartProjection struct {
 	workingDir string
 	session    domain.Session
+	// projectDir is the project Enclave resolved the session's container to, which may own it (ownsContainerIn).
+	projectDir string
+	// target is the container the restart brings back: the session's own, or one under a new name
+	// (restartNames), whose record the projection stands in for until the restart ends.
+	target string
 }
+
+// renames reports whether the restart brings the session back under a new name.
+func (restarting restartProjection) renames() bool { return restarting.target != restarting.session.ID }
 
 // SetStore gives the provider access to the daemon's store so it can match a
 // discovered container's directory against the working directories of the
@@ -222,8 +235,8 @@ func (p *Provider) CreateSession(ctx context.Context, req provider.CreateSession
 		return domain.Session{}, fmt.Errorf("start enclave container: %w", err)
 	}
 
-	container := Container{Name: containerName, Tool: tool, Directory: req.WorkingDir, Status: "running"}
-	if err := p.registerBridge(ctx, container); err != nil {
+	container := Container{Name: containerName, Tool: tool, Directory: req.WorkingDir, Status: "running", Background: true}
+	if err := p.registerBridge(ctx, bridgeRecord{Container: container}); err != nil {
 		return domain.Session{}, err
 	}
 	return p.bridgeSession(bridgeRecord{Container: container}), nil
@@ -290,8 +303,13 @@ func newSessionName() string {
 // container, bridge and ownership record. Failed cleanup remains retryable.
 func (p *Provider) RemoveSession(ctx context.Context, ref provider.SessionRef) error {
 	p.bridges.mu.Lock()
+	restarting, wasRestarting := p.bridges.restarting[ref.SessionID]
 	delete(p.bridges.restarting, ref.SessionID)
 	p.bridges.mu.Unlock()
+	// One under a new name may have left its container behind, interrupted; one still running forgets it too.
+	if wasRestarting && restarting.renames() {
+		p.forgetRestarted(ctx, restarting.target)
+	}
 	return p.removeBridge(ctx, ref.SessionID, true)
 }
 
@@ -327,7 +345,7 @@ func (p *Provider) SessionState(ctx context.Context, ref provider.SessionRef) (d
 // checkProject rejects a ref whose project does not own the session's directory.
 func (p *Provider) checkProject(ref provider.SessionRef, record bridgeRecord) error {
 	path, owned := p.projectPath(ref.ProjectID)
-	if !owned || !p.ownsDir(provider.ProjectRef{ID: ref.ProjectID, Path: path}, record.Container.Directory) {
+	if !owned || !ownsContainerIn(p.storeProjects(), provider.ProjectRef{ID: ref.ProjectID, Path: path}, record.Container) {
 		return fmt.Errorf("unknown project %q", ref.ProjectID)
 	}
 	return nil
@@ -352,6 +370,10 @@ func (p *Provider) Open(ctx context.Context, ref provider.SessionRef, mode strin
 		return provider.OpenResult{}, fmt.Errorf("unsupported open mode %q", mode)
 	}
 	record, err := p.liveBridgeRecord(ref.SessionID)
+	if record.takeOver() {
+		// Nothing of a session in the user's terminal can be attached; a shell in its container is what opens.
+		return p.OpenShell(ctx, ref)
+	}
 	if err != nil {
 		return provider.OpenResult{}, err
 	}
@@ -372,9 +394,9 @@ func (p *Provider) Open(ctx context.Context, ref provider.SessionRef, mode strin
 
 // OpenShell opens an interactive shell inside the session's container
 // (provider.ShellOpener). It uses `enclave exec … -- <shell>`, run from the
-// directory recorded for the session, from which enclave rebuilds the
-// container name; `enclave shell` would build a new container. An ended owned
-// session yields ErrNoShellEnvironment. An exec that fails once the window is
+// directory recorded for the session; Enclave resolves the container name verbatim,
+// which covers a tool's unnamed default container. `enclave shell` would build a
+// new container. An ended session yields ErrNoShellEnvironment. An exec that fails once the window is
 // up holds the window open on its error; a shell the user exits does not.
 func (p *Provider) OpenShell(ctx context.Context, ref provider.SessionRef) (provider.OpenResult, error) {
 	record, ok := p.bridgeRecordFor(ref.SessionID)
@@ -385,11 +407,7 @@ func (p *Provider) OpenShell(ctx context.Context, ref provider.SessionRef) (prov
 	if err != nil || observed.State == domain.SessionStopped || observed.State == domain.SessionDone || observed.State == domain.SessionError {
 		return provider.OpenResult{}, provider.ErrNoShellEnvironment
 	}
-	sessionName, err := restartSessionName(record.Container.Name, record.Container.Tool)
-	if err != nil {
-		return provider.OpenResult{}, fmt.Errorf("%w: %v", provider.ErrNoShellEnvironment, err)
-	}
-	args := append([]string{binaryName}, execPrefix(sessionName, record.Container.Tool)...)
+	args := append([]string{binaryName}, execPrefix(record.Container.Name, record.Container.Tool)...)
 	args = append(args, containerShell)
 	if err := p.term.Launch(ctx, terminal.HoldOnStartupFailureIn(record.Container.Directory, args...), ref.SessionID); err != nil {
 		return provider.OpenResult{}, fmt.Errorf("open terminal: %w", err)
@@ -403,21 +421,8 @@ func (p *Provider) OpenShell(ctx context.Context, ref provider.SessionRef) (prov
 // with the directory it runs in so the daemon can match it to a workstream.
 func (p *Provider) DiscoverSessions(ctx context.Context, project provider.ProjectRef) ([]provider.DiscoveredSession, error) {
 	projects := p.storeProjects()
-	p.sampleBridges(ctx, p.detectionAgents(), func(dir string) bool { return ownsDirIn(projects, project, dir) }, false)
+	p.sampleBridges(ctx, p.detectionAgents(), func(container Container) bool { return ownsContainerIn(projects, project, container) }, false)
 	return p.projectBridges(project, projects), nil
-}
-
-// ownsDir reports whether a directory a session runs in is one the project
-// owns: the project directory itself, or the working directory of one of its
-// workstreams. Matching is by the public WorkingDir.
-func (p *Provider) ownsDir(project provider.ProjectRef, sessionDir string) bool {
-	if sessionDir == "" {
-		return false
-	}
-	if domain.SameFolder(sessionDir, project.Path) {
-		return true
-	}
-	return ownsDirIn(p.storeProjects(), project, sessionDir)
 }
 
 func (p *Provider) storeProjects() []domain.Project {
@@ -427,7 +432,28 @@ func (p *Provider) storeProjects() []domain.Project {
 	return p.store.Projects()
 }
 
-// ownsDirIn is ownsDir against a store snapshot, for callers checking many directories.
+// refOf is the provider's reference to a stored project.
+func refOf(project domain.Project) provider.ProjectRef {
+	return provider.ProjectRef{ID: project.ID, Path: project.Path}
+}
+
+// ownsContainerIn reports whether the project owns a container, against a store snapshot: it runs in the project
+// folder or a workstream's working directory, or Enclave resolved it to the project. A container belongs to the
+// project that owns its directory; only when none does, to the project Enclave resolved it to.
+func ownsContainerIn(projects []domain.Project, project provider.ProjectRef, container Container) bool {
+	if ownsDirIn(projects, project, container.Directory) {
+		return true
+	}
+	if container.ProjectDir == "" || !domain.SameFolder(container.ProjectDir, project.Path) {
+		return false
+	}
+	// A folder another project owns (a linked worktree added as its own project) is that project's session.
+	return !slices.ContainsFunc(projects, func(other domain.Project) bool {
+		return ownsDirIn(projects, refOf(other), container.Directory)
+	})
+}
+
+// ownsDirIn reports whether a directory is the project's own or a workstream's working directory.
 func ownsDirIn(projects []domain.Project, project provider.ProjectRef, sessionDir string) bool {
 	if domain.SameFolder(sessionDir, project.Path) {
 		return true
@@ -467,16 +493,17 @@ func (p *Provider) SendKey(ctx context.Context, ref provider.SessionRef, key str
 }
 
 // Watch observes owned host bridges on the hot loop and independently checks
-// launch-config drift using CLI inventory every driftCheckInterval.
+// the CLI inventory every driftCheckInterval, for launch-config drift and CLI
+// sessions to adopt or end.
 func (p *Provider) Watch(ctx context.Context, sink provider.Sink) {
 	p.mu.Lock()
 	p.sink = sink
 	p.mu.Unlock()
 	go func() {
-		if p.refreshOutdated(ctx) {
+		if p.checkInventory(ctx) {
 			sink.Changed()
 		}
-		provider.WatchLoop(ctx, sink, nil, driftCheckInterval, p.refreshOutdated)
+		provider.WatchLoop(ctx, sink, nil, p.inventoryInterval(), p.checkInventory)
 	}()
 	provider.WatchLoop(ctx, sink, p.RefreshInterval, watchInterval, p.changeDetector())
 }

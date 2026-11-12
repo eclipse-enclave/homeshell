@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/eclipsesource/homeshell/daemon/internal/provider"
 	"github.com/eclipsesource/homeshell/daemon/internal/provider/enclave/sandboxschema"
 )
 
@@ -126,12 +128,12 @@ func (p *Provider) sandboxBase(ctx context.Context, dir, tool string) (sandboxsc
 // sandboxChoice is the sandbox group as a create form submits it. A field left
 // out means "Enclave's default".
 type sandboxChoice struct {
-	Features     *[]string           `json:"features"`
-	Dirs         []sandboxschema.Dir `json:"dirs"`
-	Ports        []string            `json:"ports"`
-	BridgePorts  []int               `json:"bridgePorts"`
-	AllowDomains []string            `json:"allowDomains"`
-	HostConfig   *bool               `json:"hostConfig"`
+	Features     *[]string           `json:"features,omitempty"`
+	Dirs         []sandboxschema.Dir `json:"dirs,omitempty"`
+	Ports        []string            `json:"ports,omitempty"`
+	BridgePorts  []int               `json:"bridgePorts,omitempty"`
+	AllowDomains []string            `json:"allowDomains,omitempty"`
+	HostConfig   *bool               `json:"hostConfig,omitempty"`
 }
 
 // unavailableSandboxSchema stands in for the sandbox group when Enclave could not
@@ -152,13 +154,25 @@ func sandboxOf(config json.RawMessage) (sandboxChoice, bool) {
 	if len(bytes.TrimSpace(config)) == 0 {
 		return sandboxChoice{}, false
 	}
-	var doc struct {
-		Sandbox *sandboxChoice `json:"enclave"`
-	}
-	if err := json.Unmarshal(config, &doc); err != nil || doc.Sandbox == nil {
+	var groups map[string]json.RawMessage
+	if err := json.Unmarshal(config, &groups); err != nil {
 		return sandboxChoice{}, false
 	}
-	return *doc.Sandbox, true
+	choice, ok := decode[*sandboxChoice](groups, sandboxschema.Key)
+	if !ok || choice == nil {
+		return sandboxChoice{}, false
+	}
+	return *choice, true
+}
+
+// decode reads the named field of a JSON object as a T; false when it is missing or holds no T.
+func decode[T any](fields map[string]json.RawMessage, name string) (T, bool) {
+	var value T
+	if err := json.Unmarshal(fields[name], &value); err != nil {
+		var zero T
+		return zero, false
+	}
+	return value, true
 }
 
 // sandboxFlags are the `enclave run` flags for what the user changed from base.
@@ -234,4 +248,80 @@ func sameSet(first, second []string) bool {
 	slices.Sort(first)
 	slices.Sort(second)
 	return slices.Equal(slices.Compact(first), slices.Compact(second))
+}
+
+// sandboxChoiceFromOptions is the sandbox group a session's recorded options
+// amount to, as far as the create form models them, relative to base: the
+// settings Enclave resolves for it now. A setting equal to base's is left unset,
+// and list entries base already lists are not repeated, since lists only extend
+// (extendList). Options the form does not model are ignored.
+func sandboxChoiceFromOptions(running map[string]json.RawMessage, base sandboxschema.EffectiveConfig) sandboxChoice {
+	listed := func(name string) []string {
+		items, _ := decode[[]string](running, name)
+		return slices.DeleteFunc(items, func(item string) bool { return slices.Contains(base.List(name), item) })
+	}
+	var choice sandboxChoice
+	if features, ok := decode[[]string](running, "features"); ok && !sameSet(features, base.List("features")) {
+		choice.Features = &features
+	}
+	for _, dirOption := range []struct {
+		name     string
+		readonly bool
+	}{{"add_dirs", false}, {"add_readonly_dirs", true}} {
+		for _, path := range listed(dirOption.name) {
+			choice.Dirs = append(choice.Dirs, formDir(path, dirOption.readonly))
+		}
+	}
+	choice.Ports = listed("ports")
+	for _, port := range listed("bridge_ports") {
+		if number, err := strconv.Atoi(port); err == nil {
+			choice.BridgePorts = append(choice.BridgePorts, number)
+		}
+	}
+	choice.AllowDomains = listed("allow_domains")
+	if hostConfig, ok := decode[string](running, "host_config"); ok {
+		if passthrough := hostConfig == "passthrough"; passthrough != (base.String("host_config") == "passthrough") {
+			choice.HostConfig = &passthrough
+		}
+	}
+	return choice
+}
+
+// formDir is a directory as the create form submits it: Readonly left out for a read-only one, which is the
+// default, and false for a writable one.
+func formDir(path string, readonly bool) sandboxschema.Dir {
+	if readonly {
+		return sandboxschema.Dir{Path: path}
+	}
+	return sandboxschema.Dir{Path: path, Readonly: new(bool)}
+}
+
+// config is the choice as a session config: only the fields it sets, in the
+// sandbox group; `{}` for one that sets nothing.
+func (choice sandboxChoice) config() json.RawMessage {
+	if choice.isEmpty() {
+		return json.RawMessage(`{}`)
+	}
+	config, _ := json.Marshal(map[string]any{sandboxschema.Key: choice})
+	return config
+}
+
+// ObservedLaunchConfig is the launch config of a session started with the CLI,
+// from the options Enclave recorded for its container (provider.LaunchObserver):
+// a restart or Continue replays and records it, so from then on the session
+// drifts and is edited like one started here. False for a session with no
+// recorded options (one started here, or an older one), or when Enclave cannot
+// say what it resolves now.
+func (p *Provider) ObservedLaunchConfig(ctx context.Context, ref provider.SessionRef, optionID string) (json.RawMessage, bool) {
+	record, owned := p.bridgeRecordFor(ref.SessionID)
+	if !owned || record.Container.Options == nil {
+		return nil, false
+	}
+	base, err := p.sandboxBase(ctx, record.Container.Directory, restartTool(optionID))
+	if err != nil {
+		slog.Debug("cannot tell what a session was started with: Enclave did not report its settings",
+			"session", ref.SessionID, "error", err)
+		return nil, false
+	}
+	return sandboxChoiceFromOptions(record.Container.Options, base.Config).config(), true
 }

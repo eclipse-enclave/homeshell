@@ -34,10 +34,15 @@ type testBridge struct {
 	dumps, stops int
 	input, key   string
 	inputTarget  string
+	// onStart runs inside every Start, before it is recorded.
+	onStart func()
 }
 
 func (b *testBridge) Available(context.Context, string) error { return nil }
 func (b *testBridge) Start(_ context.Context, _, _ string, argv []string) error {
+	if b.onStart != nil {
+		b.onStart()
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.starts = append(b.starts, argv)
@@ -86,7 +91,7 @@ func (b *testBridge) AttachCommand(target string) []string {
 func bridgeProvider(t *testing.T) (*Provider, *fakeCLI, *testBridge, provider.ProjectRef) {
 	t.Helper()
 	dir := t.TempDir()
-	cli := &fakeCLI{available: true, runResult: "enclave-codex-0123456789ab-hs-134"}
+	cli := &fakeCLI{available: true, runResult: "enclave-codex-0123456789ab-hs-134", tools: []string{"claude", "codex", "theia"}}
 	bridge := &testBridge{snap: sbridge.Snapshot{Screen: "Ready", OSCTitle: "✳ Codex"}}
 	p, err := NewWithBridge(cli, bridge, filepath.Join(t.TempDir(), "enclave-provider.json"))
 	if err != nil {
@@ -134,7 +139,7 @@ func pastStartup(p *Provider, id string) {
 
 func discoverBridge(t *testing.T, p *Provider, project provider.ProjectRef) domain.Session {
 	t.Helper()
-	p.sampleBridges(context.Background(), p.detectionAgents(), func(dir string) bool { return p.ownsDir(project, dir) }, true)
+	p.sampleBridges(context.Background(), p.detectionAgents(), func(container Container) bool { return ownsContainerIn(p.storeProjects(), project, container) }, true)
 	p.waitForBridgeSamples()
 	out, err := p.DiscoverWatchedSessions(context.Background(), project)
 	if err != nil {
@@ -769,5 +774,47 @@ func TestReattachRefusesWhileTheRecordedBridgeAnswers(t *testing.T) {
 	discoverBridge(t, p, project)
 	if record, _ := p.bridgeRecordFor(created.ID); len(b.starts) != 2 || record.Sock != locator.Location(bridgeTarget(created.ID)) {
 		t.Fatalf("starts=%d sock=%q after the old bridge went away", len(b.starts), record.Sock)
+	}
+}
+
+func TestRecordInAProjectsWorktreeBelongsToTheProject(t *testing.T) {
+	p, _, _, project := bridgeProvider(t)
+	worktree := t.TempDir()
+	for name, projectDir := range map[string]string{"own": project.Path, "other": t.TempDir()} {
+		p.bridges.mu.Lock()
+		p.bridges.records[name] = bridgeRecord{Container: Container{Name: name, Tool: "codex", Directory: worktree, ProjectDir: projectDir}}
+		p.bridges.mu.Unlock()
+	}
+	out, err := p.DiscoverWatchedSessions(context.Background(), project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Session.ID != "own" || out[0].WorkingDir != worktree {
+		t.Fatalf("sessions=%+v; want only the record whose project is this one, at its own directory", out)
+	}
+}
+
+func TestContainerOwnershipByProjectOrFolder(t *testing.T) {
+	projectA := provider.ProjectRef{ID: "a", Path: "/repo"}
+	projectB := provider.ProjectRef{ID: "b", Path: "/repo-wt"}
+	projects := []domain.Project{{ID: "a", Path: "/repo"}, {ID: "b", Path: "/repo-wt"}}
+	for _, test := range []struct {
+		name      string
+		projects  []domain.Project
+		project   provider.ProjectRef
+		container Container
+		want      bool
+	}{
+		{"shared repository: the project owning the folder", projects, projectB, Container{Directory: "/repo-wt", ProjectDir: "/repo"}, true},
+		{"shared repository: not the project Enclave resolved", projects, projectA, Container{Directory: "/repo-wt", ProjectDir: "/repo"}, false},
+		{"unclaimed linked worktree belongs to its project", projects[:1], projectA, Container{Directory: "/repo-wt", ProjectDir: "/repo"}, true},
+		{"record without a project falls back to its directory", projects, projectB, Container{Directory: "/repo-wt"}, true},
+		{"record without a project, another folder", projects, projectA, Container{Directory: "/repo-wt"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ownsContainerIn(test.projects, test.project, test.container); got != test.want {
+				t.Errorf("ownsContainerIn = %v, want %v", got, test.want)
+			}
+		})
 	}
 }

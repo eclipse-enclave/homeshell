@@ -1,6 +1,7 @@
 package enclave
 
 import (
+	"os"
 	"path/filepath"
 
 	"github.com/eclipsesource/homeshell/daemon/internal/hostbridge"
@@ -15,6 +16,11 @@ func init() {
 			return nil, err
 		}
 		runtime := hostbridge.New(filepath.Join(base, "enclave"))
-		return NewWithBridge(NewCLI(), runtime, filepath.Join(base, "enclave-provider.json"))
+		enclaveProvider, err := NewWithBridge(NewCLI(), runtime, filepath.Join(base, "enclave-provider.json"))
+		if err != nil {
+			return nil, err
+		}
+		enclaveProvider.inventoryEvery = inventoryIntervalFrom(os.Getenv(inventoryIntervalEnv))
+		return enclaveProvider, nil
 	})
 }

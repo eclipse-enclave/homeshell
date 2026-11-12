@@ -278,6 +278,28 @@ type Session struct {
 	// Sorted, in the provider's own names; empty when nothing changed or the
 	// provider cannot tell. Live, like Preview: never persisted.
 	OutdatedSettings []string `json:"outdatedSettings,omitempty"`
+	// Capabilities are what a client may do with this session beyond its
+	// provider's capabilities. Nil means the session is live (HomeShell sees and
+	// types into it), offers no take-over and needs no stop warning. Derived by
+	// the provider; never persisted.
+	Capabilities *SessionCapabilities `json:"capabilities,omitempty"`
+	// Replaces is the ID of the session this one goes on from under a new ID; the
+	// store carries the old session's title and launch config over to it when it
+	// is first listed. Set by the provider and kept; never serialized.
+	Replaces string `json:"-"`
+}
+
+// SessionCapabilities are what a client may do with one session beyond its
+// provider's capabilities. A session without them is live, offers no take-over
+// and needs no stop warning.
+type SessionCapabilities struct {
+	// Live is whether HomeShell sees the session's screen and can type into it.
+	Live bool `json:"live"`
+	// TakeOver is whether the session runs outside HomeShell, so that a restart
+	// brings it under HomeShell.
+	TakeOver bool `json:"takeOver"`
+	// StopWarning is what a confirmation before stopping or deleting says.
+	StopWarning string `json:"stopWarning,omitempty"`
 }
 
 // LaunchConfig is what a session was last (re)started with: its provider, the

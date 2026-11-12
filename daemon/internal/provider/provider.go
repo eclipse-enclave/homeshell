@@ -255,6 +255,13 @@ type ContinueRefuser interface {
 	ContinueRefusal(optionID, workingDir string, neighbourOptionIDs []string) error
 }
 
+// LaunchObserver is a session restarter that can tell what a session it has no
+// recorded launch config for was started with, as a config of optionID's schema.
+// A restart replays and records it; the restart form opens on it.
+type LaunchObserver interface {
+	ObservedLaunchConfig(ctx context.Context, ref SessionRef, optionID string) (json.RawMessage, bool)
+}
+
 // OptionSchemaProvider is a session provider that can build the schema of one of
 // its options without listing them all, which can mean asking about every one.
 // The schema is nil for an option with none; an option the provider does not

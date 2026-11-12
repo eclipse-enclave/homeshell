@@ -10,33 +10,23 @@ import (
 	"github.com/eclipsesource/homeshell/daemon/internal/provider"
 )
 
-// PrepareRestart readies a session to be started again with new settings.
+// PrepareRestart readies a session to be started again with new settings. Enclave fixes a container's settings
+// when it creates it and has no command that changes them, so a restart is `enclave stop`, which also removes the
+// container, then `enclave continue` in the background (`enclave run` for a fresh one, or for a tool that cannot
+// continue: cannotContinue). Which name the session goes on under (restartNames) and what it continues are in
+// docs/PROVIDERS.md (Eclipse Enclave).
 //
-// Enclave fixes a container's settings when it creates it and has no command that
-// changes them, so a restart is `enclave stop` (which also removes the container)
-// followed by `enclave continue` under the **same** `--name`. Enclave derives the
-// container name from that name, so the container comes back under the session's
-// ID, keeping its title and its row; and `continue` hands the tool its profile's
-// continue arguments, so the agent picks its last conversation back up — that
-// conversation lives in Enclave's per-project stores on the host, not in the
-// container. A fresh restart uses `enclave run` instead, and so does a restart of a
-// tool whose profile has no way to continue (cannotContinue).
-//
-// "Last conversation" is the tool's notion: two sessions of the same tool in the
-// same directory share it, so either would continue the other's latest; such a
-// session is only restarted fresh (ContinueRefusal).
-//
-// Everything that can refuse the restart — a container with no session name to
-// restart it under (CheckRestart), settings that cannot become flags — is checked
-// here, and nothing is changed: the session is only shown as starting once the
-// returned func runs.
+// Everything that can refuse the restart — a container that is not Enclave's (CheckRestart), settings that cannot
+// become flags — is checked here, and nothing is changed: the session is only shown as starting once the returned
+// func runs.
 func (p *Provider) PrepareRestart(ctx context.Context, req provider.RestartSessionRequest) (provider.RestartFunc, error) {
 	container := req.Session.SessionID
-	if _, owned := p.bridgeRecordFor(container); !owned {
+	record, owned := p.bridgeRecordFor(container)
+	if !owned {
 		return nil, fmt.Errorf("%w: unknown Enclave session", provider.ErrSessionNotRestartable)
 	}
 	tool := restartTool(req.OptionID)
-	sessionName, err := restartSessionName(container, tool)
+	target, sessionName, err := restartNames(container, tool)
 	if err != nil {
 		return nil, err
 	}
@@ -54,6 +44,8 @@ func (p *Provider) PrepareRestart(ctx context.Context, req provider.RestartSessi
 
 	restarting := restartProjection{
 		workingDir: req.WorkingDir,
+		projectDir: record.Container.ProjectDir,
+		target:     target,
 		session: domain.Session{
 			ID:    container,
 			Title: fmt.Sprintf("%s session", tool),
@@ -65,12 +57,13 @@ func (p *Provider) PrepareRestart(ctx context.Context, req provider.RestartSessi
 }
 
 // CheckRestart refuses a session PrepareRestart would refuse whatever its
-// settings: a container with no session name to restart it under.
+// settings: one this provider has no record of, or a container not named as
+// Enclave names the tool's.
 func (p *Provider) CheckRestart(ref provider.SessionRef, optionID string) error {
 	if _, owned := p.bridgeRecordFor(ref.SessionID); !owned {
 		return fmt.Errorf("%w: unknown Enclave session", provider.ErrSessionNotRestartable)
 	}
-	_, err := restartSessionName(ref.SessionID, restartTool(optionID))
+	_, _, err := restartNames(ref.SessionID, restartTool(optionID))
 	return err
 }
 
@@ -96,31 +89,81 @@ func restartTool(optionID string) string {
 	return optionID
 }
 
-// restartSessionName is the session name a container is restarted under. Without
-// one, `enclave run` would start the tool's default container, which is a
-// different session — and that is what a container Enclave started without a
-// name, outside HomeShell, is.
-func restartSessionName(container, tool string) (string, error) {
-	if sessionName := parseSessionName(container, tool); sessionName != "" {
-		return sessionName, nil
+// restartNames is the container a restart of container brings back and the --name it passes: the same ones for
+// a named session; for the default container or an auto-assigned number (`1`, `2`, …) a new hs- name. Why: an
+// unnamed start in a terminal takes the default container, or numbers its own when that is taken; continued
+// under either name, the session would hold it or pass for one started there. A user's `--name 3` reads as
+// a number too.
+func restartNames(container, tool string) (target, sessionName string, err error) {
+	base, ok := containerBase(container, tool)
+	if !ok {
+		return "", "", fmt.Errorf("%w: %q is not the name of an Enclave %s container", provider.ErrSessionNotRestartable,
+			container, tool)
 	}
-	return "", fmt.Errorf("%w: the container %q has no session name to restart it under: it is a tool's unnamed default container, started outside HomeShell; start a new session with the settings instead",
-		provider.ErrSessionNotRestartable, container)
+	sessionName = strings.TrimPrefix(strings.TrimPrefix(container, base), "-")
+	if unnamed := sessionName == "" || isDigits(sessionName); !unnamed {
+		return container, sessionName, nil
+	}
+	sessionName = newSessionName()
+	return base + "-" + sessionName, sessionName, nil
 }
 
-// restart replaces the session's container with one started with opts, reporting
-// the session as starting meanwhile. A failure to start it is reported on the
-// session, as a failed start is. A failure to stop the old container leaves the
-// session as it was — the container is most likely still running it — and is
-// returned instead, for the service to report.
+// containerBase is the name of the tool's default container in container's project, `enclave-<tool>-<12 hex>`,
+// which every container of the tool there starts with; false for a name that does not.
+func containerBase(container, tool string) (string, bool) {
+	const hashLength = 12
+	prefix := binaryName + "-" + tool + "-"
+	if !strings.HasPrefix(container, prefix) || len(container) < len(prefix)+hashLength {
+		return "", false
+	}
+	base := container[:len(prefix)+hashLength]
+	if !isLowerHex(base[len(prefix):]) {
+		return "", false
+	}
+	switch sessionPart := container[len(base):]; {
+	case sessionPart == "":
+		return base, true // the default container
+	case len(sessionPart) > 1 && sessionPart[0] == '-':
+		return base, true // a session name after the hash
+	default:
+		return "", false
+	}
+}
+
+// isDigits reports whether text holds decimal digits only.
+func isDigits(text string) bool {
+	return !strings.ContainsFunc(text, func(char rune) bool { return char < '0' || char > '9' })
+}
+
+// isLowerHex reports whether text holds lower-case hexadecimal digits only.
+func isLowerHex(text string) bool {
+	return !strings.ContainsFunc(text, func(char rune) bool {
+		return (char < '0' || char > '9') && (char < 'a' || char > 'f')
+	})
+}
+
+// restart replaces the session's container with one started with opts, reporting the session as starting meanwhile:
+// it takes the old container down (takeDown), brings the new one up (bringUp) and finishes (finishRestart). A
+// failure to stop the old container leaves the session as it was — the container most likely still runs it — and
+// is returned, for the service to report; a later failure is reported on the session, as a failed start is.
 //
-// A restart is withdrawn by removing the session — RemoveSession takes it out of
-// restarting — and cancelled by its context. A withdrawn or cancelled restart
-// brings nothing back; one cancelled before it began returns the context's
-// error, and one cancelled once it took the session into restarting, and not
-// withdrawn, leaves it there and returns provider.ErrRestartInterrupted, for the
-// service to remove the session.
+// A restart is withdrawn by removing the session — RemoveSession takes it out of restarting — and cancelled by its
+// context; either brings nothing back. One cancelled before it began returns the context's error; one cancelled
+// later, and not withdrawn, returns provider.ErrRestartInterrupted, for the service to remove the session.
 func (p *Provider) restart(ctx context.Context, restarting restartProjection, opts RunOpts) error {
+	previous, down, err := p.takeDown(ctx, restarting)
+	if !down {
+		return err
+	}
+	if err := p.bringUp(ctx, restarting, previous, opts); err != nil && ctx.Err() == nil {
+		return p.reportRestartFailure(ctx, restarting, err)
+	}
+	return p.finishRestart(ctx, restarting)
+}
+
+// takeDown takes the session into restarting and stops its container and bridge, returning its record as it was
+// and whether the restart goes on; when it does not, what the restart returns.
+func (p *Provider) takeDown(ctx context.Context, restarting restartProjection) (bridgeRecord, bool, error) {
 	container := restarting.session.ID
 	bridges := p.bridges
 	var previous bridgeRecord
@@ -139,23 +182,59 @@ func (p *Provider) restart(ctx context.Context, restarting restartProjection, op
 			stopErr = err
 			return nil
 		}
-		bridgeErr = bridges.runtime.Stop(ctx, previous.target())
+		bridgeErr = bridges.stopBridge(ctx, previous)
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-	if stopErr != nil {
-		return p.abandonRestart(ctx, container, fmt.Errorf("stop enclave container: %w", stopErr))
-	}
-	if bridgeErr != nil {
-		return p.reportRestartFailure(ctx, restarting, fmt.Errorf("stop old enclave bridge: %w", bridgeErr))
+	switch {
+	case err != nil:
+		return previous, false, err
+	case stopErr != nil:
+		return previous, false, p.abandonRestart(ctx, container, fmt.Errorf("stop enclave container: %w", stopErr))
+	case bridgeErr != nil:
+		bridgeErr = fmt.Errorf("stop old enclave bridge: %w", bridgeErr)
+		return previous, false, p.reportRestartFailure(ctx, restarting, bridgeErr)
 	}
 	bridges.mu.Lock()
 	delete(bridges.outdated, container)
-	bridges.restarts++
 	bridges.mu.Unlock()
+	return previous, true, nil
+}
 
+// bringUp starts the session's container again and attaches it, unless the restart was withdrawn or cancelled
+// while the container came up. previous is the session's record before the restart.
+func (p *Provider) bringUp(ctx context.Context, restarting restartProjection, previous bridgeRecord, opts RunOpts) error {
+	container, target := restarting.session.ID, restarting.target
+	if err := p.runRestarted(ctx, restarting, opts); err != nil {
+		return fmt.Errorf("start enclave container: %w", err)
+	}
+	bridges := p.bridges
+	bridges.mu.Lock()
+	_, stillRestarting := bridges.restarting[container]
+	bridges.mu.Unlock()
+	if !stillRestarting || ctx.Err() != nil {
+		return nil
+	}
+	record := bridgeRecord{Container: Container{Name: target, Tool: opts.Tool, Directory: restarting.workingDir,
+		ProjectDir: previous.Container.ProjectDir, Status: "running", Background: true}}
+	if restarting.renames() {
+		// Hidden until the restart ends (replace), or completed on load after a crash (completeReplacements).
+		record.Replaces, record.ReplacingFrom = container, container
+	}
+	if err := p.registerBridge(ctx, record); err != nil {
+		if restarting.renames() {
+			// A record kept for a failed cleanup would be a second failed row beside the session's.
+			p.forgetRestarted(ctx, target)
+		}
+		return err
+	}
+	return nil
+}
+
+// runRestarted runs the restarted container, showing its output on the session as it comes, and starts it fresh
+// when the tool has no way to continue.
+func (p *Provider) runRestarted(ctx context.Context, restarting restartProjection, opts RunOpts) error {
+	container, target := restarting.session.ID, restarting.target
+	bridges := p.bridges
 	progress := provider.NewStartupSink(func(tail string) {
 		bridges.mu.Lock()
 		if current, ok := bridges.restarting[container]; ok {
@@ -174,61 +253,117 @@ func (p *Provider) restart(ctx context.Context, restarting restartProjection, op
 		started, err = p.cli.Run(ctx, restarting.workingDir, opts)
 	}
 	progress.Close()
-	if err == nil && started != container {
-		// Enclave names the container after the session name it was given, so the
-		// row stays the session's. One under another name is not this session: it
-		// is stopped rather than left running for nothing to own.
-		if stopErr := p.cli.Stop(context.WithoutCancel(ctx), started); stopErr != nil {
-			slog.Warn("stopping a restarted container that came back under another name failed",
-				"container", started, "error", stopErr)
-		}
-		err = fmt.Errorf("enclave started the session as %q instead of %q", started, container)
+	if err != nil || started == target {
+		return err
 	}
-	if err != nil && ctx.Err() == nil {
-		return p.reportRestartFailure(ctx, restarting, fmt.Errorf("start enclave container: %w", err))
+	// Enclave names the container after the session name it was given. One under another name is not this
+	// session: it is stopped rather than left running for nothing to own.
+	if stopErr := p.cli.Stop(context.WithoutCancel(ctx), started); stopErr != nil {
+		slog.Warn("stopping a restarted container that came back under another name failed",
+			"container", started, "error", stopErr)
 	}
+	return fmt.Errorf("enclave started the session as %q instead of %q", started, target)
+}
+
+// finishRestart ends a restart whose container is back, or that was withdrawn or cancelled while it came back,
+// telling which under one lock.
+func (p *Provider) finishRestart(ctx context.Context, restarting restartProjection) error {
+	container, target := restarting.session.ID, restarting.target
+	bridges := p.bridges
 	bridges.mu.Lock()
 	_, stillRestarting := bridges.restarting[container]
-	bridges.mu.Unlock()
-	if stillRestarting && ctx.Err() == nil && err == nil {
-		err = p.registerBridge(ctx, Container{Name: container, Tool: opts.Tool, Directory: restarting.workingDir, Status: "running"})
-		if err != nil {
-			return p.reportRestartFailure(ctx, restarting, err)
+	cancelled := ctx.Err() != nil
+	if stillRestarting && !cancelled {
+		delete(bridges.restarting, container)
+		if restarting.renames() {
+			bridges.replace(container, target)
 		}
 	}
-	bridges.mu.Lock()
-	_, stillRestarting = bridges.restarting[container]
-	if ctx.Err() != nil && stillRestarting {
-		// Cancelled, for RemoveSession to take the entry, and stop the container,
-		// whatever this restart got as far as.
-		bridges.mu.Unlock()
-		return provider.ErrRestartInterrupted
-	}
-	delete(bridges.restarting, container)
 	bridges.mu.Unlock()
-	if !stillRestarting {
-		// Removed while it was coming back, after the removal stopped the old
-		// container: the one started now, and its bridge, belong to nothing.
-		_ = bridges.withLifecycle(container, func(*bridgeGuard) error {
-			record, exists := p.bridgeRecordFor(container)
-			if stopErr := p.cli.Stop(context.WithoutCancel(ctx), container); stopErr != nil {
-				slog.Debug("stopping the container of a withdrawn restart failed", "container", container, "error", stopErr)
-			}
-			if exists {
-				_ = bridges.runtime.Stop(context.WithoutCancel(ctx), record.target())
-			}
-			bridges.mu.Lock()
-			defer bridges.mu.Unlock()
-			delete(bridges.records, container)
-			delete(bridges.observed, container)
-			if err := bridges.save(); err != nil {
-				slog.Error("persist withdrawn restart", "error", err)
-			}
-			return nil
-		})
+	switch {
+	case stillRestarting && cancelled:
+		// Left restarting, for RemoveSession. Why a new name's container goes now: after a shutdown nothing
+		// removes the session, and the next daemon would take an unrecorded hs- container for another daemon's.
+		if restarting.renames() {
+			p.forgetRestarted(ctx, target)
+		}
+		return provider.ErrRestartInterrupted
+	case !stillRestarting:
+		// Withdrawn after the removal stopped the old container: what this restart started belongs to nothing.
+		p.forgetRestarted(ctx, target)
 	}
 	p.notify()
 	return nil
+}
+
+// replace hands the replaced session's place to the record of target, which goes on from it under a new name, and
+// saves; called with b.mu held. Both records change in one locked section, so no projection shows the two
+// sessions, or neither. Not under target's lifecycle lock: the generation bump and invalidate reject what a poll
+// read before, as taking the lock would.
+func (b *hostBridges) replace(container, target string) {
+	record, exists := b.records[target]
+	if !exists {
+		// bringUp registered it, and only a withdrawn restart, which does not get here, drops it.
+		slog.Error("a restart under a new name lost the new container's record; keeping the old session",
+			"container", container, "target", target)
+		return
+	}
+	b.completeReplacement(target, record)
+	b.guard(target).invalidate()
+	if err := b.save(); err != nil {
+		slog.Error("persist restart under a new name", "container", container, "target", target, "error", err)
+	}
+}
+
+// completeReplacements completes each restart under a new name that a crash interrupted after it recorded the new
+// container (ReplacingFrom), reporting whether it completed any; called on load. Completing is safe: ReplacingFrom
+// is only written after the old container was stopped, so the new one runs the session's conversation, and
+// recovery attaches it if the crash came before its bridge did.
+func (b *hostBridges) completeReplacements() bool {
+	completed := false
+	for name, record := range b.records {
+		if record.ReplacingFrom != "" {
+			b.completeReplacement(name, record)
+			completed = true
+		}
+	}
+	return completed
+}
+
+// completeReplacement drops the record of the session target's record replaces, and clears its ReplacingFrom
+// marker; called with b.mu held.
+func (b *hostBridges) completeReplacement(target string, record bridgeRecord) {
+	b.dropRecord(record.ReplacingFrom)
+	record.ReplacingFrom = ""
+	b.setRecord(target, record)
+}
+
+// forgetRestarted stops the container a restart started that is not to go on — withdrawn, cancelled, or one that
+// could not be attached — and its bridge, and drops its record. Best effort: what fails is logged.
+func (p *Provider) forgetRestarted(ctx context.Context, target string) {
+	ctx = context.WithoutCancel(ctx)
+	bridges := p.bridges
+	_ = bridges.withLifecycle(target, func(*bridgeGuard) error {
+		// Debug: a restart withdrawn before its container came up has none to stop.
+		if err := p.cli.Stop(ctx, target); err != nil {
+			slog.Debug("stopping the container of a restart that does not go on failed", "container", target,
+				"error", err)
+		}
+		record, exists := p.bridgeRecordFor(target)
+		if !exists {
+			return nil
+		}
+		if err := bridges.stopBridge(ctx, record); err != nil {
+			slog.Warn("stopping the bridge of a restart that does not go on failed", "container", target, "error", err)
+		}
+		bridges.mu.Lock()
+		defer bridges.mu.Unlock()
+		bridges.dropRecord(target)
+		if err := bridges.save(); err != nil {
+			slog.Error("persist dropping a restart that does not go on", "container", target, "error", err)
+		}
+		return nil
+	})
 }
 
 // beginRestart takes the session into restarting and returns its record and a
@@ -257,7 +392,7 @@ func (p *Provider) beginRestart(ctx context.Context, restarting restartProjectio
 	// makes the next daemon inspect the container instead.
 	current := previous
 	current.State, current.Error = "", ""
-	bridges.records[container] = current
+	bridges.setRecord(container, current)
 	if err := bridges.save(); err != nil {
 		slog.Warn("persisting a restarting enclave session failed", "container", container, "error", err)
 	}
@@ -265,7 +400,7 @@ func (p *Provider) beginRestart(ctx context.Context, restarting restartProjectio
 		bridges.mu.Lock()
 		defer bridges.mu.Unlock()
 		if _, exists := bridges.records[container]; exists {
-			bridges.records[container] = previous
+			bridges.setRecord(container, previous)
 			if hadObservation {
 				bridges.observed[container] = previousObservation
 			}
@@ -274,24 +409,17 @@ func (p *Provider) beginRestart(ctx context.Context, restarting restartProjectio
 	return previous, restore, nil
 }
 
-// abandonRestart withdraws a restart that could not take the session down,
-// leaving the session as it was, and returns why — unless the restart was
-// withdrawn meanwhile, or cancelled, which leaves the session to RemoveSession
-// (interrupted).
+// abandonRestart withdraws a restart that could not take the session down, leaving the session as it was, and
+// returns why — unless the restart was withdrawn or cancelled meanwhile (endFailedRestart).
 func (p *Provider) abandonRestart(ctx context.Context, container string, err error) error {
 	slog.Warn("restarting an enclave session failed; it was left as it was", "container", container, "error", err)
 	bridges := p.bridges
 	bridges.mu.Lock()
-	_, stillRestarting := bridges.restarting[container]
-	if !stillRestarting || ctx.Err() != nil {
-		bridges.mu.Unlock()
-		return interrupted(ctx, stillRestarting)
-	}
-	delete(bridges.restarting, container)
-	// A check meanwhile may have compared the container with the settings it was
-	// to be restarted with.
-	bridges.restarts++
+	ended, interrupted := bridges.endFailedRestart(ctx, container)
 	bridges.mu.Unlock()
+	if !ended {
+		return interrupted
+	}
 	p.notify()
 	return err
 }
@@ -306,20 +434,18 @@ func cannotContinue(err error) bool {
 	return err != nil && strings.Contains(err.Error(), noContinueRefusal)
 }
 
-// reportRestartFailure shows a restart's failure on its session, unless the
-// restart was withdrawn or cancelled meanwhile; a cancelled one is left to
-// RemoveSession (interrupted).
+// reportRestartFailure shows a restart's failure on its session, unless the restart was withdrawn or cancelled
+// meanwhile (endFailedRestart).
 func (p *Provider) reportRestartFailure(ctx context.Context, restarting restartProjection, err error) error {
 	container := restarting.session.ID
 	slog.Warn("restarting an enclave session failed", "container", container, "error", err)
 	bridges := p.bridges
 	bridges.mu.Lock()
-	_, stillRestarting := bridges.restarting[container]
-	if !stillRestarting || ctx.Err() != nil {
+	ended, interrupted := bridges.endFailedRestart(ctx, container)
+	if !ended {
 		bridges.mu.Unlock()
-		return interrupted(ctx, stillRestarting)
+		return interrupted
 	}
-	delete(bridges.restarting, container)
 	failed := restarting.session
 	failed.State = domain.SessionError
 	failed.Error = err.Error()
@@ -330,7 +456,7 @@ func (p *Provider) reportRestartFailure(ctx context.Context, restarting restartP
 	bridges.guard(container).invalidate()
 	record.State = domain.SessionError
 	record.Error = err.Error()
-	bridges.records[container] = record
+	bridges.setRecord(container, record)
 	bridges.observed[container] = failed
 	if saveErr := bridges.save(); saveErr != nil {
 		slog.Error("persist failed restart", "error", saveErr)
@@ -340,14 +466,18 @@ func (p *Provider) reportRestartFailure(ctx context.Context, restarting restartP
 	return nil
 }
 
-// interrupted is what a restart that stopped short returns: ErrRestartInterrupted
-// when it was cancelled with the session still restarting, for RemoveSession to
-// take it out; nil when it was withdrawn, or not cancelled.
-func interrupted(ctx context.Context, stillRestarting bool) error {
-	if stillRestarting && ctx.Err() != nil {
-		return provider.ErrRestartInterrupted
+// endFailedRestart takes a failed restart's session out of restarting, reporting whether it did; called with b.mu
+// held. It does not for a restart withdrawn meanwhile, which returns nil, nor for one cancelled, which returns
+// ErrRestartInterrupted, for RemoveSession to take the session out.
+func (b *hostBridges) endFailedRestart(ctx context.Context, container string) (bool, error) {
+	if _, stillRestarting := b.restarting[container]; !stillRestarting {
+		return false, nil
 	}
-	return nil
+	if ctx.Err() != nil {
+		return false, provider.ErrRestartInterrupted
+	}
+	delete(b.restarting, container)
+	return true, nil
 }
 
 // notify tells the reconciler something changed, if Watch has handed it one.
