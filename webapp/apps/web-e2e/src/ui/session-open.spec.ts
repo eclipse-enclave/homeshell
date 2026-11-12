@@ -39,6 +39,8 @@ for (const state of ['unknown', 'starting', 'stopped'] as const) {
       {
         ...workstream.sessions[0],
         state,
+        // As the daemon would mark it.
+        ended: state === 'stopped',
         preview: 'Unclassified terminal output',
       },
     ];
