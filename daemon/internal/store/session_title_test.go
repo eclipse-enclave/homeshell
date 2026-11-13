@@ -436,7 +436,7 @@ func TestReplaceProjectionDoesNotRestoreAWorkstreamRemovedMeanwhile(t *testing.T
 	if err := s.RemoveWorkstream("p1", "ws-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceProjection("p1", nil, inFlight, nil); err != nil {
+	if err := s.ReplaceProjection("p1", inFlight, inFlight, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.Projects()[0].Workstreams; len(got) != 0 {

@@ -312,19 +312,17 @@ flowchart TB
     refresh tick lists every git project anew, replaces the cache and re-projects when a listing
     differs from the one held (`Reconciler.foldersChanged`). Removing a workstream (once its
     files are gone) or a project drops the project's cached listing, so a deleted worktree is
-    not suggested. Removing a workstream, and adding or removing a project, have every project
-    surveyed again as a tick does (`Reconciler.resurvey`, no session provider asked), so a folder
-    kept, claimed or freed shows in each project sharing the repository. Adding an untracked
-    worktree lists anew, replacing the cache, and adds only a folder that listing suggests
-    (`Reconciler.untracked`, for `Service.AddUntrackedWorktree`).
+    not suggested. Removing a workstream, adding an untracked worktree, and adding or removing a
+    project have every project surveyed again as a tick does (`Reconciler.resurvey`, no session
+    provider asked), so a folder kept, claimed or freed shows in each project sharing the
+    repository. Adding an untracked worktree lists anew, replacing the cache, and adds only a
+    folder that listing suggests (`Reconciler.untracked`, for `Service.AddUntrackedWorktree`).
   - **Freshness.** A workstream vanishes only from a listing begun after a pass first saw it; an
     older listing that misses it is dropped and listed anew. Why: a listing older than a
     worktree workstream does not name its worktree.
   - **Failed listing.** It keeps the last suggestions and their hidden sessions, except one whose
     folder a workstream took since, and vanishes nothing. Why: git not answering is no proof the
     worktrees are gone.
-  - **Taken meanwhile.** A suggestion for a folder a workstream was added or promoted in while the
-    pass ran is dropped, and its hidden sessions go to that workstream (`store.ReplaceProjection`).
 - **Retention.** A stored session nobody reported this pass survives only if its provider is
   registered and failed to report. Placeholders are always kept. Why: a transient provider error
   must not flush sessions, but a session nothing can confirm must not linger as a ghost.
@@ -334,8 +332,12 @@ flowchart TB
   `store.ReplaceProjection` keeps what changed in the store since (`keepChangesSinceRead`): a
   workstream or session changed meanwhile is taken from the store whole, one removed stays
   removed, one added stays, and a name the pass gave that another workstream now has is not
-  taken. The next pass brings the kept entries up to date. Why: a rename, a dismissed message, a
-  Work here or a removal made while the pass ran is newer than the pass's copy.
+  taken. The next pass brings the kept entries up to date, but for `FolderMissing`, which only a
+  pass finds, so the pass's stands. A suggestion for a folder a workstream was added or promoted
+  in meanwhile is dropped, and its hidden sessions go to that workstream
+  (`handOverTakenSuggestions`); a session the pass hides on a suggestion counts as listed, so one
+  added meanwhile is not listed twice. Why: a rename, a dismissed message, a Work here, an Add or
+  a removal made while the pass ran is newer than the pass's copy.
 
 ## Persistence
 

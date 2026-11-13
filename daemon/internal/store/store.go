@@ -172,11 +172,6 @@ type Store struct {
 	// session what it was started with, a workstream the name it holds; the swap
 	// after that decides.
 	unprojectedPromotions map[string]string
-	// unprojectedRemovals are the workstreams removed since their project was
-	// last re-projected, keyed by their ID to their project's. The projection in
-	// flight when one was removed may still hold it, so the next swap drops it
-	// rather than bringing it back.
-	unprojectedRemovals map[string]string
 	// now is the clock that stamps Session.EndedAt; tests replace it.
 	now func() time.Time
 	// unobserved are the IDs of sessions restored from disk that no projection has
@@ -199,7 +194,6 @@ func New(projects []domain.Project, saver persist.Saver, opts ...Option) *Store 
 		sessionTitles:         map[string]persist.CustomTitle{},
 		launchConfigs:         map[string]persist.LaunchConfig{},
 		unprojectedPromotions: map[string]string{},
-		unprojectedRemovals:   map[string]string{},
 		now:                   time.Now,
 		unobserved:            map[string]bool{},
 	}
@@ -497,12 +491,9 @@ func (s *Store) replaceProjectionLocked(projectID string, read, workstreams []do
 		workstreams = keepChangesSinceRead(read, s.projects[i].Workstreams, workstreams, untracked)
 		// Anything the daemon started tracking while this projection was being
 		// computed is missing from it, and must survive the swap.
-		workstreams = slices.DeleteFunc(workstreams, func(workstream domain.Workstream) bool {
-			return s.unprojectedRemovals[workstream.ID] == projectID
-		})
 		workstreams = retainInFlightLocked(s.projects[i].Workstreams, workstreams, untracked, s.unprojectedPromotions)
 		untracked = handOverTakenSuggestions(workstreams, untracked)
-		s.forgetUnprojectedLocked(projectID)
+		s.forgetPromotionsLocked(projectID)
 		previousSessions := projectSessions(&s.projects[i])
 		incomingSessions := sessionsOf(workstreams, untracked)
 		// The providers just reported these sessions under their own titles; a
@@ -716,9 +707,10 @@ func keepChangesSinceRead(read, live, next []domain.Workstream,
 			continue
 		}
 		if !sameApartFromSessions(was, now) {
-			sessions := workstream.Sessions
+			// FolderMissing is the pass's own finding: nothing else writes it.
+			sessions, folderMissing := workstream.Sessions, workstream.FolderMissing
 			workstream = now
-			workstream.Sessions = sessions
+			workstream.Sessions, workstream.FolderMissing = sessions, folderMissing
 		}
 		workstream.Sessions = keepSessionChanges(workstream.Sessions, now.Sessions, readSessions, liveSessions, listed)
 		kept = append(kept, workstream)
@@ -819,15 +811,14 @@ func handOverTakenSuggestions(workstreams []domain.Workstream,
 	})
 }
 
-// forgetUnprojectedLocked drops a project's unprojected promotions and
-// removals, once a projection has been swapped in over them.
-func (s *Store) forgetUnprojectedLocked(projectID string) {
+// forgetPromotionsLocked drops a project's unprojected promotions, once a
+// projection has been swapped in over them.
+func (s *Store) forgetPromotionsLocked(projectID string) {
 	for id, promotedIn := range s.unprojectedPromotions {
 		if promotedIn == projectID {
 			delete(s.unprojectedPromotions, id)
 		}
 	}
-	maps.DeleteFunc(s.unprojectedRemovals, func(_, removedFrom string) bool { return removedFrom == projectID })
 }
 
 // settlePlaceholders replaces each creation placeholder a projection carries from
@@ -1212,7 +1203,6 @@ func (s *Store) RemoveWorkstream(projectID, workstreamID string) error {
 					s.forgetLaunchConfigLocked(sess.ID)
 				}
 				s.projects[i].Workstreams = append(s.projects[i].Workstreams[:j], s.projects[i].Workstreams[j+1:]...)
-				s.unprojectedRemovals[workstreamID] = projectID
 				s.projects[i].Recompute()
 				s.persistLocked()
 				s.broadcastLocked()
@@ -1581,7 +1571,7 @@ func (s *Store) RemoveProject(projectID string) (map[string]SessionHome, error) 
 			removed := s.projects[i]
 			s.projects = append(s.projects[:i], s.projects[i+1:]...)
 			rehomed := s.rehomeSessionRecordsLocked(removed)
-			s.forgetUnprojectedLocked(projectID)
+			s.forgetPromotionsLocked(projectID)
 			s.persistLocked()
 			s.broadcastLocked()
 			return rehomed, nil

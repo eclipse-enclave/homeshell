@@ -227,3 +227,30 @@ func TestServiceCreateClaimsTheWorktreeUntilStored(t *testing.T) {
 		return len(provider.claimed) == 0
 	})
 }
+
+// A project sharing the repository suggests a worktree added in another no
+// more: adding it changes no listing, so the projects are surveyed again.
+func TestServiceAddUntrackedWorktreeClaimsItInEveryProject(t *testing.T) {
+	service, projectStore, repo, dir := untrackedService(t)
+	sub := filepath.Join(repo, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := projectStore.AddProject(&domain.Project{ID: "p3", Name: "p3", Path: sub, GitBacked: true,
+		Workstreams: []domain.Workstream{}}); err != nil {
+		t.Fatal(err)
+	}
+	service.Reconcile(context.Background())
+	if suggestions := mustProject(t, projectStore, "p3").UntrackedWorktrees; len(suggestions) != 1 {
+		t.Fatalf("p3 suggestions = %+v, want the worktree", suggestions)
+	}
+
+	if _, err := service.AddUntrackedWorktree(context.Background(), "p1", dir); err != nil {
+		t.Fatal(err)
+	}
+	service.reconciler.reconcileOnly(context.Background(), service.reconciler.takeDirty())
+
+	if suggestions := mustProject(t, projectStore, "p3").UntrackedWorktrees; len(suggestions) != 0 {
+		t.Errorf("p3 suggestions = %+v, want none once p1 added it", suggestions)
+	}
+}

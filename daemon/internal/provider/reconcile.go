@@ -356,7 +356,7 @@ func (r *Reconciler) projectPass(ctx context.Context, project ProjectRef, only d
 		r.annotate(project.ID, result)
 	}
 
-	if err := r.store.ReplaceProjection(project.ID, stored.Workstreams, result, survey.untracked); err != nil {
+	if err := r.store.ReplaceProjection(project.ID, readOf(stored), result, survey.untracked); err != nil {
 		slog.Warn("projecting workstreams failed", "project", project.ID, "error", err)
 	}
 	return vanished
@@ -516,4 +516,13 @@ func (r *Reconciler) Run(ctx context.Context) {
 			r.Reconcile(ctx)
 		}
 	}
+}
+
+// readOf is the read a pass hands ReplaceProjection: the project's workstreams
+// as the pass found them, never nil, as a nil read means none to compare with.
+func readOf(project domain.Project) []domain.Workstream {
+	if project.Workstreams == nil {
+		return []domain.Workstream{}
+	}
+	return project.Workstreams
 }

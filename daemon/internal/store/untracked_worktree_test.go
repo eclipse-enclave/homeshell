@@ -280,3 +280,27 @@ func TestReplaceProjectionKeepsASessionAddedSinceTheReadHiddenOnce(t *testing.T)
 		t.Errorf("suggestions = %+v, want the one hiding sess-2", got)
 	}
 }
+
+// A workstream changed while a pass ran is taken from the store, but keeps
+// the pass's FolderMissing: the pass is the only one to find it.
+func TestReplaceProjectionKeepsThePassFolderMissingOnAWorkstreamChangedMeanwhile(t *testing.T) {
+	s := titledStore(t)
+	read := s.Projects()[0].Workstreams
+	renamed, err := s.Workstream("p1", "ws-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed.Name = "mine"
+	if err := s.UpdateWorkstream("p1", renamed); err != nil {
+		t.Fatal(err)
+	}
+	projected := s.Projects()[0].Workstreams
+	projected[0].Name, projected[0].FolderMissing = "ws", true
+	if err := s.ReplaceProjection("p1", read, projected, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := s.Projects()[0].Workstreams[0]; got.Name != "mine" || !got.FolderMissing {
+		t.Errorf("workstream = %q, folder missing %v; want the rename kept and marked", got.Name, got.FolderMissing)
+	}
+}

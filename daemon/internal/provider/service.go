@@ -555,6 +555,9 @@ func (s *Service) AddUntrackedWorktree(ctx context.Context, projectID, path stri
 	if err != nil {
 		return domain.Workstream{}, err
 	}
+	// Its folder is claimed now, and no listing changes: a project sharing the
+	// repository suggests it no more once surveyed again.
+	s.reconciler.resurvey()
 	return s.reconciledWorkstream(ctx, projectID, added.ID)
 }
 
