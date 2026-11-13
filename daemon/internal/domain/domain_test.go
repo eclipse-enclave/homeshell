@@ -311,6 +311,30 @@ func TestSessionStateBusy(t *testing.T) {
 	}
 }
 
+func TestAllTerminal(t *testing.T) {
+	tests := []struct {
+		name   string
+		states []SessionState
+		want   bool
+	}{
+		{"none", nil, true},
+		{"all terminal", []SessionState{SessionDone, SessionStopped, SessionError}, true},
+		{"one idle", []SessionState{SessionStopped, SessionIdle}, false},
+		{"one running", []SessionState{SessionRunning}, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var sessions []Session
+			for _, state := range test.states {
+				sessions = append(sessions, Session{ID: "s", State: state})
+			}
+			if got := AllTerminal(sessions); got != test.want {
+				t.Errorf("AllTerminal = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestSessionStateTerminal(t *testing.T) {
 	// Error is terminal: the session never started, so it holds no slot.
 	terminal := []SessionState{SessionDone, SessionStopped, SessionError}
@@ -342,5 +366,58 @@ func TestRuntimeStateValid(t *testing.T) {
 		if r.ValidRuntime() {
 			t.Errorf("%q should be invalid", r)
 		}
+	}
+}
+
+func TestRecomputeCountsLiveSessionsOnUntrackedWorktrees(t *testing.T) {
+	tests := []struct {
+		name   string
+		states []SessionState
+		want   int
+	}{
+		{"none", nil, 0},
+		{"only ended", []SessionState{SessionDone, SessionStopped}, 0},
+		{"a failed one, which has not ended", []SessionState{SessionError}, 1},
+		{"live and ended", []SessionState{
+			SessionRunning, SessionWaiting, SessionDone, SessionStopped,
+		}, 2},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var sessions []Session
+			for _, state := range test.states {
+				sessions = append(sessions, Session{ID: "s", State: state})
+			}
+			worktree := UntrackedWorktree{Name: "wt", Path: "/wt", Sessions: sessions}
+			project := Project{UntrackedWorktrees: []UntrackedWorktree{worktree}}
+			project.Recompute()
+			if got := project.UntrackedWorktrees[0].SessionCount; got != test.want {
+				t.Errorf("SessionCount = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
+// A suggestion's sessions stay hidden: clients see only how many are live.
+func TestUntrackedWorktreeJSONLeavesOutItsSessions(t *testing.T) {
+	worktree := UntrackedWorktree{Name: "wt", Path: "/wt", Sessions: []Session{{ID: "s", State: SessionRunning}}}
+	data, err := json.Marshal(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"sessions"`) {
+		t.Errorf("suggestion JSON lists its sessions: %s", data)
+	}
+}
+
+func TestRecomputeMakesNoUntrackedWorktreesAnEmptyList(t *testing.T) {
+	project := Project{}
+	project.Recompute()
+	data, err := json.Marshal(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"untrackedWorktrees":[]`) {
+		t.Errorf("want an empty array, got %s", data)
 	}
 }

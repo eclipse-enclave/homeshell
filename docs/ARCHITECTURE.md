@@ -212,6 +212,9 @@ stateDiagram-v2
     Removed --> Workstream: creation finishes anyway
     Removed --> [*]: creation fails
     Workstream --> [*]: remove (forced if any session is busy)
+    Workstream --> FolderMissing: worktree removed outside HomeShell, a session not terminal
+    FolderMissing --> [*]: its sessions terminal (removed, files kept), or remove
+    Workstream --> [*]: worktree removed outside HomeShell, every session terminal (files kept)
 ```
 
 - **Default workstream.** Adding a project creates its `in-place` workstream directly, with no
@@ -226,10 +229,21 @@ stateDiagram-v2
 - **Failed create.** The placeholder stays in `error` with the cause; it offers only removal and
   no longer reserves its name.
 - **Adopt.** The reconciler makes up a workstream (`disc-…` ID) for sessions a provider reports
-  in a directory no workstream claims (`provider/reconcile.go` `adoptedWorkstream`).
+  in a directory no workstream claims (`provider/reconcile.go` `adoptedWorkstream`). A directory
+  that is an untracked worktree is suggested instead, not adopted: its sessions are hidden on the
+  suggestion and counted there, and a workstream adopted there earlier is dropped.
 - **Remove.** `provider.Service.Remove` refuses while a session is busy unless forced, removes
   each session through its provider, then lets the workstream provider discard the directory.
-  The reconciler never removes a workstream on its own.
+  The workstream stays listed, holding its sessions, until its record is dropped at the end.
+- **Vanish.** A core `worktree` workstream whose worktree git no longer lists, or whose folder
+  is deleted, is removed like a Remove that keeps files once every session in it is terminal
+  (`Service.retireVanished`). Until then it stays listed with its sessions, marked
+  `FolderMissing`, for a later pass or the user's Remove. A pass finds it gone, never on a failed
+  listing (which keeps the mark as it was), and starts the removal in the background once the
+  pass has let go of the project, unless a removal of it is under way; a Remove arriving
+  meanwhile waits for it. Why: HomeShell never stops a session on its own (a worktree moved with
+  `git worktree move` vanishes too, its agent still at work); a workstream kept listed holds its
+  folder's sessions, so none is adopted back.
 
 ### State aggregation
 
@@ -288,19 +302,42 @@ flowchart TB
   workstreams as it is now (the branch checked out in its folder); a name it gives that another
   workstream in the project has is not taken.
 - **Matching.** Sessions group by cleaned working directory: existing workstreams take theirs,
-  unclaimed directories get an adopted workstream. A session ID reported again supersedes the
-  stored one wherever it was.
+  untracked worktrees hide theirs, other unclaimed directories get an adopted workstream. A
+  session ID reported again supersedes the stored one wherever it was.
+- **Untracked worktrees.** For a git project, each pass has every workstream provider that is a
+  `FolderSurveyor` survey its folder listing: listed folders that no project and no workstream of
+  any project holds (adopted ones aside) become the project's `untrackedWorktrees`.
+  - **Cache.** The listing is cached per project (`listingCache`), so a pass costs no
+    `git worktree list` while one is held, and it lists before taking the project's lock. Each
+    refresh tick lists every git project anew, replaces the cache and re-projects when a listing
+    differs from the one held (`Reconciler.foldersChanged`). Removing a workstream (once its
+    files are gone) or a project drops the project's cached listing, so a deleted worktree is
+    not suggested. Removing a workstream, adding an untracked worktree, and adding or removing a
+    project have every project surveyed again as a tick does (`Reconciler.resurvey`, no session
+    provider asked), so a folder kept, claimed or freed shows in each project sharing the
+    repository. Adding an untracked worktree lists anew, replacing the cache, and adds only a
+    folder that listing suggests (`Reconciler.untracked`, for `Service.AddUntrackedWorktree`).
+  - **Freshness.** A workstream vanishes only from a listing begun after a pass first saw it; an
+    older listing that misses it is dropped and listed anew. Why: a listing older than a
+    worktree workstream does not name its worktree.
+  - **Failed listing.** It keeps the last suggestions and their hidden sessions, except one whose
+    folder a workstream took since, and vanishes nothing. Why: git not answering is no proof the
+    worktrees are gone.
 - **Retention.** A stored session nobody reported this pass survives only if its provider is
   registered and failed to report. Placeholders are always kept. Why: a transient provider error
   must not flush sessions, but a session nothing can confirm must not linger as a ghost.
 - Per-project locks serialize passes; the store is re-read after discovery so concurrent creates
   survive.
 - **Changes during a pass win.** A pass writes back with the read it started from, and
-  `store.ReplaceWorkstreams` keeps what changed in the store since (`keepChangesSinceRead`): a
+  `store.ReplaceProjection` keeps what changed in the store since (`keepChangesSinceRead`): a
   workstream or session changed meanwhile is taken from the store whole, one removed stays
   removed, one added stays, and a name the pass gave that another workstream now has is not
-  taken. The next pass brings the kept entries up to date. Why: a rename, a dismissed message, a
-  Work here or a removal made while the pass ran is newer than the pass's copy.
+  taken. The next pass brings the kept entries up to date, but for `FolderMissing`, which only a
+  pass finds, so the pass's stands. A suggestion for a folder a workstream was added or promoted
+  in meanwhile is dropped, and its hidden sessions go to that workstream
+  (`handOverTakenSuggestions`); a session the pass hides on a suggestion counts as listed, so one
+  added meanwhile is not listed twice. Why: a rename, a dismissed message, a Work here, an Add or
+  a removal made while the pass ran is newer than the pass's copy.
 
 ## Persistence
 

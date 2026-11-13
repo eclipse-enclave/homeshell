@@ -1,0 +1,29 @@
+/* A recessed strip holding a button that folds a list away or shows it. */
+.fold {
+  border-top: 1px solid var(--hs-border, #27313d);
+  background: var(--hs-recess, rgba(0, 0, 0, 0.18));
+}
+
+.foldButton {
+  composes: focusMark from './nav-mark.module.css';
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.45rem 0.95rem;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--hs-text-muted, #8494a7);
+  cursor: pointer;
+  text-align: left;
+}
+
+.foldButton:hover {
+  color: var(--hs-text, #dbe4ee);
+}
+
+.foldButton[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}

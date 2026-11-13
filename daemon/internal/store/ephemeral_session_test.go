@@ -122,11 +122,11 @@ func TestPromoteEphemeralSessionAlreadyListedByAProjection(t *testing.T) {
 		t.Fatalf("AddEphemeralSession() error = %v", err)
 	}
 	projected := domain.Session{ID: "sess-1", Agent: "Claude", State: domain.SessionIdle}
-	if err := testStore.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
+	if err := testStore.ReplaceProjection("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place",
 		Sessions: []domain.Session{projected},
-	}}); err != nil {
-		t.Fatalf("ReplaceWorkstreams() error = %v", err)
+	}}, nil); err != nil {
+		t.Fatalf("ReplaceProjection() error = %v", err)
 	}
 
 	real := domain.Session{ID: "sess-1", Agent: "Claude", State: domain.SessionRunning}
@@ -298,7 +298,7 @@ func TestFailEphemeralSessionReportsAnAbsentSession(t *testing.T) {
 // them deliberately), so the persistence path has to be the thing that refuses
 // them — otherwise the never-persisted contract holds only until the next
 // reconcile, and a restart brings the placeholder back as an immortal row.
-func TestReplaceWorkstreamsDoesNotPersistAPlaceholder(t *testing.T) {
+func TestReplaceProjectionDoesNotPersistAPlaceholder(t *testing.T) {
 	s := ephemeralFixture(t)
 	placeholder := domain.Session{
 		ID: StartingIDPrefix + "abc", Title: "Claude session",
@@ -309,11 +309,11 @@ func TestReplaceWorkstreamsDoesNotPersistAPlaceholder(t *testing.T) {
 		t.Fatalf("AddEphemeralSession: %v", err)
 	}
 
-	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
+	if err := s.ReplaceProjection("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place",
 		Sessions: []domain.Session{real, placeholder},
-	}}); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	}}, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 
 	if got, want := persistedIDs(t, s), []string{"hs-real"}; !slices.Equal(got, want) {
@@ -335,7 +335,7 @@ func TestReplaceWorkstreamsDoesNotPersistAPlaceholder(t *testing.T) {
 // and replacing the state wholesale would drop the row the user is watching —
 // for the rest of a multi-minute build, with nothing to bring it back, because
 // no provider reports a placeholder.
-func TestReplaceWorkstreamsKeepsAPlaceholderAddedDuringTheCycle(t *testing.T) {
+func TestReplaceProjectionKeepsAPlaceholderAddedDuringTheCycle(t *testing.T) {
 	s := ephemeralFixture(t)
 
 	// What the reconciler saw when it started: one workstream, no sessions.
@@ -354,8 +354,8 @@ func TestReplaceWorkstreamsKeepsAPlaceholderAddedDuringTheCycle(t *testing.T) {
 	}
 
 	// The projection, built from the stale snapshot, finally lands.
-	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	if err := s.ReplaceProjection("p1", nil, snapshot, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 
 	ws, err := s.Workstream("p1", "ws-1")
@@ -372,7 +372,7 @@ func TestReplaceWorkstreamsKeepsAPlaceholderAddedDuringTheCycle(t *testing.T) {
 
 // The carry-over must not double a placeholder the projection already has — the
 // common case, since the reconciler retains the ones it saw.
-func TestReplaceWorkstreamsDoesNotDuplicateARetainedPlaceholder(t *testing.T) {
+func TestReplaceProjectionDoesNotDuplicateARetainedPlaceholder(t *testing.T) {
 	s := ephemeralFixture(t)
 	placeholder := domain.Session{
 		ID: StartingIDPrefix + "abc", Provider: "enclave", State: domain.SessionStarting,
@@ -380,11 +380,11 @@ func TestReplaceWorkstreamsDoesNotDuplicateARetainedPlaceholder(t *testing.T) {
 	if err := s.AddEphemeralSession("p1", "ws-1", placeholder); err != nil {
 		t.Fatalf("AddEphemeralSession: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
+	if err := s.ReplaceProjection("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place",
 		Sessions: []domain.Session{placeholder},
-	}}); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	}}, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	ws, err := s.Workstream("p1", "ws-1")
 	if err != nil {
@@ -397,7 +397,7 @@ func TestReplaceWorkstreamsDoesNotDuplicateARetainedPlaceholder(t *testing.T) {
 
 // A promoted session replaces its placeholder before the reconcile that follows,
 // so the carry-over must not resurrect the placeholder it just retired.
-func TestReplaceWorkstreamsDoesNotResurrectAPromotedPlaceholder(t *testing.T) {
+func TestReplaceProjectionDoesNotResurrectAPromotedPlaceholder(t *testing.T) {
 	s := ephemeralFixture(t)
 	placeholder := domain.Session{
 		ID: StartingIDPrefix + "abc", Provider: "enclave", State: domain.SessionStarting,
@@ -409,11 +409,11 @@ func TestReplaceWorkstreamsDoesNotResurrectAPromotedPlaceholder(t *testing.T) {
 	if err := s.PromoteEphemeralSession("p1", "ws-1", placeholder.ID, real, domain.LaunchConfig{}); err != nil {
 		t.Fatalf("PromoteEphemeralSession: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
+	if err := s.ReplaceProjection("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place",
 		Sessions: []domain.Session{real},
-	}}); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	}}, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	ws, err := s.Workstream("p1", "ws-1")
 	if err != nil {
@@ -427,7 +427,7 @@ func TestReplaceWorkstreamsDoesNotResurrectAPromotedPlaceholder(t *testing.T) {
 // The workstream-level half of the same race: a create that starts while a
 // reconcile is in flight must not have its placeholder card wiped by the
 // projection that raced it.
-func TestReplaceWorkstreamsKeepsAWorkstreamPlaceholderAddedDuringTheCycle(t *testing.T) {
+func TestReplaceProjectionKeepsAWorkstreamPlaceholderAddedDuringTheCycle(t *testing.T) {
 	s := ephemeralFixture(t)
 	snapshot := []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place",
@@ -440,8 +440,8 @@ func TestReplaceWorkstreamsKeepsAWorkstreamPlaceholderAddedDuringTheCycle(t *tes
 	if err := s.AddWorkstream("p1", placeholder); err != nil {
 		t.Fatalf("AddWorkstream: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	if err := s.ReplaceProjection("p1", nil, snapshot, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	if _, err := s.Workstream("p1", placeholder.ID); err != nil {
 		t.Errorf("the creation placeholder is gone after a stale projection: %v", err)
@@ -451,7 +451,7 @@ func TestReplaceWorkstreamsKeepsAWorkstreamPlaceholderAddedDuringTheCycle(t *tes
 // A workstream create that lands while a projection is being computed replaces
 // a placeholder the projection still holds: the projection must carry the real
 // workstream rather than restore the placeholder and drop what replaced it.
-func TestReplaceWorkstreamsKeepsAWorkstreamPromotedDuringTheCycle(t *testing.T) {
+func TestReplaceProjectionKeepsAWorkstreamPromotedDuringTheCycle(t *testing.T) {
 	s := ephemeralFixture(t)
 	placeholder := domain.Workstream{
 		ID: PlaceholderIDPrefix + "abc", Name: "feature/x", Provider: "core",
@@ -468,8 +468,8 @@ func TestReplaceWorkstreamsKeepsAWorkstreamPromotedDuringTheCycle(t *testing.T) 
 	if err := s.PromoteWorkstream("p1", placeholder.ID, real); err != nil {
 		t.Fatalf("PromoteWorkstream: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	if err := s.ReplaceProjection("p1", nil, snapshot, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 
 	var ids []string
@@ -487,7 +487,7 @@ func TestReplaceWorkstreamsKeepsAWorkstreamPromotedDuringTheCycle(t *testing.T) 
 
 // A placeholder removed while a projection was being computed — its create
 // failed or was cancelled — must stay gone: the snapshot's copy is stale.
-func TestReplaceWorkstreamsDoesNotResurrectARemovedWorkstreamPlaceholder(t *testing.T) {
+func TestReplaceProjectionDoesNotResurrectARemovedWorkstreamPlaceholder(t *testing.T) {
 	s := ephemeralFixture(t)
 	placeholder := domain.Workstream{
 		ID: PlaceholderIDPrefix + "abc", Name: "feature/x", Provider: "core",
@@ -503,8 +503,8 @@ func TestReplaceWorkstreamsDoesNotResurrectARemovedWorkstreamPlaceholder(t *test
 	if err := s.RemoveWorkstream("p1", placeholder.ID); err != nil {
 		t.Fatalf("RemoveWorkstream: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	if err := s.ReplaceProjection("p1", nil, snapshot, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	if ids, want := workstreamIDs(s, "p1"), []string{"ws-1"}; !slices.Equal(ids, want) {
 		t.Errorf("workstreams = %v, want %v", ids, want)
@@ -513,7 +513,7 @@ func TestReplaceWorkstreamsDoesNotResurrectARemovedWorkstreamPlaceholder(t *test
 
 // A workstream deleted after its placeholder was promoted must not bring the
 // placeholder back as a card stuck in "creating" forever.
-func TestReplaceWorkstreamsDoesNotResurrectThePlaceholderOfARemovedWorkstream(t *testing.T) {
+func TestReplaceProjectionDoesNotResurrectThePlaceholderOfARemovedWorkstream(t *testing.T) {
 	s := ephemeralFixture(t)
 	placeholder := domain.Workstream{
 		ID: PlaceholderIDPrefix + "abc", Name: "feature/x", Provider: "core",
@@ -533,8 +533,8 @@ func TestReplaceWorkstreamsDoesNotResurrectThePlaceholderOfARemovedWorkstream(t 
 	if err := s.RemoveWorkstream("p1", "ws-2"); err != nil {
 		t.Fatalf("RemoveWorkstream: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	if err := s.ReplaceProjection("p1", nil, snapshot, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	if ids, want := workstreamIDs(s, "p1"), []string{"ws-1"}; !slices.Equal(ids, want) {
 		t.Errorf("workstreams = %v, want %v", ids, want)
@@ -543,7 +543,7 @@ func TestReplaceWorkstreamsDoesNotResurrectThePlaceholderOfARemovedWorkstream(t 
 
 // A placeholder still in flight keeps the live copy, not the snapshot's: its
 // status message has moved on since the snapshot was taken.
-func TestReplaceWorkstreamsKeepsTheLiveCopyOfAWorkstreamPlaceholder(t *testing.T) {
+func TestReplaceProjectionKeepsTheLiveCopyOfAWorkstreamPlaceholder(t *testing.T) {
 	s := ephemeralFixture(t)
 	placeholder := domain.Workstream{
 		ID: PlaceholderIDPrefix + "abc", Name: "feature/x", Provider: "core",
@@ -559,8 +559,8 @@ func TestReplaceWorkstreamsKeepsTheLiveCopyOfAWorkstreamPlaceholder(t *testing.T
 	if err := s.UpdateWorkstream("p1", progressed); err != nil {
 		t.Fatalf("UpdateWorkstream: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	if err := s.ReplaceProjection("p1", nil, snapshot, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	got, err := s.Workstream("p1", placeholder.ID)
 	if err != nil {
@@ -589,7 +589,7 @@ func workstreamIDs(s *Store, projectID string) []string {
 // working directory and nothing saying what it was — a card nothing can finish,
 // refresh or explain. AddWorkstream does not write one; the projection must not
 // write it either, and it carries placeholders through every cycle.
-func TestReplaceWorkstreamsDoesNotPersistAWorkstreamPlaceholder(t *testing.T) {
+func TestReplaceProjectionDoesNotPersistAWorkstreamPlaceholder(t *testing.T) {
 	s := ephemeralFixture(t)
 	placeholder := domain.Workstream{
 		ID: PlaceholderIDPrefix + "abc", Name: "feature/x", Provider: "core",
@@ -599,11 +599,11 @@ func TestReplaceWorkstreamsDoesNotPersistAWorkstreamPlaceholder(t *testing.T) {
 	if err := s.AddWorkstream("p1", placeholder); err != nil {
 		t.Fatalf("AddWorkstream: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{
+	if err := s.ReplaceProjection("p1", nil, []domain.Workstream{
 		{ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", Sessions: []domain.Session{}},
 		placeholder,
-	}); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	}, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 
 	ids := []string{}
@@ -647,11 +647,11 @@ func TestPromotedSessionNamesItsPlaceholder(t *testing.T) {
 	}
 	assertLink("promoted")
 
-	if err := testStore.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
+	if err := testStore.ReplaceProjection("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place",
 		Sessions: []domain.Session{real},
-	}}); err != nil {
-		t.Fatalf("ReplaceWorkstreams() error = %v", err)
+	}}, nil); err != nil {
+		t.Fatalf("ReplaceProjection() error = %v", err)
 	}
 	assertLink("reprojected")
 }
@@ -721,11 +721,11 @@ func TestPromotedSessionListedElsewhereIsNotRetainedTwice(t *testing.T) {
 		t.Fatalf("PromoteEphemeralSession: %v", err)
 	}
 
-	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{
+	if err := s.ReplaceProjection("p1", nil, []domain.Workstream{
 		{ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place"},
 		{ID: "ws-2", Name: "other", Provider: "core", StrategyID: "in-place", Sessions: []domain.Session{promoted}},
-	}); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	}, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	listings := 0
 	for _, workstream := range s.Projects()[0].Workstreams {
@@ -743,7 +743,7 @@ func TestPromotedSessionListedElsewhereIsNotRetainedTwice(t *testing.T) {
 // A projection whose snapshot still held a placeholder, promoted while the
 // providers were being asked, must not bring the placeholder back beside the
 // session that replaced it: nothing would ever finish or remove it.
-func TestReplaceWorkstreamsDropsAPlaceholderPromotedDuringTheCycle(t *testing.T) {
+func TestReplaceProjectionDropsAPlaceholderPromotedDuringTheCycle(t *testing.T) {
 	s := ephemeralFixture(t)
 	placeholder := domain.Session{
 		ID: StartingIDPrefix + "abc", Provider: "enclave", State: domain.SessionStarting,
@@ -759,8 +759,8 @@ func TestReplaceWorkstreamsDropsAPlaceholderPromotedDuringTheCycle(t *testing.T)
 	if err := s.PromoteEphemeralSession("p1", "ws-1", placeholder.ID, real, domain.LaunchConfig{}); err != nil {
 		t.Fatalf("PromoteEphemeralSession: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	if err := s.ReplaceProjection("p1", nil, snapshot, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	ws, err := s.Workstream("p1", "ws-1")
 	if err != nil {
@@ -774,7 +774,7 @@ func TestReplaceWorkstreamsDropsAPlaceholderPromotedDuringTheCycle(t *testing.T)
 // A workstream created from start to finish while a projection was being
 // computed is in neither the projection nor, as a placeholder, the live state:
 // it must still survive the swap, or it is lost and its name freed for another.
-func TestReplaceWorkstreamsKeepsAWorkstreamCreatedDuringTheCycle(t *testing.T) {
+func TestReplaceProjectionKeepsAWorkstreamCreatedDuringTheCycle(t *testing.T) {
 	s := ephemeralFixture(t)
 	snapshot := []domain.Workstream{
 		{ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", Sessions: []domain.Session{}},
@@ -790,8 +790,8 @@ func TestReplaceWorkstreamsKeepsAWorkstreamCreatedDuringTheCycle(t *testing.T) {
 	if err := s.PromoteWorkstream("p1", placeholder.ID, real); err != nil {
 		t.Fatalf("PromoteWorkstream: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
-		t.Fatalf("ReplaceWorkstreams: %v", err)
+	if err := s.ReplaceProjection("p1", nil, snapshot, nil); err != nil {
+		t.Fatalf("ReplaceProjection: %v", err)
 	}
 	if ids, want := workstreamIDs(s, "p1"), []string{"ws-1", "ws-2"}; !slices.Equal(ids, want) {
 		t.Errorf("workstreams = %v, want %v", ids, want)

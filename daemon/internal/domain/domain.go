@@ -96,6 +96,28 @@ func (s SessionState) Ended() bool {
 	return s == SessionDone || s == SessionStopped
 }
 
+// AllTerminal reports whether every session is in a terminal state, so none
+// is left to stop; true for none.
+func AllTerminal(sessions []Session) bool {
+	for _, session := range sessions {
+		if !session.State.Terminal() {
+			return false
+		}
+	}
+	return true
+}
+
+// LiveCount is the number of sessions that have not ended (SessionState.Ended).
+func LiveCount(sessions []Session) int {
+	live := 0
+	for _, session := range sessions {
+		if !session.State.Ended() {
+			live++
+		}
+	}
+	return live
+}
+
 // statePrecedence is attention-first: error > waiting > unknown > running >
 // starting > idle > stopped. "Done" only surfaces once every child is terminal.
 // Starting ranks below running because a workstream that already has a live agent
@@ -309,6 +331,10 @@ type Workstream struct {
 	// no workstream, so nothing is offered on it but its removal, and its
 	// StatusMessage says why. Not persisted, as placeholders are not.
 	CreateFailed bool `json:"createFailed,omitempty"`
+	// FolderMissing marks a worktree workstream whose folder is gone, kept
+	// listed while a session in it has not ended. Derived by the reconciler;
+	// not persisted.
+	FolderMissing bool `json:"folderMissing,omitempty"`
 }
 
 // OpenMode is one way a workstream can be handed to the user for interactive
@@ -422,6 +448,21 @@ type Project struct {
 	RuntimeState RuntimeState `json:"runtimeState"`
 	Effective    string       `json:"effectiveState"`
 	Workstreams  []Workstream `json:"workstreams"`
+	// UntrackedWorktrees are the project's linked git worktrees no workstream
+	// works in, suggested for adding. Derived by the reconciler; not persisted.
+	UntrackedWorktrees []UntrackedWorktree `json:"untrackedWorktrees"`
+}
+
+// UntrackedWorktree is a linked worktree of a project's repository that no
+// workstream works in: a folder HomeShell suggests adding as a workstream.
+// Derived by the reconciler; not persisted.
+type UntrackedWorktree struct {
+	Name         string `json:"name"`
+	Branch       string `json:"branch,omitempty"`
+	Path         string `json:"path"`
+	SessionCount int    `json:"sessionCount"` // Sessions not ended; derived by Recompute
+	// Sessions are the ones reported in the folder, hidden until it is added.
+	Sessions []Session `json:"-"`
 }
 
 // StrategyLabel returns the human-readable display label for a raw strategy ID.
@@ -479,6 +520,12 @@ func (p *Project) Recompute() {
 		w.Effective = EffectiveState(w.RuntimeState, w.State)
 		workstreamStates[i] = w.State
 		workstreamRuntimeStates[i] = w.RuntimeState
+	}
+	if p.UntrackedWorktrees == nil {
+		p.UntrackedWorktrees = []UntrackedWorktree{}
+	}
+	for i := range p.UntrackedWorktrees {
+		p.UntrackedWorktrees[i].SessionCount = LiveCount(p.UntrackedWorktrees[i].Sessions)
 	}
 	p.State = Aggregate(workstreamStates)
 	p.RuntimeState = AggregateRuntime(workstreamRuntimeStates)

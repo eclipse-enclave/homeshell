@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
 	"maps"
 	"reflect"
@@ -30,7 +31,7 @@ var ErrDuplicateWorkingDir = errors.New("working directory taken")
 // same project already answers to. Per project, trimmed and case-insensitive.
 //
 // It guards the doors a *user* comes through (AddWorkstream, UpdateWorkstream)
-// and not ReplaceWorkstreams: an adopted workstream is named after its
+// and not ReplaceProjection: an adopted workstream is named after its
 // directory's base, so two discovered directories can collide, and refusing to
 // project one would hide a live session behind a label clash.
 var ErrDuplicateName = errors.New("a workstream with this name already exists in this project")
@@ -53,7 +54,7 @@ const PlaceholderIDPrefix = "creating-"
 
 // StartingIDPrefix marks the placeholder session the daemon holds while a provider
 // brings the real one up. Two of the store's rules turn on it, both in
-// ReplaceWorkstreams: a placeholder is never written to disk, and a projection
+// ReplaceProjection: a placeholder is never written to disk, and a projection
 // that does not know about one must not drop it. provider.StartingIDPrefix is
 // defined as this.
 const StartingIDPrefix = "starting-"
@@ -164,11 +165,12 @@ type Store struct {
 	// ID (launchconfig.go). Loaded once at startup; written on create and restart.
 	launchConfigs map[string]persist.LaunchConfig
 	// unprojectedPromotions are the sessions and workstreams promoted from a
-	// placeholder since their project was last re-projected, keyed by their ID to
-	// their project's. The projection in flight when one was promoted may predate
-	// it, so the next swap carries it over (retainInFlightLocked) rather than
-	// dropping it — and a session what it was started with, a workstream the name
-	// it holds; the swap after that decides.
+	// placeholder, and the workstreams added, since their project was last
+	// re-projected, keyed by their ID to their project's. The projection in
+	// flight when one was promoted or added may predate it, so the next swap
+	// carries it over (retainInFlightLocked) rather than dropping it — and a
+	// session what it was started with, a workstream the name it holds; the swap
+	// after that decides.
 	unprojectedPromotions map[string]string
 	// now is the clock that stamps Session.EndedAt; tests replace it.
 	now func() time.Time
@@ -216,11 +218,10 @@ func Restore(snapshot persist.Snapshot, saver persist.Saver, opts ...Option) *St
 	// projection the reconciler has not run yet. No lock is taken (or needed),
 	// nothing else holds this store until it is returned.
 	for i := range restored.projects {
-		for j := range restored.projects[i].Workstreams {
-			restored.applyTitlesLocked(restored.projects[i].Workstreams[j].Sessions)
-			for _, session := range restored.projects[i].Workstreams[j].Sessions {
-				restored.unobserved[session.ID] = true
-			}
+		sessions := projectSessions(&restored.projects[i])
+		restored.applyTitlesLocked(sessions)
+		for _, session := range sessions {
+			restored.unobserved[session.ID] = true
 		}
 	}
 	return restored
@@ -300,14 +301,46 @@ func (s *Store) RetryUnsavedWrite() {
 }
 
 // applyTitlesLocked overwrites each session's provider-reported title with the
-// user's, where one was set. It edits the slice in place, so callers pass the
+// user's, where one was set. It edits the sessions in place, so callers pass the
 // sessions they are about to store rather than a copy handed to a reader.
-func (s *Store) applyTitlesLocked(sessions []domain.Session) {
-	for i := range sessions {
-		if custom, ok := s.sessionTitles[sessions[i].ID]; ok {
-			sessions[i].Title = custom.Title
+func (s *Store) applyTitlesLocked(sessions sessionWalk) {
+	for _, session := range sessions {
+		if custom, ok := s.sessionTitles[session.ID]; ok {
+			session.Title = custom.Title
 		}
 	}
+}
+
+// sessionWalk visits sessions, each with the ID of the workstream listing it.
+type sessionWalk = iter.Seq2[string, *domain.Session]
+
+// sessionsOf walks every session a project holds: each workstream's, then the
+// ones hidden on each untracked worktree, whose workstream ID is "". It yields
+// the slices' own sessions, so a caller may edit them in place. Every walk that
+// decides whether a session is listed goes through here: a hidden session is
+// listed as much as one a workstream shows.
+func sessionsOf(workstreams []domain.Workstream, untracked []domain.UntrackedWorktree) sessionWalk {
+	return func(yield func(string, *domain.Session) bool) {
+		for i := range workstreams {
+			for j := range workstreams[i].Sessions {
+				if !yield(workstreams[i].ID, &workstreams[i].Sessions[j]) {
+					return
+				}
+			}
+		}
+		for i := range untracked {
+			for j := range untracked[i].Sessions {
+				if !yield("", &untracked[i].Sessions[j]) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// projectSessions is sessionsOf a project's workstreams and suggestions.
+func projectSessions(project *domain.Project) sessionWalk {
+	return sessionsOf(project.Workstreams, project.UntrackedWorktrees)
 }
 
 // Option configures a Store at creation time.
@@ -379,14 +412,37 @@ func (s *Store) broadcastLocked() {
 func (s *Store) Projects() []domain.Project {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := slices.Clone(s.projects)
-	for i := range out {
-		out[i].Workstreams = slices.Clone(out[i].Workstreams)
-		for j := range out[i].Workstreams {
-			out[i].Workstreams[j] = cloneWorkstream(out[i].Workstreams[j])
-		}
+	out := make([]domain.Project, len(s.projects))
+	for i, project := range s.projects {
+		out[i] = cloneProject(project)
 	}
 	return out
+}
+
+// Project returns a copy of one project, like Projects.
+func (s *Store) Project(projectID string) (domain.Project, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, project := range s.projects {
+		if project.ID == projectID {
+			return cloneProject(project), nil
+		}
+	}
+	return domain.Project{}, fmt.Errorf("project %q not found", projectID)
+}
+
+// cloneProject gives a project its own workstream and suggestion arrays, down
+// to their sessions.
+func cloneProject(project domain.Project) domain.Project {
+	project.Workstreams = slices.Clone(project.Workstreams)
+	for i := range project.Workstreams {
+		project.Workstreams[i] = cloneWorkstream(project.Workstreams[i])
+	}
+	project.UntrackedWorktrees = slices.Clone(project.UntrackedWorktrees)
+	for i := range project.UntrackedWorktrees {
+		project.UntrackedWorktrees[i].Sessions = slices.Clone(project.UntrackedWorktrees[i].Sessions)
+	}
+	return project
 }
 
 // Workstream returns a copy of one workstream, down to its sessions.
@@ -407,15 +463,24 @@ func cloneWorkstream(workstream domain.Workstream) domain.Workstream {
 	return workstream
 }
 
-// ReplaceWorkstreams swaps a project's workstreams with the given set,
-// recomputes derived state, and persists and broadcasts only when the set
-// actually changed (a reconcile wave would otherwise overflow a slow SSE
-// subscriber). read is the project's workstreams as the set was derived from
-// them: what changed in the store since then is kept (keepChangesSinceRead).
-// The store takes ownership of workstreams: callers must not reuse it.
-func (s *Store) ReplaceWorkstreams(projectID string, read, workstreams []domain.Workstream) error {
+// ReplaceProjection swaps a project's workstreams and untracked worktree
+// suggestions with the given sets, recomputes derived state, and persists and
+// broadcasts only when they actually changed (a reconcile wave would otherwise
+// overflow a slow SSE subscriber). read is the project's workstreams as the
+// sets were derived from them: what changed in the store since then is kept
+// (keepChangesSinceRead). The store takes ownership of both sets: callers must
+// not reuse them. The sessions of a suggestion count as listed: their titles
+// and launch configs are kept, and they are stamped when they end.
+func (s *Store) ReplaceProjection(projectID string, read, workstreams []domain.Workstream,
+	untracked []domain.UntrackedWorktree) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.replaceProjectionLocked(projectID, read, workstreams, untracked)
+}
+
+// replaceProjectionLocked is ReplaceProjection with s.mu held.
+func (s *Store) replaceProjectionLocked(projectID string, read, workstreams []domain.Workstream,
+	untracked []domain.UntrackedWorktree) error {
 	for i := range s.projects {
 		if s.projects[i].ID != projectID {
 			continue
@@ -423,30 +488,34 @@ func (s *Store) ReplaceWorkstreams(projectID string, read, workstreams []domain.
 		if workstreams == nil {
 			workstreams = []domain.Workstream{}
 		}
-		workstreams = keepChangesSinceRead(read, s.projects[i].Workstreams, workstreams)
+		workstreams = keepChangesSinceRead(read, s.projects[i].Workstreams, workstreams, untracked)
 		// Anything the daemon started tracking while this projection was being
 		// computed is missing from it, and must survive the swap.
-		workstreams = retainInFlightLocked(s.projects[i].Workstreams, workstreams, s.unprojectedPromotions)
+		workstreams = retainInFlightLocked(s.projects[i].Workstreams, workstreams, untracked, s.unprojectedPromotions)
+		untracked = handOverTakenSuggestions(workstreams, untracked)
 		s.forgetPromotionsLocked(projectID)
+		previousSessions := projectSessions(&s.projects[i])
+		incomingSessions := sessionsOf(workstreams, untracked)
 		// The providers just reported these sessions under their own titles; a
 		// session the user renamed keeps the name they gave it. Applied before the
 		// snapshot is written so the projection and the file agree.
-		for j := range workstreams {
-			s.applyTitlesLocked(workstreams[j].Sessions)
-		}
-		keepPlaceholderLinks(s.projects[i].Workstreams, workstreams)
-		s.stampEndedAtLocked(s.projects[i].Workstreams, workstreams)
-		listed := sessionIDsIn(workstreams)
-		s.forgetUnobservedLocked(s.projects[i].Workstreams, listed)
+		s.applyTitlesLocked(incomingSessions)
+		keepPlaceholderLinks(previousSessions, incomingSessions)
+		s.stampEndedAtLocked(previousSessions, incomingSessions)
+		listed := sessionIDsIn(incomingSessions)
+		s.forgetUnobservedLocked(previousSessions, listed)
 		pruned := s.pruneTitlesLocked(projectID, listed)
 		pruned = s.pruneLaunchConfigsLocked(projectID, listed) || pruned
 		// Held for the change check below. Recompute normalizes derived fields, so
 		// the comparison has to be made between two recomputed sets; it mutates the
-		// new slice only, leaving this one to compare against.
+		// new slices only, leaving these to compare against.
 		previous := s.projects[i].Workstreams
+		previousUntracked := s.projects[i].UntrackedWorktrees
 		s.projects[i].Workstreams = workstreams
+		s.projects[i].UntrackedWorktrees = untracked
 		s.projects[i].Recompute()
-		if pruned || !reflect.DeepEqual(previous, s.projects[i].Workstreams) {
+		if pruned || !reflect.DeepEqual(previous, s.projects[i].Workstreams) ||
+			!sameSuggestions(previousUntracked, s.projects[i].UntrackedWorktrees) {
 			// Placeholders (workstream and session) are kept out of the snapshot by
 			// snapshotLocked, so the projection carrying them through every cycle
 			// cannot persist the very records a restart has to forget. An unchanged
@@ -459,6 +528,15 @@ func (s *Store) ReplaceWorkstreams(projectID string, read, workstreams []domain.
 	return fmt.Errorf("project %q not found", projectID)
 }
 
+// sameSuggestions reports whether two sets of suggestions look the same to a
+// client: the sessions hidden on them are not shown, only how many are live.
+func sameSuggestions(previous, current []domain.UntrackedWorktree) bool {
+	return slices.EqualFunc(previous, current, func(was, now domain.UntrackedWorktree) bool {
+		return was.Name == now.Name && was.Branch == now.Branch && was.Path == now.Path &&
+			was.SessionCount == now.SessionCount
+	})
+}
+
 // stampEndedAtLocked sets Session.EndedAt on the incoming sessions from what the
 // previous projection knew of them. A session that was live and is now terminal
 // ended just now; one that stays terminal keeps its recorded time; a live one has
@@ -469,45 +547,40 @@ func (s *Store) ReplaceWorkstreams(projectID string, read, workstreams []domain.
 // A restored session stays unobserved until a projection brings it changed: the
 // reconciler carries a session its provider did not report over as the stored
 // copy, which is still the restored idle placeholder and says nothing about it.
-func (s *Store) stampEndedAtLocked(previous, incoming []domain.Workstream) {
+func (s *Store) stampEndedAtLocked(previous, incoming sessionWalk) {
 	before := sessionsByID(previous)
 	now := s.now()
-	for _, workstream := range incoming {
-		for j := range workstream.Sessions {
-			session := &workstream.Sessions[j]
-			prev, known := before[session.ID]
-			first := s.unobserved[session.ID]
-			if first && known && sameReport(prev, *session) {
-				continue
-			}
-			delete(s.unobserved, session.ID)
-			var endedAt *time.Time
-			switch {
-			case !session.State.Terminal():
-			case !known:
-				// First seen already ended: a time the provider reports stands.
-				endedAt = session.EndedAt
-			case first || prev.EndedAt != nil:
-				// After a restart the persisted time (nil if none) stands: the first
-				// look cannot tell when the session ended, and now() would be a lie.
-				endedAt = prev.EndedAt
-			case !prev.State.Terminal():
-				stamp := now
-				endedAt = &stamp
-			}
-			session.EndedAt = endedAt
+	for _, session := range incoming {
+		prev, known := before[session.ID]
+		first := s.unobserved[session.ID]
+		if first && known && sameReport(prev, *session) {
+			continue
 		}
+		delete(s.unobserved, session.ID)
+		var endedAt *time.Time
+		switch {
+		case !session.State.Terminal():
+		case !known:
+			// First seen already ended: a time the provider reports stands.
+			endedAt = session.EndedAt
+		case first || prev.EndedAt != nil:
+			// After a restart the persisted time (nil if none) stands: the first
+			// look cannot tell when the session ended, and now() would be a lie.
+			endedAt = prev.EndedAt
+		case !prev.State.Terminal():
+			stamp := now
+			endedAt = &stamp
+		}
+		session.EndedAt = endedAt
 	}
 }
 
 // forgetUnobservedLocked drops the restored sessions of previous that are no
 // longer listed from the unobserved set: one that comes back is first seen anew.
-func (s *Store) forgetUnobservedLocked(previous []domain.Workstream, listed map[string]bool) {
-	for _, workstream := range previous {
-		for _, session := range workstream.Sessions {
-			if !listed[session.ID] {
-				delete(s.unobserved, session.ID)
-			}
+func (s *Store) forgetUnobservedLocked(previous sessionWalk, listed map[string]bool) {
+	for _, session := range previous {
+		if !listed[session.ID] {
+			delete(s.unobserved, session.ID)
 		}
 	}
 }
@@ -539,18 +612,19 @@ func sameReport(stored, incoming domain.Session) bool {
 // whoever owns it (Service.finishCreate, Service.finishCreateSession) ends its
 // life by promoting or removing it in the live state first.
 //
-// The one exception is a session or workstream promoted from a placeholder since
-// the last swap (unprojected): the projection may have been computed before it
-// existed, so its absence says nothing yet. It is carried through this one swap —
-// and with a session its launch config, which pruning would otherwise delete for
-// good — and the next projection, computed after the promotion, settles it like
-// any other.
+// The one exception is a session or workstream promoted from a placeholder, or a
+// workstream added (AddWorkstream), since the last swap (unprojected): the
+// projection may have been computed before it existed, so its absence says
+// nothing yet. It is carried through this one swap — and with a session its
+// launch config, which pruning would otherwise delete for good — and the next
+// projection, computed after it was promoted or added, settles it like any other.
 //
 // The live state is the authority on placeholders the other way too: a starting
 // placeholder the projection carries from its snapshot but the live state no
 // longer holds was promoted or removed meanwhile, and is dropped rather than
 // brought back as a row that never finishes starting.
-func retainInFlightLocked(live, next []domain.Workstream, unprojected map[string]string) []domain.Workstream {
+func retainInFlightLocked(live, next []domain.Workstream, nextUntracked []domain.UntrackedWorktree,
+	unprojected map[string]string) []domain.Workstream {
 	next = settlePlaceholders(live, next)
 	starting := map[string]bool{}
 	for _, was := range live {
@@ -567,16 +641,16 @@ func retainInFlightLocked(live, next []domain.Workstream, unprojected map[string
 		})
 		byID[next[i].ID] = i
 	}
-	// A session is retained only where no workstream lists it: one the projection
-	// placed elsewhere would otherwise be listed twice.
-	listed := sessionIDsIn(next)
+	// A session is retained only where the projection lists it nowhere: one it
+	// placed elsewhere, or hid on a suggestion, would otherwise be listed twice.
+	listed := sessionIDsIn(sessionsOf(next, nextUntracked))
 	for _, was := range live {
 		i, ok := byID[was.ID]
 		_, promoted := unprojected[was.ID]
 		if !ok && (strings.HasPrefix(was.ID, PlaceholderIDPrefix) || promoted) {
 			byID[was.ID] = len(next)
 			next = append(next, was)
-			maps.Copy(listed, sessionIDsIn([]domain.Workstream{was}))
+			maps.Copy(listed, sessionIDsIn(sessionsOf([]domain.Workstream{was}, nil)))
 			continue
 		}
 		if !ok || strings.HasPrefix(was.ID, PlaceholderIDPrefix) {
@@ -610,13 +684,14 @@ func retainInFlightLocked(live, next []domain.Workstream, unprojected map[string
 //
 // Placeholders are left to retainInFlightLocked, and a nil read (no read to
 // compare with) keeps the projection as it is.
-func keepChangesSinceRead(read, live, next []domain.Workstream) []domain.Workstream {
+func keepChangesSinceRead(read, live, next []domain.Workstream,
+	untracked []domain.UntrackedWorktree) []domain.Workstream {
 	if read == nil {
 		return next
 	}
 	readWorkstreams, liveWorkstreams := workstreamsByID(read), workstreamsByID(live)
-	readSessions, liveSessions := sessionsByID(read), sessionsByID(live)
-	listed := sessionIDsIn(next)
+	readSessions, liveSessions := sessionsByID(sessionsOf(read, nil)), sessionsByID(sessionsOf(live, nil))
+	listed := sessionIDsIn(sessionsOf(next, untracked))
 	kept := make([]domain.Workstream, 0, len(next))
 	for _, workstream := range next {
 		was, wasRead := readWorkstreams[workstream.ID]
@@ -629,9 +704,11 @@ func keepChangesSinceRead(read, live, next []domain.Workstream) []domain.Workstr
 			continue
 		}
 		if !sameApartFromSessions(was, now) {
-			sessions := workstream.Sessions
+			// FolderMissing is the pass's own finding: nothing else writes it, and
+			// it hangs on the folder alone, which no change made meanwhile moves.
+			sessions, folderMissing := workstream.Sessions, workstream.FolderMissing
 			workstream = now
-			workstream.Sessions = sessions
+			workstream.Sessions, workstream.FolderMissing = sessions, folderMissing
 		}
 		workstream.Sessions = keepSessionChanges(workstream.Sessions, now.Sessions, readSessions, liveSessions, listed)
 		kept = append(kept, workstream)
@@ -699,15 +776,35 @@ func workstreamsByID(workstreams []domain.Workstream) map[string]domain.Workstre
 	return byID
 }
 
-// sessionsByID indexes the sessions workstreams list by ID.
-func sessionsByID(workstreams []domain.Workstream) map[string]domain.Session {
+// sessionsByID indexes sessions by ID.
+func sessionsByID(sessions sessionWalk) map[string]domain.Session {
 	byID := map[string]domain.Session{}
-	for _, workstream := range workstreams {
-		for _, sess := range workstream.Sessions {
-			byID[sess.ID] = sess
-		}
+	for _, session := range sessions {
+		byID[session.ID] = *session
 	}
 	return byID
+}
+
+// handOverTakenSuggestions drops each suggestion whose folder a workstream
+// works in, and gives that workstream the sessions hidden there. Why: a
+// projection computed before a workstream was added or promoted in a folder
+// may still suggest it, and the view must not show both.
+func handOverTakenSuggestions(workstreams []domain.Workstream,
+	untracked []domain.UntrackedWorktree) []domain.UntrackedWorktree {
+	return slices.DeleteFunc(untracked, func(suggestion domain.UntrackedWorktree) bool {
+		i := slices.IndexFunc(workstreams, func(workstream domain.Workstream) bool {
+			return domain.SameFolder(workstream.WorkingDir, suggestion.Path)
+		})
+		if i < 0 {
+			return false
+		}
+		for _, session := range suggestion.Sessions {
+			if !hasSession(workstreams[i].Sessions, session.ID) {
+				workstreams[i].Sessions = append(workstreams[i].Sessions, session)
+			}
+		}
+		return true
+	})
 }
 
 // forgetPromotionsLocked drops a project's unprojected promotions, once a
@@ -754,20 +851,16 @@ func settlePlaceholders(live, next []domain.Workstream) []domain.Workstream {
 
 // keepPlaceholderLinks carries each live session's PlaceholderID onto the
 // projection's entry for it, which its provider reports without one.
-func keepPlaceholderLinks(live, next []domain.Workstream) {
+func keepPlaceholderLinks(live, next sessionWalk) {
 	links := map[string]string{}
-	for _, workstream := range live {
-		for _, sess := range workstream.Sessions {
-			if sess.PlaceholderID != "" {
-				links[sess.ID] = sess.PlaceholderID
-			}
+	for _, session := range live {
+		if session.PlaceholderID != "" {
+			links[session.ID] = session.PlaceholderID
 		}
 	}
-	for _, workstream := range next {
-		for j := range workstream.Sessions {
-			if link := links[workstream.Sessions[j].ID]; link != "" && workstream.Sessions[j].PlaceholderID != link {
-				workstream.Sessions[j].PlaceholderID = link
-			}
+	for _, session := range next {
+		if link := links[session.ID]; link != "" {
+			session.PlaceholderID = link
 		}
 	}
 }
@@ -782,13 +875,11 @@ func hasSession(sessions []domain.Session, id string) bool {
 	return false
 }
 
-// sessionIDsIn is the set of the IDs of the sessions workstreams list.
-func sessionIDsIn(workstreams []domain.Workstream) map[string]bool {
+// sessionIDsIn is the set of the IDs of sessions.
+func sessionIDsIn(sessions sessionWalk) map[string]bool {
 	ids := map[string]bool{}
-	for _, workstream := range workstreams {
-		for _, listed := range workstream.Sessions {
-			ids[listed.ID] = true
-		}
+	for _, session := range sessions {
+		ids[session.ID] = true
 	}
 	return ids
 }
@@ -1012,6 +1103,7 @@ func (s *Store) AddWorkstream(projectID string, workstream domain.Workstream) er
 			return err
 		}
 		s.projects[i].Workstreams = append(s.projects[i].Workstreams, workstream)
+		s.unprojectedPromotions[workstream.ID] = projectID
 		s.projects[i].Recompute()
 		s.persistLocked()
 		s.broadcastLocked()
@@ -1455,9 +1547,14 @@ func (s *Store) RenameProject(projectID, name string) error {
 
 // SessionHome is a project, and a workstream in it, that lists a session.
 type SessionHome struct {
-	ProjectID    string
+	ProjectID string
+	// WorkstreamID is "" for a session hidden on an untracked worktree.
 	WorkstreamID string
 }
+
+// Hidden reports whether the project only hides the session on an untracked
+// worktree: no workstream there lists it.
+func (home SessionHome) Hidden() bool { return home.WorkstreamID == "" }
 
 // RemoveProject deletes a project and broadcasts the new state. The
 // underlying directory is not touched. It returns where each of the project's
@@ -1488,11 +1585,9 @@ func (s *Store) RemoveProject(projectID string) (map[string]SessionHome, error) 
 // persists.
 func (s *Store) rehomeSessionRecordsLocked(removed domain.Project) map[string]SessionHome {
 	listedBy := map[string]SessionHome{}
-	for _, project := range s.projects {
-		for _, workstream := range project.Workstreams {
-			for _, listed := range workstream.Sessions {
-				listedBy[listed.ID] = SessionHome{ProjectID: project.ID, WorkstreamID: workstream.ID}
-			}
+	for i := range s.projects {
+		for workstreamID, listed := range projectSessions(&s.projects[i]) {
+			listedBy[listed.ID] = SessionHome{ProjectID: s.projects[i].ID, WorkstreamID: workstreamID}
 		}
 	}
 	rehomed := map[string]SessionHome{}
@@ -1503,10 +1598,8 @@ func (s *Store) rehomeSessionRecordsLocked(removed domain.Project) map[string]Se
 		}
 		return home, listed
 	}
-	for _, workstream := range removed.Workstreams {
-		for _, listed := range workstream.Sessions {
-			rehome(listed.ID)
-		}
+	for _, listed := range projectSessions(&removed) {
+		rehome(listed.ID)
 	}
 	for sessionID, custom := range s.sessionTitles {
 		if custom.ProjectID != removed.ID {

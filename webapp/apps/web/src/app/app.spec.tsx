@@ -56,6 +56,7 @@ const projectsFixture: Project[] = [
     state: 'waiting',
     runtimeState: 'running',
     effectiveState: 'waiting',
+    untrackedWorktrees: [],
     workstreams: [workstream],
   },
   {
@@ -66,6 +67,7 @@ const projectsFixture: Project[] = [
     state: 'idle',
     runtimeState: 'idle',
     effectiveState: 'idle',
+    untrackedWorktrees: [],
     workstreams: [],
   },
 ];

@@ -15,6 +15,7 @@ const projects: Project[] = [
     state: 'idle',
     runtimeState: 'running',
     effectiveState: 'idle',
+    untrackedWorktrees: [],
     workstreams: [
       {
         id: 'w1',

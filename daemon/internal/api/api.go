@@ -219,7 +219,9 @@ func writeProviderError(w http.ResponseWriter, err error) {
 		errors.Is(err, provider.ErrSessionNeverStarted),
 		errors.Is(err, provider.ErrSessionNotRestartable),
 		errors.Is(err, provider.ErrCannotContinue),
-		errors.Is(err, provider.ErrOptionNotOffered):
+		errors.Is(err, provider.ErrOptionNotOffered),
+		// The folder is no suggestion of the project now: added, removed, or never one.
+		errors.Is(err, provider.ErrNotUntrackedWorktree):
 		jsonError(w, err.Error(), http.StatusConflict)
 	case errors.Is(err, provider.ErrConcurrencyLimit), errors.Is(err, provider.ErrSessionStopped),
 		errors.Is(err, provider.ErrSessionGone),

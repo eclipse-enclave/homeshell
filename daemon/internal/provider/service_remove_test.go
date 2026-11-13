@@ -2,14 +2,20 @@ package provider_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/eclipsesource/homeshell/daemon/internal/domain"
 	"github.com/eclipsesource/homeshell/daemon/internal/provider"
 	"github.com/eclipsesource/homeshell/daemon/internal/provider/fake"
+	"github.com/eclipsesource/homeshell/daemon/internal/settings"
 	"github.com/eclipsesource/homeshell/daemon/internal/store"
 )
 
@@ -239,5 +245,109 @@ func TestServiceRemovePlaceholderIsNotGuarded(t *testing.T) {
 	}
 	if _, err := st.Workstream("p1", ws.ID); err == nil {
 		t.Error("placeholder survived removal")
+	}
+}
+
+// git runs git in dir, failing the test on error.
+func git(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// A worktree removed outside HomeShell leaves its workstream listed, marked, while
+// a session there runs: HomeShell stops none, and adopts none into a workstream
+// of its own. Once the session is stopped, the workstream goes.
+func TestServiceKeepsAVanishedWorktreeUntilItsSessionsEnd(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	repo := t.TempDir()
+	git(t, repo, "init", "-q", "-b", "main")
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "initial")
+	st := store.NewTestStore(t, []domain.Project{{
+		ID: "p1", Name: "p1", Path: repo, GitBacked: true, Workstreams: []domain.Workstream{},
+	}})
+	reg := provider.NewRegistry()
+	fp := fake.New(fake.Config{})
+	if err := reg.RegisterSessionProvider(fp); err != nil {
+		t.Fatal(err)
+	}
+	svc := provider.NewService(st, reg, 0)
+	settingsStore, err := settings.Load(filepath.Join(t.TempDir(), "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := settingsStore.Get()
+	next.Providers.RefreshIntervalSec = settings.MinRefreshSec
+	if _, err := settingsStore.Set(next); err != nil {
+		t.Fatal(err)
+	}
+	reg.InjectSettings(settingsStore)
+
+	dir := filepath.Join(t.TempDir(), "wt")
+	config, _ := json.Marshal(map[string]string{"strategy": "worktree", "path": dir})
+	if _, err := svc.Create(context.Background(), provider.CreateInput{
+		ProjectID: "p1", ProviderID: provider.CoreProviderID, Name: "feature", Config: config,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	ws := awaitWorkstream(t, st, "p1")
+	if _, err := svc.CreateSession(context.Background(), provider.CreateSessionInput{
+		ProjectID: "p1", WorkstreamID: ws.ID, ProviderID: "fake", OptionID: "claude",
+	}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	sess := awaitSession(t, st, "p1", ws.ID, "Claude Code")
+	sref := provider.SessionRef{ProjectID: "p1", WorkstreamID: ws.ID, SessionID: sess.ID}
+	if err := svc.StopSession(context.Background(), sref); err != nil {
+		t.Fatalf("StopSession: %v", err)
+	}
+	if err := svc.StartSession(context.Background(), sref); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.Run(ctx)
+	git(t, repo, "worktree", "remove", "--force", dir)
+
+	await := func(want string, done func([]domain.Workstream) bool) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for !done(st.Projects()[0].Workstreams) && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if workstreams := st.Projects()[0].Workstreams; !done(workstreams) {
+			t.Fatalf("workstreams = %+v, want %s", workstreams, want)
+		}
+	}
+	await("the vanished one marked, holding its session", func(workstreams []domain.Workstream) bool {
+		return len(workstreams) == 1 && workstreams[0].FolderMissing &&
+			len(workstreams[0].Sessions) == 1 && workstreams[0].Sessions[0].ID == sess.ID
+	})
+	// Passes after the mark retire nothing and adopt nothing.
+	svc.Reconcile(context.Background())
+	if workstreams := st.Projects()[0].Workstreams; len(workstreams) != 1 || workstreams[0].ID != ws.ID {
+		t.Errorf("workstreams after another pass = %+v, want only %s", workstreams, ws.ID)
+	}
+	if _, err := fp.SessionState(context.Background(), sref); err != nil {
+		t.Errorf("the session of the vanished workstream was stopped: %v", err)
+	}
+
+	if err := svc.StopSession(context.Background(), sref); err != nil {
+		t.Fatalf("StopSession: %v", err)
+	}
+	await("the vanished one gone once its session ended", func(workstreams []domain.Workstream) bool {
+		return len(workstreams) == 0
+	})
+	svc.Reconcile(context.Background())
+	if workstreams := st.Projects()[0].Workstreams; len(workstreams) != 0 {
+		t.Errorf("workstreams after another pass = %+v, want none", workstreams)
 	}
 }

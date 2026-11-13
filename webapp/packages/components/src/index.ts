@@ -39,4 +39,5 @@ export * from './lib/session-row';
 export * from './lib/status-dot';
 export * from './lib/text-field';
 export * from './lib/toggle';
+export * from './lib/untracked-worktrees';
 export * from './lib/workstream-card';

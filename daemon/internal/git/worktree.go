@@ -227,6 +227,8 @@ type worktree struct {
 	branch   string
 	prunable bool
 	locked   bool
+	// missing says the folder is not there: deleted, or out of reach.
+	missing bool
 }
 
 // deleted reports whether the worktree's folder was deleted: git marks it
@@ -276,23 +278,66 @@ func worktrees(ctx context.Context, dir string) ([]worktree, error) {
 		}
 	}
 	for i := range entries {
-		if entry := &entries[i]; !entry.prunable && !entry.locked {
-			_, err := os.Lstat(entry.path)
-			entry.prunable = errors.Is(err, fs.ErrNotExist)
+		entry := &entries[i]
+		if entry.prunable {
+			entry.missing = true
+			continue
 		}
+		_, err := os.Lstat(entry.path)
+		entry.missing = errors.Is(err, fs.ErrNotExist)
+		entry.prunable = entry.missing && !entry.locked
 	}
 	return entries, nil
+}
+
+// LinkedWorktree is a linked worktree of a repository.
+type LinkedWorktree struct {
+	Path string
+	// Branch is the branch checked out there; "" on a detached HEAD.
+	Branch string
+	// Missing is set when the worktree's folder is not there: deleted, or out
+	// of reach (see worktree.deleted).
+	Missing bool
+	// Deleted is set when the worktree's folder was deleted (see worktree.deleted).
+	Deleted bool
+}
+
+// LinkedWorktrees lists the linked worktrees of the repository at dir: every
+// worktree but the first git lists, the main one (or the bare repository).
+func LinkedWorktrees(ctx context.Context, dir string) ([]LinkedWorktree, error) {
+	entries, err := worktrees(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	return linkedWorktrees(entries)
+}
+
+// linkedWorktrees are the linked worktrees among a repository's entries, all
+// but the first. No entry at all is an error. Why: git always lists the main
+// worktree, so an empty listing was misread, and taken as is it would say every
+// linked worktree is gone.
+func linkedWorktrees(entries []worktree) ([]LinkedWorktree, error) {
+	if len(entries) == 0 {
+		return nil, errors.New("git worktree list: no worktree listed, not even the main one")
+	}
+	var linked []LinkedWorktree
+	for _, entry := range entries[1:] {
+		linked = append(linked, LinkedWorktree{
+			Path: entry.path, Branch: entry.branch, Missing: entry.missing, Deleted: entry.deleted(),
+		})
+	}
+	return linked, nil
 }
 
 // SamePath reports whether two paths name the same file, symlinks resolved:
 // git reports a worktree by its real path.
 func SamePath(first, second string) bool {
-	return realPath(first) == realPath(second)
+	return RealPath(first) == RealPath(second)
 }
 
-// realPath is path absolute with the symlinks of its nearest existing ancestor
+// RealPath is path absolute with the symlinks of its nearest existing ancestor
 // resolved.
-func realPath(path string) string {
+func RealPath(path string) string {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return filepath.Clean(path)

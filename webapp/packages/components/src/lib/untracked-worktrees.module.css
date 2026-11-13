@@ -1,0 +1,28 @@
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  composes: focusMark from './nav-mark.module.css';
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.95rem;
+  font-size: 0.78rem;
+}
+
+.name {
+  font-weight: 600;
+}
+
+.branch,
+.sessions {
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.path {
+  flex: 1;
+  min-width: 0;
+}

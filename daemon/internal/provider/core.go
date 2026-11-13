@@ -41,8 +41,8 @@ const coreProviderLabel = "Default"
 // location, when set (via SetSettings), is read live to let the configured
 // workstreams.location override root; an empty configured value keeps root.
 //
-// claimed holds the managed directories of creates in flight, which may not
-// exist on disk yet.
+// claimed holds the destinations of creates in flight, which may not exist on
+// disk yet.
 type core struct {
 	// SettingsHolder supplies the refresh interval the reconciler follows
 	// in-place workstreams' branches at (Refresher).
@@ -62,6 +62,7 @@ var (
 	_ StrategyTeller     = (*core)(nil)
 	_ ValidationSchemer  = (*core)(nil)
 	_ Refresher          = (*core)(nil)
+	_ FolderSurveyor     = (*core)(nil)
 )
 
 // suggestTimeout bounds all of a form's git queries together.
@@ -365,6 +366,15 @@ func worktreeRefusals(ctx context.Context, dir, branch, baseRef string, fromName
 func (c *core) Create(ctx context.Context, req CreateRequest) (domain.Workstream, error) {
 	strategy, branch, baseRef, destDir := parseCoreConfig(req.Config, req.Project.GitBacked)
 	name, branch := coreNameAndBranch(ctx, req, strategy, branch)
+	// The destination is claimed while the create runs, or for longer (CreateRequest.HoldClaim).
+	releaseClaim := func() {}
+	defer func() {
+		if req.HoldClaim != nil {
+			req.HoldClaim(releaseClaim)
+		} else {
+			releaseClaim()
+		}
+	}()
 	// Resolve a user-supplied destination path (tilde expansion, reject relative).
 	if destDir != "" {
 		resolved, err := pathutil.Resolve(destDir)
@@ -372,6 +382,9 @@ func (c *core) Create(ctx context.Context, req CreateRequest) (domain.Workstream
 			return domain.Workstream{}, fmt.Errorf("invalid path: %w", err)
 		}
 		destDir = resolved
+		if wsfs.Strategy(strategy) != wsfs.InPlace {
+			releaseClaim = c.claimDir(destDir)
+		}
 	}
 	// Worktree/copy need a destination that does not yet exist. When the user
 	// supplies none, materialize a managed directory under root, so these
@@ -384,9 +397,7 @@ func (c *core) Create(ctx context.Context, req CreateRequest) (domain.Workstream
 		if err := os.MkdirAll(root, 0o755); err != nil {
 			return domain.Workstream{}, fmt.Errorf("creating workstream root %q: %w", root, err)
 		}
-		managed, release := c.claimManagedDir(root, req.Project.Path, name)
-		defer release()
-		destDir = managed
+		destDir, releaseClaim = c.claimManagedDir(root, req.Project.Path, name)
 	}
 	dir, err := wsfs.Prepare(ctx, wsfs.Strategy(strategy), req.Project.Path, branch, baseRef, destDir, req.Project.GitBacked)
 	if err != nil {
@@ -470,11 +481,28 @@ func (c *core) claimManagedDir(root, projectDir, name string) (string, func()) {
 	c.claimMu.Lock()
 	defer c.claimMu.Unlock()
 	dir := managedDir(root, projectDir, name, c.claimed)
+	return dir, c.claimLocked(dir)
+}
+
+// claimDir holds dir, a Create's destination, until release, so a survey does
+// not suggest the worktree being made there.
+func (c *core) claimDir(dir string) func() {
+	c.claimMu.Lock()
+	defer c.claimMu.Unlock()
+	return c.claimLocked(dir)
+}
+
+// claimLocked claims dir with claimMu held. A dir already claimed stays its
+// first claimer's, and the release returned is a no-op.
+func (c *core) claimLocked(dir string) func() {
+	if c.claimed[dir] {
+		return func() {}
+	}
 	if c.claimed == nil {
 		c.claimed = map[string]bool{}
 	}
 	c.claimed[dir] = true
-	return dir, func() {
+	return func() {
 		c.claimMu.Lock()
 		defer c.claimMu.Unlock()
 		delete(c.claimed, dir)

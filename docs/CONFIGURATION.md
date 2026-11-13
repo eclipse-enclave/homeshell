@@ -95,7 +95,7 @@ The agents themselves are configured in the [agent catalog](API.md#agent-catalog
 
 | Key | Default | Effect |
 |---|---|---|
-| `providers.refreshIntervalSec` | `0.5` | Seconds between checks of session states and branches (0.1–86400) |
+| `providers.refreshIntervalSec` | `0.5` | Seconds between checks of session states, branches and worktrees, 0.1–86400 |
 
 ### Open with
 

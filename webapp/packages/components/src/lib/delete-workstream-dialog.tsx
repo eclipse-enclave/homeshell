@@ -20,7 +20,11 @@ export interface DeleteWorkstreamDialogProps {
  * placeholder has none yet, whatever its strategy: deleting it touches no files.
  */
 export function hasMaterializedFiles(workstream: Workstream): boolean {
-  if (workstream.createFailed || workstream.effectiveState === 'creating')
+  if (
+    workstream.createFailed ||
+    workstream.folderMissing ||
+    workstream.effectiveState === 'creating'
+  )
     return false;
   return (
     workstream.strategyId === 'worktree' || workstream.strategyId === 'copy'

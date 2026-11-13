@@ -39,6 +39,7 @@ const project: Project = {
   state: 'running',
   runtimeState: 'running',
   effectiveState: 'running',
+  untrackedWorktrees: [],
   workstreams: [
     {
       id: 'w1',
@@ -153,9 +154,13 @@ const session = (
 /**
  * Answers what the view loads — one creating provider, one session option,
  * and a provider that can stop and start — and each create with `created`,
- * once `answered` has settled.
+ * once `answered` has settled, or refuses each with `refusal`.
  */
-function stubCreates(created: () => unknown, answered = Promise.resolve()) {
+function stubCreates(
+  created: () => unknown,
+  answered = Promise.resolve(),
+  refusal?: string,
+) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -170,6 +175,13 @@ function stubCreates(created: () => unknown, answered = Promise.resolve()) {
       }
       if (init?.method === 'POST') {
         await answered;
+        if (refusal) {
+          return {
+            ok: false,
+            status: 409,
+            json: async () => ({ error: refusal }),
+          };
+        }
         return json(created(), 201);
       }
       if (url.endsWith('/workstream-providers')) {
@@ -306,6 +318,148 @@ describe('ProjectView sections', () => {
     expect((await screen.findByRole('alert')).textContent).toContain(
       'The folder is taken.',
     );
+  });
+
+  describe('untracked worktrees', () => {
+    const untracked = (shown: Project): Project => ({
+      ...shown,
+      untrackedWorktrees: [
+        { name: 'wt-a', branch: 'wt-a', path: '/tmp/wt-a', sessionCount: 0 },
+      ],
+    });
+
+    it('shows them at the end of Separate folders, outside its count', async () => {
+      stubDaemon();
+      await renderLive(untracked(withCards(worktree('w2', 'b'))));
+
+      const separate = section(/^Separate folders · 1$/);
+      const fold = within(separate).getByRole('button', {
+        name: '1 untracked worktree',
+      });
+      const cardRegion = within(separate).getByRole('region', {
+        name: 'Workstream b',
+      });
+      expect(
+        cardRegion.compareDocumentPosition(fold) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
+
+    it('posts the path of the one added', async () => {
+      stubCreates(() => worktree('w3', 'wt-a'));
+      await renderLive(untracked(withCards(worktree('w2', 'b'))));
+
+      fireEvent.click(
+        screen.getByRole('button', { name: '1 untracked worktree' }),
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Add wt-a' }));
+
+      const post = await waitFor(() => {
+        const found = vi
+          .mocked(fetch)
+          .mock.calls.find(([, init]) => init?.method === 'POST');
+        expect(found).toBeDefined();
+        return found!;
+      });
+      expect(post[0]).toBe('/api/projects/p1/worktree-workstreams');
+      expect(JSON.parse(String(post[1]?.body))).toEqual({ path: '/tmp/wt-a' });
+    });
+
+    it('says why the daemon refused an add', async () => {
+      stubCreates(() => ({}), undefined, 'Not an untracked worktree.');
+      await renderLive(untracked(withCards(worktree('w2', 'b'))));
+
+      fireEvent.click(
+        screen.getByRole('button', { name: '1 untracked worktree' }),
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Add wt-a' }));
+
+      expect((await screen.findByRole('alert')).textContent).toContain(
+        'Not an untracked worktree.',
+      );
+    });
+
+    it('lets no second add or Work here start while one is in flight', async () => {
+      let answer: () => void = () => undefined;
+      stubCreates(
+        () => worktree('w3', 'wt-a'),
+        new Promise<void>((resolve) => {
+          answer = resolve;
+        }),
+      );
+      await renderLive(untracked(withCards(worktree('w2', 'b'))));
+
+      fireEvent.click(
+        screen.getByRole('button', { name: '1 untracked worktree' }),
+      );
+      const add = screen.getByRole('button', { name: 'Add wt-a' });
+      fireEvent.click(add);
+      fireEvent.click(add);
+      expect(add.getAttribute('aria-busy')).toBe('true');
+      await act(async () => answer());
+
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.filter(([, init]) => init?.method === 'POST'),
+      ).toHaveLength(1);
+    });
+
+    it('blocks the adds while Work here is in flight', async () => {
+      stubCreates(() => card('w1', 'here'), new Promise<void>(() => undefined));
+      await renderLive(untracked(withCards()));
+
+      fireEvent.click(screen.getByRole('button', { name: 'Work here' }));
+      fireEvent.click(
+        screen.getByRole('button', { name: '1 untracked worktree' }),
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Add wt-a' }));
+
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.filter(([, init]) => init?.method === 'POST'),
+      ).toHaveLength(1);
+    });
+
+    it('keeps the tab stop on the row the arrows left it on', async () => {
+      stubDaemon();
+      await renderLive(untracked(withCards(worktree('w2', 'b'))));
+      const card = screen.getByRole('region', { name: 'Workstream b' });
+      const fold = screen.getByRole('button', {
+        name: '1 untracked worktree',
+      });
+
+      act(() => card.focus());
+      fireEvent.keyDown(card, { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(fold);
+      fireEvent.keyDown(fold, { key: 'ArrowRight' });
+      const row = screen
+        .getAllByRole('listitem')
+        .find((item) => item.textContent?.startsWith('wt-a'))!;
+      fireEvent.keyDown(fold, { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(row);
+
+      expect([card, fold, row].map((item) => item.tabIndex)).toEqual([
+        -1, -1, 0,
+      ]);
+      expect(
+        screen
+          .getByRole('button', { name: 'Add wt-a' })
+          .getAttribute('tabindex'),
+      ).toBeNull();
+    });
+
+    it('does not say there are no separate folders above a fold of them', async () => {
+      stubDaemon();
+      await renderLive(untracked(withCards()));
+
+      expect(
+        within(section(/^Separate folders/)).queryByText(
+          'No separate folders yet.',
+        ),
+      ).toBeNull();
+    });
   });
 
   // One list: the arrows and the tab stop follow the page, not the daemon.
@@ -857,7 +1011,9 @@ describe('ProjectView focus around creating', () => {
     await renderLive(project);
     fireEvent.click(opener());
     const name = await nameBox();
-    expect(document.activeElement).toBe(name);
+    // The form mounts once the providers load, and focuses its name an
+    // effect later: the box can be found before it has focus.
+    await waitFor(() => expect(document.activeElement).toBe(name));
 
     act(() => opener().focus());
     expect((opener() as HTMLButtonElement).disabled).toBe(false);

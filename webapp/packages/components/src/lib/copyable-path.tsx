@@ -10,6 +10,8 @@ export interface CopyablePathProps {
   /** A shorter form of the path to display; its title is the full path. */
   label?: string;
   className?: string;
+  /** The id of the displayed path, for a control it describes (aria-describedby). */
+  id?: string;
   /** For its copy button: -1 takes it out of the Tab order. */
   tabIndex?: number;
 }
@@ -22,6 +24,7 @@ export function CopyablePath({
   path,
   label,
   className,
+  id,
   tabIndex,
 }: CopyablePathProps) {
   const [copied, setCopied] = useState(false);
@@ -41,6 +44,7 @@ export function CopyablePath({
   return (
     <span className={`${styles.wrapper} ${className ?? ''}`}>
       <span
+        id={id}
         className={styles.path}
         {...(label ? { title: path } : titleWhenTruncated(path))}
       >

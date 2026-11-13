@@ -1,4 +1,8 @@
-import { expect, type APIRequestContext } from '@playwright/test';
+import {
+  expect,
+  type APIRequestContext,
+  type APIResponse,
+} from '@playwright/test';
 
 import { tempProjectDir } from '../fixtures';
 import { isPlaceholderSession } from '../placeholders';
@@ -37,6 +41,8 @@ export interface RealWorkstream {
   branch: string;
   workingDir?: string;
   inProjectFolder?: boolean;
+  /** Set while its folder is gone and a session in it has not ended. */
+  folderMissing?: boolean;
   openModes: {
     id: string;
     label: string;
@@ -220,4 +226,54 @@ export async function sessionsOf(
   workstreamId: string,
 ): Promise<ListedSession[]> {
   return (await workstreamOf(request, projectId, workstreamId))?.sessions ?? [];
+}
+
+export interface UntrackedWorktree {
+  name: string;
+  branch?: string;
+  path: string;
+  sessionCount: number;
+}
+
+/** A project as GET /api/projects lists it. */
+export interface ListedProject {
+  id: string;
+  workstreams?: RealWorkstream[];
+  untrackedWorktrees?: UntrackedWorktree[];
+}
+
+/** Every project as GET /api/projects lists them right now. */
+export async function listedProjects(
+  request: APIRequestContext,
+): Promise<ListedProject[]> {
+  return (await (await request.get('/api/projects')).json()).projects ?? [];
+}
+
+/** The project as GET /api/projects lists it right now, if it is listed. */
+export async function projectOf(
+  request: APIRequestContext,
+  projectId: string,
+): Promise<ListedProject | undefined> {
+  return (await listedProjects(request)).find(
+    (project) => project.id === projectId,
+  );
+}
+
+/** The project's untracked worktrees as GET /api/projects lists them right now. */
+export async function untrackedOf(
+  request: APIRequestContext,
+  projectId: string,
+): Promise<UntrackedWorktree[]> {
+  return (await projectOf(request, projectId))?.untrackedWorktrees ?? [];
+}
+
+/** Asks the daemon to add the untracked worktree at `path` as a workstream. */
+export async function addUntrackedWorktree(
+  request: APIRequestContext,
+  projectId: string,
+  path: string,
+): Promise<APIResponse> {
+  return request.post(`/api/projects/${projectId}/worktree-workstreams`, {
+    data: { path },
+  });
 }

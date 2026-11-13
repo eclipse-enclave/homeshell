@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -495,6 +496,83 @@ func TestRemoveProjectLeavesARestartOfASessionAnotherProjectLists(t *testing.T) 
 		if time.Now().After(deadline) {
 			t.Fatalf("sessions left = %+v; want %q, restarted", discovered, restarted.SessionID)
 		}
+	}
+}
+
+// surveyingFake is the fake, as a workstream provider that suggests the folder
+// in folder, whoever claims it.
+type surveyingFake struct {
+	*fake.Provider
+	folder string
+}
+
+func (surveying *surveyingFake) ListFolders(context.Context, provider.ProjectRef) ([]provider.Folder, error) {
+	return []provider.Folder{{Path: surveying.folder}}, nil
+}
+
+func (surveying *surveyingFake) Survey(_ provider.ProjectRef, folders []provider.Folder, _ []domain.Workstream,
+	_ []string) provider.Survey {
+	var survey provider.Survey
+	for _, folder := range folders {
+		survey.Untracked = append(survey.Untracked, domain.UntrackedWorktree{Name: "wt", Path: folder.Path})
+	}
+	return survey
+}
+
+func (surveying *surveyingFake) TrackFolder(domain.UntrackedWorktree, func(string) bool) domain.Workstream {
+	return domain.Workstream{}
+}
+
+// Removing a project cancels the restart of a session another project only
+// hides on an untracked worktree: there is no workstream to show it in.
+func TestRemoveProjectCancelsARestartOfASessionOnlyHiddenElsewhere(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	fakeProvider := fake.New(fake.Config{SessionStartup: 300 * time.Millisecond})
+	surveying := &surveyingFake{Provider: fakeProvider}
+	st := store.NewTestStore(t, []domain.Project{{ID: "p1", Name: "p1", Path: t.TempDir(), Workstreams: []domain.Workstream{}}})
+	reg := provider.NewRegistry()
+	if err := reg.RegisterWorkstreamProvider(surveying); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.RegisterSessionProvider(fakeProvider); err != nil {
+		t.Fatal(err)
+	}
+	svc := provider.NewService(st, reg, 0)
+	svc.Reconcile(context.Background())
+	restarted := sandboxedSession(t, svc, st, `{}`)
+	project := st.Projects()[0]
+	workstream, err := st.Workstream(restarted.ProjectID, restarted.WorkstreamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A git project holding p1's folder, its workstream's folder a worktree of it.
+	surveying.folder = workstream.WorkingDir
+	parent := filepath.Dir(project.Path)
+	if out, err := exec.Command("git", "init", "-q", parent).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if err := st.AddProject(&domain.Project{ID: "p2", Name: "p2", Path: parent, GitBacked: true}); err != nil {
+		t.Fatalf("AddProject: %v", err)
+	}
+	svc.Reconcile(context.Background())
+	if hidden := st.Projects()[1].UntrackedWorktrees; len(hidden) != 1 || len(hidden[0].Sessions) == 0 {
+		t.Fatalf("the other project does not hide the session: %+v", st.Projects()[1])
+	}
+
+	if _, err := svc.RestartSession(context.Background(), provider.RestartSessionInput{Session: restarted}); err != nil {
+		t.Fatalf("RestartSession: %v", err)
+	}
+	if err := svc.RemoveProject(context.Background(), restarted.ProjectID); err != nil {
+		t.Fatalf("RemoveProject: %v", err)
+	}
+	// The interrupted restart's session is removed in the background.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	svc.Shutdown(ctx)
+	if left := discoveredIDs(t, fakeProvider, project); len(left) != 0 {
+		t.Errorf("sessions left running = %q; want the restarted one removed", left)
 	}
 }
 

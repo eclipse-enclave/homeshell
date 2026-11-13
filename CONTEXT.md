@@ -72,7 +72,7 @@ _Avoid_: feature flag
 
 **Adopted workstream**:
 A workstream HomeShell did not create, made up on the fly for sessions a provider reports in a
-directory that no workstream claims.
+directory that no workstream claims. A folder that is an untracked worktree is never adopted.
 
 ### Working directory
 
@@ -89,6 +89,11 @@ _Avoid_: isolation mode
 **Separate folder**:
 A workstream's working directory when it is a **worktree** or a **folder** (copy), not the project
 directory itself.
+
+**Untracked worktree**:
+A linked git worktree of a project's repository that no workstream works in. HomeShell suggests
+adding it; it never adds one on its own.
+_Avoid_: orphan worktree, discovered worktree
 
 **Note**:
 A Markdown file a workstream keeps in its working directory, readable by the user and by the

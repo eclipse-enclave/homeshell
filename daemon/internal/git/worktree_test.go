@@ -1195,3 +1195,119 @@ func TestEnclosingHeadBranch(t *testing.T) {
 		})
 	}
 }
+
+func TestLinkedWorktreesSkipsTheMainWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	initRepo(t, dir)
+	parent := t.TempDir()
+	withBranch, detached := filepath.Join(parent, "a"), filepath.Join(parent, "b")
+	runGit(t, dir, "worktree", "add", "-b", "wt-a", withBranch)
+	runGit(t, dir, "worktree", "add", "--detach", detached)
+
+	got, err := LinkedWorktrees(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []LinkedWorktree{{Path: RealPath(withBranch), Branch: "wt-a"}, {Path: RealPath(detached)}}
+	slices.SortFunc(got, func(a, b LinkedWorktree) int { return strings.Compare(a.Path, b.Path) })
+	if !slices.Equal(got, want) {
+		t.Errorf("LinkedWorktrees = %+v; want %+v", got, want)
+	}
+}
+
+func TestLinkedWorktreesFromALinkedWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	initRepo(t, dir)
+	linked := filepath.Join(t.TempDir(), "wt")
+	runGit(t, dir, "worktree", "add", "-b", "wt-a", linked)
+
+	got, err := LinkedWorktrees(context.Background(), linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !SamePath(got[0].Path, linked) {
+		t.Errorf("LinkedWorktrees from a linked worktree = %+v; want only %s", got, linked)
+	}
+}
+
+func TestLinkedWorktreesMissingAndDeletedFlags(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	keep := func(_, _ string) string { return "" }
+	tests := []struct {
+		name        string
+		lock        bool
+		remove      func(parent, worktree string) string
+		wantMissing bool
+		wantDeleted bool
+	}{
+		{"folder there", false, keep, false, false},
+		{"folder deleted", false, func(_, worktree string) string { return worktree }, true, true},
+		{"folder out of reach", false, func(parent, _ string) string { return parent }, true, false},
+		{"locked, folder out of reach", true, func(parent, _ string) string { return parent }, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			initRepo(t, dir)
+			parent := filepath.Join(t.TempDir(), "drive")
+			linked := filepath.Join(parent, "wt")
+			runGit(t, dir, "worktree", "add", "-b", "wt-a", linked)
+			if tt.lock {
+				runGit(t, dir, "worktree", "lock", linked)
+			}
+			if removed := tt.remove(parent, linked); removed != "" {
+				if err := os.RemoveAll(removed); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			got, err := LinkedWorktrees(context.Background(), dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].Missing != tt.wantMissing || got[0].Deleted != tt.wantDeleted {
+				t.Errorf("LinkedWorktrees = %+v; want one with Missing=%v, Deleted=%v",
+					got, tt.wantMissing, tt.wantDeleted)
+			}
+		})
+	}
+}
+
+func TestLinkedWorktreesOutsideARepository(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	if _, err := LinkedWorktrees(context.Background(), t.TempDir()); err == nil {
+		t.Error("LinkedWorktrees outside a repository succeeded")
+	}
+}
+
+func TestLinkedWorktreesOfEntries(t *testing.T) {
+	tests := []struct {
+		name    string
+		entries []worktree
+		want    []LinkedWorktree
+		wantErr bool
+	}{
+		{name: "no entry, not even the main worktree", wantErr: true},
+		{name: "the main worktree only", entries: []worktree{{path: "/repo"}}},
+		{name: "a linked worktree", entries: []worktree{{path: "/repo"}, {path: "/wt", branch: "wt-a"}},
+			want: []LinkedWorktree{{Path: "/wt", Branch: "wt-a"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := linkedWorktrees(tt.entries)
+			if (err != nil) != tt.wantErr || !slices.Equal(got, tt.want) {
+				t.Errorf("linkedWorktrees = %+v, %v; want %+v, error %v", got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}

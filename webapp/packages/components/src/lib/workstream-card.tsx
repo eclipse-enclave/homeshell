@@ -722,6 +722,13 @@ export function WorkstreamCard({
           onCancel={() => setConfirming(false)}
         />
       )}
+      {workstream.folderMissing && (
+        <p className={styles.statusMessage}>
+          <span className={styles.statusText}>
+            Its folder is gone. It is removed once its sessions end.
+          </span>
+        </p>
+      )}
       {workstream.statusMessage && (
         <p className={styles.statusMessage}>
           <span className={styles.statusText}>{workstream.statusMessage}</span>

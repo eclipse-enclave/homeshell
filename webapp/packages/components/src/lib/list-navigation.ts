@@ -16,7 +16,8 @@ import {
   platformKeys,
 } from './keys';
 
-const NAV_ITEM_SELECTOR = '[data-nav-id]';
+/** What marks an item of the workstream list: its card, row or worktree ID. */
+export const NAV_ITEM_SELECTOR = '[data-nav-id]';
 
 function navItems(root: ParentNode): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>(NAV_ITEM_SELECTOR));
@@ -39,10 +40,13 @@ export function tabStopItem(root: ParentNode): HTMLElement | undefined {
   return navItems(root).find((item) => item.tabIndex === 0);
 }
 
+/** What an item of the workstream list is: a card, a session row, or an untracked worktree. */
+export type ListItemKind = 'card' | 'session' | 'worktree';
+
 /** A key of the workstream list, described for the user. */
 export interface ListKey extends KeyHelp {
   /** The items that handle it themselves; unset for the list's own keys. */
-  on?: readonly ('card' | 'session')[];
+  on?: readonly ListItemKind[];
 }
 
 /**
@@ -52,7 +56,7 @@ export interface ListKey extends KeyHelp {
 export const LIST_KEYS: readonly ListKey[] = [
   {
     keys: ['arrowup', 'arrowdown'],
-    label: 'Move between workstreams and sessions',
+    label: 'Move between workstreams, sessions and untracked worktrees',
   },
   { keys: ['home', 'end'], label: 'Go to the first or last item' },
   {
@@ -68,8 +72,8 @@ export const LIST_KEYS: readonly ListKey[] = [
   {
     keys: ['enter'],
     label:
-      "Open the focused workstream or session, or show an ended one's details",
-    on: ['card', 'session'],
+      "Open the focused workstream or session, show an ended one's details, or add an untracked worktree",
+    on: ['card', 'session', 'worktree'],
   },
   {
     keys: ['f2'],
@@ -91,7 +95,7 @@ export const LIST_KEYS: readonly ListKey[] = [
 
 /** The keys a focused `item` of the list answers, as aria-keyshortcuts. */
 export function listItemKeyShortcuts(
-  item: 'card' | 'session',
+  item: ListItemKind,
   mac = isMac(),
 ): string {
   return LIST_KEYS.filter((key) => key.on?.includes(item))
@@ -164,23 +168,32 @@ function cardItems(workstream: Workstream): string[] {
 interface TabStop {
   id: string;
   index: number;
-  workstreamId: string;
-  /** Among its card's items. */
-  position: number;
+  /** The card it is in, and where among its items; unset for a trailing item. */
+  card?: { workstreamId: string; position: number };
+}
+
+/** Every item of the list in page order: the cards' items, then `trailing`. */
+function listItems(
+  workstreams: readonly Workstream[],
+  trailing: readonly string[],
+): string[] {
+  return [...workstreams.flatMap(cardItems), ...trailing];
 }
 
 function placeTabStop(
   id: string,
   workstreams: readonly Workstream[],
+  trailing: readonly string[],
 ): TabStop | null {
+  const index = listItems(workstreams, trailing).indexOf(id);
+  if (index === -1) return null;
   for (const workstream of workstreams) {
     const position = cardItems(workstream).indexOf(id);
     if (position !== -1) {
-      const index = workstreams.flatMap(cardItems).indexOf(id);
-      return { id, index, workstreamId: workstream.id, position };
+      return { id, index, card: { workstreamId: workstream.id, position } };
     }
   }
-  return null;
+  return { id, index };
 }
 
 /**
@@ -192,16 +205,17 @@ function placeTabStop(
 function tabStopHolder(
   stop: TabStop | null,
   workstreams: readonly Workstream[],
+  trailing: readonly string[],
 ): string | undefined {
-  const navIds = workstreams.flatMap(cardItems);
+  const navIds = listItems(workstreams, trailing);
   if (!stop) return navIds[0];
   if (navIds.includes(stop.id)) return stop.id;
   const card = workstreams.find(
-    (workstream) => workstream.id === stop.workstreamId,
+    (workstream) => workstream.id === stop.card?.workstreamId,
   );
-  if (card) {
+  if (card && stop.card) {
     const items = cardItems(card);
-    return items[Math.min(stop.position, items.length - 1)];
+    return items[Math.min(stop.card.position, items.length - 1)];
   }
   return navIds[Math.min(stop.index, navIds.length - 1)];
 }
@@ -211,6 +225,11 @@ export interface ListTabStopOptions {
   resetKey: string;
   /** Takes focus when the list is empty, and when its last item goes. */
   emptyFocus: FocusTarget;
+  /**
+   * The IDs of the items shown after the cards, in page order (see
+   * untrackedNavIds), so that the tab stop can rest on them too.
+   */
+  trailing?: readonly string[];
 }
 
 /**
@@ -228,7 +247,7 @@ export interface ListTabStopOptions {
  */
 export function useListTabStop(
   workstreams: readonly Workstream[],
-  { resetKey, emptyFocus }: ListTabStopOptions,
+  { resetKey, emptyFocus, trailing = [] }: ListTabStopOptions,
 ) {
   const listRef = useRef<HTMLDivElement>(null);
   const describedBy = useId();
@@ -236,7 +255,7 @@ export function useListTabStop(
   // away. A click onto blank page clears it, so that <body> keeps focus then.
   const hasFocus = useRef(false);
   const [stop, setStop] = useState<TabStop | null>(null);
-  const tabStopId = tabStopHolder(stop, workstreams);
+  const tabStopId = tabStopHolder(stop, workstreams, trailing);
 
   // A layout effect, so that it runs before an effect of the caller's that
   // focuses an item of what the reset brought in, and so gives it the stop.
@@ -279,7 +298,7 @@ export function useListTabStop(
         // (a section's buttons, its form) hands focus back on its own.
         const id = closestNavItem(event.target)?.dataset.navId;
         hasFocus.current = id !== undefined;
-        if (id) setStop(placeTabStop(id, workstreams));
+        if (id) setStop(placeTabStop(id, workstreams, trailing));
       },
       onBlur: (event: FocusEvent<HTMLElement>) => {
         // A control disabled while it has focus drops it without a render to

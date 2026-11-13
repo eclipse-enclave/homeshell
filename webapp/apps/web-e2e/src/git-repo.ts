@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { mkdir, realpath } from 'node:fs/promises';
+import { join } from 'node:path';
 import { type APIRequestContext } from '@playwright/test';
 import { tempProjectDir } from './fixtures';
 import { addEmptyProject } from './projects';
@@ -45,4 +47,40 @@ export async function gitProject(
 ): Promise<{ dir: string; projectId: string }> {
   const dir = await tempGitRepo(prefix);
   return { dir, projectId: await addEmptyProject(request, dir) };
+}
+
+let worktreeCount = 0;
+
+/**
+ * Adds a worktree to `repo` that HomeShell did not make, and returns its path
+ * with symlinks resolved. It goes into a fresh temp folder, or under
+ * `<repo>/.worktrees` with `inside`, where the fake provider finds the
+ * sessions of a project added again. It gets a new branch unless `branch`
+ * names one or it is `detach`ed.
+ */
+export async function addWorktree(
+  repo: string,
+  options: { branch?: string; detach?: boolean; inside?: boolean } = {},
+): Promise<string> {
+  const n = ++worktreeCount;
+  const parent = options.inside
+    ? join(repo, '.worktrees')
+    : await tempProjectDir('hs-worktree-');
+  await mkdir(parent, { recursive: true });
+  const target = join(parent, `wt-${n}`);
+  if (options.detach) {
+    await git(repo, 'worktree', 'add', '-q', '--detach', target);
+  } else {
+    await git(
+      repo,
+      'worktree',
+      'add',
+      '-q',
+      '-b',
+      options.branch ?? `wt-branch-${process.pid}-${n}`,
+      target,
+    );
+  }
+  // The daemon reports the resolved path (of a symlinked temp dir, say).
+  return realpath(target);
 }

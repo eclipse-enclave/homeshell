@@ -54,7 +54,7 @@ func TestReconcileDeduplicatesStoredAndDiscoveredSessionByID(t *testing.T) {
 	// does not store it, so it loads as "". When the owning provider rediscovers
 	// the same session by ID, the reconciler must replace the stored copy with the
 	// live one, not keep both. Otherwise the session appears twice after a daemon
-	// restart (and ReplaceWorkstreams hits a UNIQUE constraint on sessions.id).
+	// restart (and ReplaceProjection hits a UNIQUE constraint on sessions.id).
 	st := store.NewTestStore(t, []domain.Project{{ID: "p1", Path: "/p1", Workstreams: []domain.Workstream{
 		{ID: "ws1", Provider: "core", WorkingDir: "/p1/w", Sessions: []domain.Session{
 			// Provider intentionally omitted (== ""), reproducing a store-loaded session.

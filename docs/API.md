@@ -234,6 +234,10 @@ Paths are under `/api`. Endpoints without a response listed answer `204` with no
 - **Remove** stops tracking the project. Its sessions are left running; in-flight creates and
   restarts for it are cancelled.
 - **Refresh** re-detects whether the project is a git repository.
+- **Untracked worktrees.** Every project has `untrackedWorktrees: [{name, branch?, path,
+  sessionCount}]`, the [untracked worktrees](../CONTEXT.md#working-directory) HomeShell suggests
+  adding. Derived, not stored; refreshed every `providers.refreshIntervalSec`; empty outside git.
+  `sessionCount` counts the sessions there not ended, hidden until the worktree is added.
 
 ### Workstreams
 
@@ -245,6 +249,7 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
 | `POST /workstream-draft` | `{providerId, name?, config}` | `{name, config}` |
 | `POST /workstreams` | `{providerId, name?, config}` | `201`, the `creating` placeholder |
 | `POST /default-workstream` | | `201`, the default workstream |
+| `POST /worktree-workstreams` | `{path}` | `201`, the workstream |
 | `PATCH {ws}` | `{name}` | |
 | `DELETE {ws}` | `{keepFiles?, force?}`, or `?force=true` | |
 | `DELETE {ws}/status` | | |
@@ -259,6 +264,10 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
 - **Default workstream** gives the project the workstream a new one comes with: core, in place,
   named like a blank create. It is created at once, with no placeholder. `409` while the project
   folder is taken.
+- **Add an untracked worktree** makes a workstream of the one at `path`, which must be one of the
+  project's `untrackedWorktrees` paths, else `409`; a blank `path` is `400`. It is a `worktree`
+  workstream named like the suggestion, numbered (`name-2`, …) when that name is taken, with the
+  sessions hidden there. Nothing is created on disk.
 - **Strategies offered.** The core provider's `strategy` property has `enum` and a parallel
   `enumNames` of display names: `in-place` "In place", `worktree` "Worktree", `copy` "Folder: a
   copy of the project". While the project folder is taken, `in-place` and its name
@@ -270,10 +279,16 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
   the project folder and an in-place create's placeholder, pending or failed, which has no
   `workingDir` yet; it is absent on every other. These are what take the folder (see Create). Why: clients group by
   it without re-deriving the daemon's rule.
+- **Folder missing.** `folderMissing: true` marks a `worktree` workstream whose worktree was
+  removed outside HomeShell while a session in it has not reached a terminal state. It stays
+  listed with its sessions until they do, then goes on its own; a Remove takes it sooner, the busy
+  guard included. Absent on every other.
 - **Draft** answers what a create with the same body would derive for its blanks (name, branch,
   path) and creates nothing.
 - **Remove** ([Workstream lifecycle](ARCHITECTURE.md#workstream-lifecycle)): `keepFiles` keeps
-  the directory; a busy workstream needs `force` (see [Errors](#errors)).
+  the directory, and a worktree kept is suggested again in `untrackedWorktrees`; a busy
+  workstream needs `force` (see [Errors](#errors)). A workstream already removed is `404`. One being
+  removed because its worktree vanished is waited for, and the Remove answers `204`.
 - **Clearing the status** discards the workstream's status message for every client. `409` for a
   failed create. Why: there the message is the only account of what went wrong.
 - **Open** runs the default open mode; **open-with** runs `mode`, one of the workstream's

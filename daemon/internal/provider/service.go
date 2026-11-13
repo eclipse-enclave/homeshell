@@ -113,7 +113,9 @@ type Service struct {
 	//
 	// removing counts the removals in progress per session ID, during which a
 	// restart is refused (beginRemoval); removingProjects does the same per project
-	// ID for its session creates and restarts (beginProjectRemoval).
+	// ID for its session creates and restarts (beginProjectRemoval);
+	// removingWorkstreams per workstream (concurrencyKey), during which a vanished
+	// one is not retired (tryBeginRetire), and a Remove waits for a retire.
 	//
 	// mu is held across a store call in places (removeProjectFromStore); the
 	// store never calls back into the service, so the order cannot invert.
@@ -123,6 +125,8 @@ type Service struct {
 	restarting       map[string]restartInFlight
 	removing         map[string]int
 	removingProjects map[string]int
+	// removingWorkstreams: see removing above.
+	removingWorkstreams map[string]*workstreamRemoval
 
 	// createMu serializes the synchronous half of workstream creates.
 	createMu sync.Mutex
@@ -146,6 +150,9 @@ var (
 	ErrProjectNotFound     = errors.New("project not found")
 	ErrWorkstreamNotFound  = errors.New("workstream not found")
 	ErrSessionNotFound     = errors.New("session not found")
+	// ErrNotUntrackedWorktree refuses to add a folder that is none of the
+	// project's untracked worktrees now.
+	ErrNotUntrackedWorktree = errors.New("not an untracked worktree of this project")
 	// ErrConcurrencyLimit is returned when creating or restarting a session would
 	// exceed the provider's MaxConcurrentSessions for the workstream.
 	ErrConcurrencyLimit = errors.New("concurrent session limit reached")
@@ -278,17 +285,18 @@ func NewService(st *store.Store, reg *Registry, poll time.Duration, opts ...Serv
 		_ = reg.RegisterWorkstreamProvider(c)
 	}
 	svc := &Service{
-		registry:         reg,
-		reconciler:       NewReconciler(st, reg, poll),
-		store:            st,
-		core:             c,
-		commands:         NewOSCommandRunner(),
-		opener:           opener.NewOSOpener(),
-		inflight:         map[string]int{},
-		creating:         map[string]createInFlight{},
-		restarting:       map[string]restartInFlight{},
-		removing:         map[string]int{},
-		removingProjects: map[string]int{},
+		registry:            reg,
+		reconciler:          NewReconciler(st, reg, poll),
+		store:               st,
+		core:                c,
+		commands:            NewOSCommandRunner(),
+		opener:              opener.NewOSOpener(),
+		inflight:            map[string]int{},
+		creating:            map[string]createInFlight{},
+		restarting:          map[string]restartInFlight{},
+		removing:            map[string]int{},
+		removingProjects:    map[string]int{},
+		removingWorkstreams: map[string]*workstreamRemoval{},
 	}
 	svc.lifetime, svc.cancelLifetime = context.WithCancel(context.Background())
 	svc.term = terminal.NewOSLauncher(svc.settings.TerminalPreference)
@@ -298,6 +306,7 @@ func NewService(st *store.Store, reg *Registry, poll time.Duration, opts ...Serv
 	// The reconciler projects the derived workstream fields; only the service
 	// knows how to derive them (it holds the settings and the host).
 	svc.reconciler.annotate = svc.annotate
+	svc.reconciler.retire = svc.retireVanished
 	return svc
 }
 
@@ -467,6 +476,9 @@ func (s *Service) AddProject(ctx context.Context, project *domain.Project) error
 	if err := s.store.AddProject(project); err != nil {
 		return err
 	}
+	// Its folder is claimed now: a project sharing its repository suggests it
+	// no more. Its own pass runs below.
+	defer s.reconciler.resurvey()
 	defaultWorkstream, err := s.AddDefaultWorkstream(ctx, project.ID)
 	if err != nil {
 		slog.Warn("adding the default workstream failed", "project", project.ID, "error", err)
@@ -531,6 +543,70 @@ func (s *Service) addDefaultWorkstream(ctx context.Context, projectID string, pr
 		return domain.Workstream{}, err
 	}
 	return created, nil
+}
+
+// AddUntrackedWorktree makes a workstream of the project's untracked worktree
+// at path, creating nothing on disk: named like its suggestion, numbered when
+// that name is taken. The sessions hidden there attach to it. A folder that is
+// not suggested now, checked against a fresh listing, is refused with
+// ErrNotUntrackedWorktree; outside git nothing is suggested.
+func (s *Service) AddUntrackedWorktree(ctx context.Context, projectID, path string) (domain.Workstream, error) {
+	added, err := s.addUntrackedWorktree(ctx, projectID, path)
+	if err != nil {
+		return domain.Workstream{}, err
+	}
+	// Its folder is claimed now, and no listing changes: a project sharing the
+	// repository suggests it no more once surveyed again.
+	s.reconciler.resurvey()
+	return s.reconciledWorkstream(ctx, projectID, added.ID)
+}
+
+// addUntrackedWorktree stores a workstream for the folder at path the
+// project's surveyors suggest now. Under createMu, so a create cannot claim
+// the folder in between.
+func (s *Service) addUntrackedWorktree(ctx context.Context, projectID, path string) (domain.Workstream, error) {
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
+	project, err := s.store.Project(projectID)
+	if err != nil {
+		return domain.Workstream{}, ErrProjectNotFound
+	}
+	suggestions, err := s.reconciler.untracked(ctx, project)
+	if err != nil {
+		return domain.Workstream{}, err
+	}
+	index := slices.IndexFunc(suggestions, func(suggestion untrackedSuggestion) bool {
+		return domain.SameFolder(suggestion.folder.Path, path)
+	})
+	if index < 0 {
+		return domain.Workstream{}, ErrNotUntrackedWorktree
+	}
+	suggestion := suggestions[index]
+	nameTaken := func(name string) bool { return s.store.NameUser(projectID, name) != "" }
+	added, err := stampCreated(suggestion.surveyor.TrackFolder(suggestion.folder, nameTaken), suggestion.surveyor.ID())
+	if err != nil {
+		return domain.Workstream{}, err
+	}
+	if err := s.store.AddWorkstream(projectID, added); err != nil {
+		return domain.Workstream{}, err
+	}
+	return added, nil
+}
+
+// reconciledWorkstream reconciles the project a workstream was just added to
+// and returns the workstream as stored. A pass persists it and attaches the
+// sessions already running in its folder; the workstream exists either way,
+// so a failed pass is logged and left to the next.
+func (s *Service) reconciledWorkstream(ctx context.Context, projectID, workstreamID string) (domain.Workstream, error) {
+	if err := s.reconciler.ReconcileProject(ctx, projectID); err != nil {
+		slog.Warn("reconciling after adding a workstream failed", "project", projectID, "error", err)
+	}
+	workstream, err := s.store.Workstream(projectID, workstreamID)
+	if err != nil {
+		// Removed meanwhile, or its project was.
+		return domain.Workstream{}, fmt.Errorf("%w: %v", ErrWorkstreamNotFound, err)
+	}
+	return workstream, nil
 }
 
 // stampCreated gives a workstream a provider created what the daemon assigns:
@@ -601,8 +677,12 @@ func (s *Service) createRequest(input CreateInput, project ProjectRef) CreateReq
 
 // finishCreate runs the workstream provider's creation in the background. On
 // success the placeholder is replaced by the real workstream; on failure it
-// transitions to error state so the user sees what went wrong.
+// transitions to error state so the user sees what went wrong. The provider's
+// claim on the folder is held until then: a pass in between must not suggest
+// the worktree being created, nor an Add take it.
 func (s *Service) finishCreate(ctx context.Context, in CreateInput, ref ProjectRef, wp WorkstreamProvider, placeholderID string) {
+	releaseClaim := func() {}
+	defer func() { releaseClaim() }()
 	created, err := wp.Create(ctx, CreateRequest{
 		Project: ref,
 		Name:    in.Name,
@@ -613,6 +693,7 @@ func (s *Service) finishCreate(ctx context.Context, in CreateInput, ref ProjectR
 		OnProgress: func(msg string) {
 			_ = s.store.SetStatusMessage(in.ProjectID, placeholderID, msg)
 		},
+		HoldClaim: func(release func()) { releaseClaim = release },
 	})
 	if err != nil {
 		slog.Warn("workstream creation failed",
@@ -1292,6 +1373,23 @@ func (s *Service) Remove(ctx context.Context, ref WorkstreamRef, opts RemoveOpti
 		return nil
 	}
 
+	// Marked before the workstream is read: a retire starting once it is read
+	// leaves it to this removal. One under way already is waited for instead.
+	for {
+		retire := s.beginWorkstreamRemoval(ref)
+		if retire == nil {
+			break
+		}
+		select {
+		case <-retire:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		if _, err := s.store.Workstream(ref.ProjectID, ref.WorkstreamID); err != nil {
+			return nil // the retire removed it
+		}
+	}
+	defer s.endWorkstreamRemoval(ref)
 	ws, err := s.store.Workstream(ref.ProjectID, ref.WorkstreamID)
 	if err != nil {
 		return ErrWorkstreamNotFound
@@ -1307,6 +1405,102 @@ func (s *Service) Remove(ctx context.Context, ref WorkstreamRef, opts RemoveOpti
 		}
 	}
 
+	return s.removeWorkstream(ctx, ref, ws, opts)
+}
+
+// retireVanished starts removing, in the background, a workstream whose
+// worktree a reconcile pass found gone, once every session in it is terminal:
+// their records torn down, files kept as there are none. While one is not, it
+// is left listed, marked FolderMissing, for a later pass or the user's Remove.
+// Why: HomeShell never stops a session on its own, and a workstream kept
+// listed still holds its folder's sessions, so none is adopted back. One a
+// removal is under way for already, a Remove's or an earlier retire's, is left
+// to it; a Remove arriving meanwhile waits for it.
+func (s *Service) retireVanished(ctx context.Context, ref WorkstreamRef) {
+	if !s.tryBeginRetire(ref) {
+		return
+	}
+	// Not on ctx, which may be a request's: the teardown must outlive it.
+	detached := context.WithoutCancel(ctx)
+	s.goBackground(func() {
+		defer s.endWorkstreamRemoval(ref)
+		workstream, err := s.store.Workstream(ref.ProjectID, ref.WorkstreamID)
+		if err != nil {
+			return // removed since the pass saw it
+		}
+		if !domain.AllTerminal(workstream.Sessions) {
+			return // left to a later pass, once its sessions end
+		}
+		slog.Info("removing a workstream whose worktree is gone",
+			"project", ref.ProjectID, "workstream", ref.WorkstreamID, "dir", workstream.WorkingDir)
+		err = s.removeWorkstream(detached, ref, workstream, RemoveOptions{KeepFiles: true})
+		if err != nil && !errors.Is(err, ErrWorkstreamNotFound) {
+			slog.Warn("removing a vanished workstream failed",
+				"project", ref.ProjectID, "workstream", ref.WorkstreamID, "error", err)
+		}
+	})
+}
+
+// workstreamRemoval is a removal of a workstream under way.
+type workstreamRemoval struct {
+	// removals counts the Removes tearing it down.
+	removals int
+	// retired is a retire's, closed once it is done; nil for Removes. A retire
+	// holds the workstream alone.
+	retired chan struct{}
+}
+
+// beginWorkstreamRemoval marks a workstream as being torn down by a Remove
+// until endWorkstreamRemoval. While a retire holds it, nothing is marked and
+// the retire's completion is returned instead, for the Remove to wait for.
+func (s *Service) beginWorkstreamRemoval(ref WorkstreamRef) (retire <-chan struct{}) {
+	key := concurrencyKey(ref.ProjectID, ref.WorkstreamID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removal, ok := s.removingWorkstreams[key]
+	if !ok {
+		removal = &workstreamRemoval{}
+		s.removingWorkstreams[key] = removal
+	}
+	if removal.retired != nil {
+		return removal.retired
+	}
+	removal.removals++
+	return nil
+}
+
+// tryBeginRetire marks a workstream as being retired until
+// endWorkstreamRemoval, refused (false) while a removal of it is under way.
+func (s *Service) tryBeginRetire(ref WorkstreamRef) bool {
+	key := concurrencyKey(ref.ProjectID, ref.WorkstreamID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.removingWorkstreams[key]; ok {
+		return false
+	}
+	s.removingWorkstreams[key] = &workstreamRemoval{removals: 1, retired: make(chan struct{})}
+	return true
+}
+
+// endWorkstreamRemoval lifts a beginWorkstreamRemoval or tryBeginRetire mark.
+func (s *Service) endWorkstreamRemoval(ref WorkstreamRef) {
+	key := concurrencyKey(ref.ProjectID, ref.WorkstreamID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removal := s.removingWorkstreams[key]
+	if removal.removals--; removal.removals > 0 {
+		return
+	}
+	delete(s.removingWorkstreams, key)
+	if removal.retired != nil {
+		close(removal.retired)
+	}
+}
+
+// removeWorkstream tears workstream down, its sessions then its directory,
+// and drops its record: ErrWorkstreamNotFound when that is gone already.
+func (s *Service) removeWorkstream(ctx context.Context, ref WorkstreamRef, workstream domain.Workstream,
+	opts RemoveOptions) error {
 	// Stop anything still being built before tearing the sessions down. A create
 	// runs detached from the request that asked for it, so without this the build
 	// outlives the workstream: `enclave run` keeps going, finishes into a store
@@ -1314,13 +1508,13 @@ func (s *Service) Remove(ctx context.Context, ref WorkstreamRef, opts RemoveOpti
 	// is the half of the force contract ("busy sessions are stopped and torn down
 	// with it") that a placeholder needs, because the row a build is showing on is
 	// busy but is not yet a session any provider could be asked to stop.
-	if cancelled := s.cancelCreates(ws); cancelled > 0 {
+	if cancelled := s.cancelCreates(workstream); cancelled > 0 {
 		slog.Info("cancelled in-flight session creation for a workstream being removed",
 			"workstream", ref.WorkstreamID, "creates", cancelled)
 	}
 
 	// Tear down the sessions first, via each session's owning provider.
-	for _, sess := range ws.Sessions {
+	for _, sess := range workstream.Sessions {
 		// Held until the workstream is gone, so no restart starts on the way out.
 		s.beginRemoval(sess.ID)
 		defer s.endRemoval(sess.ID)
@@ -1342,9 +1536,13 @@ func (s *Service) Remove(ctx context.Context, ref WorkstreamRef, opts RemoveOpti
 		}
 	}
 
-	if wp, ok := s.registry.WorkstreamProvider(ws.Provider); ok {
+	if wp, ok := s.registry.WorkstreamProvider(workstream.Provider); ok {
 		if project, ok := s.projectRef(ref.ProjectID); ok {
-			if err := wp.Remove(ctx, project, ws, opts); err != nil {
+			err := wp.Remove(ctx, project, workstream, opts)
+			// Before the record goes, so a worktree deleted with it is never
+			// suggested from a listing cached before.
+			s.reconciler.forgetFolders(ref.ProjectID)
+			if err != nil {
 				return err
 			}
 		}
@@ -1353,6 +1551,9 @@ func (s *Service) Remove(ctx context.Context, ref WorkstreamRef, opts RemoveOpti
 	if err := s.store.RemoveWorkstream(ref.ProjectID, ref.WorkstreamID); err != nil {
 		return ErrWorkstreamNotFound
 	}
+	// A folder it kept is suggested again: a refresh tick may have held a
+	// listing from before the forget above, and would see nothing change.
+	s.reconciler.resurvey()
 	return nil
 }
 
@@ -1375,6 +1576,9 @@ func (s *Service) RemoveProject(ctx context.Context, projectID string) error {
 	if err != nil {
 		return ErrProjectNotFound
 	}
+	s.reconciler.forgetProject(projectID)
+	// Its folders are free now: a project sharing its repository suggests them.
+	s.reconciler.resurvey()
 	if len(running) > 0 {
 		// Not waited for here: a cancelled restart may still take a while to stop
 		// what it started, and the teardown must outlive the request.
@@ -1669,10 +1873,9 @@ func (s *Service) releaseSlotLocked(key string) {
 }
 
 func (s *Service) projectRef(projectID string) (ProjectRef, bool) {
-	for _, p := range s.store.Projects() {
-		if p.ID == projectID {
-			return ProjectRef{ID: p.ID, Path: p.Path, GitBacked: p.GitBacked}, true
-		}
+	project, err := s.store.Project(projectID)
+	if err != nil {
+		return ProjectRef{}, false
 	}
-	return ProjectRef{}, false
+	return projectRefOf(project), true
 }

@@ -103,10 +103,12 @@ describe('useListTabStop', () => {
   /** `inside`: the list stays on the page, New in it, once it is empty. */
   function List({
     workstreams,
+    trailing = [],
     resetKey = 'p1',
     inside = false,
   }: {
     workstreams: Workstream[];
+    trailing?: string[];
     resetKey?: string;
     inside?: boolean;
   }) {
@@ -114,6 +116,7 @@ describe('useListTabStop', () => {
     const list = useListTabStop(workstreams, {
       resetKey,
       emptyFocus: () => empty.current,
+      trailing,
     });
     const newButton = (
       <button ref={empty} type="button">
@@ -123,7 +126,7 @@ describe('useListTabStop', () => {
     return inside || workstreams.length > 0 ? (
       <div {...list.listProps}>
         {inside && newButton}
-        {workstreams.map(({ id }) => (
+        {[...workstreams.map(({ id }) => id), ...trailing].map((id) => (
           <section
             key={id}
             aria-label={id}
@@ -170,6 +173,19 @@ describe('useListTabStop', () => {
     expect(document.activeElement).toBe(
       screen.getByRole('button', { name: 'New' }),
     );
+  });
+
+  it('keeps the tab stop on an item after the cards that focus went to', () => {
+    const { rerender } = render(
+      <List workstreams={two} trailing={['extra']} />,
+    );
+    act(() => item('extra').focus());
+    rerender(<List workstreams={two} trailing={['extra']} />);
+    expect(tabStopItem(document)).toBe(item('extra'));
+
+    // Gone, it leaves the stop to the item now last, where it was.
+    rerender(<List workstreams={two} />);
+    expect(document.activeElement).toBe(item('two'));
   });
 
   it('focuses New when the last item goes from a list that stays', () => {

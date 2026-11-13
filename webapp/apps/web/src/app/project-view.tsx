@@ -25,6 +25,8 @@ import {
   useListTabStop,
   useRenamableTitle,
   useReturnFocus,
+  UntrackedWorktrees,
+  untrackedNavIds,
   WorkstreamCard,
   type WorkstreamCardHandle,
 } from '@homeshell/components';
@@ -50,6 +52,7 @@ import {
 import { usePendingFocus } from './keyboard/use-pending-focus';
 import {
   addDefaultWorkstream,
+  addUntrackedWorktree,
   createSession,
   createWorkstream,
   deleteWorkstream,
@@ -76,6 +79,9 @@ import { resolveDefault, type Settings } from './settings/settings-types';
 import { useSettings } from './settings/use-settings';
 import { useProjectCommands } from './use-project-commands';
 import { useSessionAttention } from './use-session-attention';
+
+/** What `creating` holds for Work here: a worktree path is never this. */
+const WORK_HERE = 'work-here';
 
 const LIST_KEYS_HINT = describeListKeys();
 
@@ -197,6 +203,7 @@ export function ProjectView({
   const emptiedFolder = useRef<string | null>(null);
   const list = useListTabStop([...inPlace, ...separate], {
     resetKey: project.id,
+    trailing: untrackedNavIds(project.untrackedWorktrees),
     emptyFocus: () =>
       (emptiedFolder.current === project.id && workHereRef.current) ||
       newWorkstreamRef.current,
@@ -305,18 +312,27 @@ export function ProjectView({
     return null;
   };
 
-  // One create at a time: a second would only be refused, the folder taken.
-  const [workingHere, setWorkingHere] = useState(false);
-  const handleWorkHere = async () => {
-    setWorkingHere(true);
+  // The one create in flight: the worktree path of an Add, or WORK_HERE. A
+  // second would only be refused, the folder taken.
+  const [creating, setCreating] = useState<string | null>(null);
+  const createHere = async (
+    key: string,
+    request: () => Promise<Workstream | string>,
+  ) => {
+    if (creating !== null) return;
+    setCreating(key);
     try {
-      const result = await addDefaultWorkstream(project.id);
+      const result = await request();
       if (typeof result === 'string') setError(result);
       else focusWhenListed(result.id);
     } finally {
-      setWorkingHere(false);
+      setCreating(null);
     }
   };
+  const handleWorkHere = () =>
+    createHere(WORK_HERE, () => addDefaultWorkstream(project.id));
+  const handleAddWorktree = (path: string) =>
+    createHere(path, () => addUntrackedWorktree(project.id, path));
 
   const handleCreateSession = async (
     workstreamId: string,
@@ -705,8 +721,8 @@ export function ProjectView({
                 onClick={handleWorkHere}
                 disabled={blocked}
                 // Not disabled: that would drop focus to the page meanwhile.
-                aria-disabled={workingHere || undefined}
-                aria-busy={workingHere || undefined}
+                aria-disabled={creating !== null || undefined}
+                aria-busy={creating === WORK_HERE || undefined}
                 title={
                   disabledReason ?? 'Create a workstream in the project folder'
                 }
@@ -725,9 +741,10 @@ export function ProjectView({
                 <span className={styles.count}>· {separate.length}</span>
               )}
             </h2>
-            {separate.length === 0 && (
-              <p className={styles.emptyText}>No separate folders yet.</p>
-            )}
+            {separate.length === 0 &&
+              project.untrackedWorktrees.length === 0 && (
+                <p className={styles.emptyText}>No separate folders yet.</p>
+              )}
             <Button
               ref={newWorkstreamRef}
               className={styles.newWorkstream}
@@ -760,6 +777,20 @@ export function ProjectView({
             />
           )}
           {separate.map(renderCard)}
+          <UntrackedWorktrees
+            worktrees={project.untrackedWorktrees}
+            tabStopId={list.tabStopId}
+            onAdd={handleAddWorktree}
+            adding={
+              creating !== WORK_HERE ? (creating ?? undefined) : undefined
+            }
+            disabledReason={
+              disabledReason ??
+              (creating === WORK_HERE
+                ? 'Creating a workstream in the project folder'
+                : undefined)
+            }
+          />
         </section>
       </div>
       {newSessionPicker}
