@@ -305,6 +305,41 @@ The rules for which doc a change updates, and how to write it, are in
 
 - The PR template (`.github/pull_request_template.md`) asks for tests, docs and changelog.
 
+### Demo GIF
+
+`scripts/demo-video/run.sh` re-records `docs/assets/homeshell-demo.gif`, the README's demo, and
+`homeshell-demo.mp4` next to it, the same cut at full size. Real Claude Code agents do the work.
+
+```sh
+make build
+ANTHROPIC_API_KEY=... scripts/demo-video/run.sh
+```
+
+- **Needs:** Linux with Xvfb, metacity, gnome-terminal, dbus-run-session, xdotool, xwininfo,
+  ffmpeg, python3 and the DejaVu fonts; podman with the `enclave` CLI; `claude` on `PATH`;
+  Playwright's Chromium (`make setup`).
+- **Costs:** the agents' model use is billed to `ANTHROPIC_API_KEY`. Why a key: a copy of your
+  Claude login would share its rotating refresh token with your own installation.
+- **Demo home:** `setup.sh` builds a throwaway `HOME` with Claude Code's first-run screens already
+  answered, an Enclave config with only the built-in features plus `playwright-mcp`, and the
+  projects in `projects/`, copied to `DEMO_PROJECTS`. Your own `~/.claude`, Enclave config and
+  HomeShell data are only read. Why outside `$HOME`: the paths show in the video.
+- **Take:** `xsession.sh` runs a virtual desktop; `take.sh` starts a daemon there, `seed.mjs`
+  gives it projects, worktrees and finished sessions (`layout.json`), and `story.mjs` plays the
+  story with the real X pointer (`desktop.mjs`) while ffmpeg records the screen.
+- **Cut:** `story.mjs` marks where it waits on agents; `encode.sh` speeds those stretches up to a
+  few seconds with a badge. The container's start and waits for a notification to clear are cut.
+- **Re-takes:** agents differ from run to run, so look at the result. A take that times out
+  prints the waiting session's last screen.
+- **Cleanup:** deletes the demo home, which holds the key, then stops the demo's daemon, bridges,
+  desktop and the containers of the demo projects, by exact match only.
+- **Wipes:** `DEMO_ROOT` and `DEMO_PROJECTS` are deleted at the start of a run. A non-empty folder
+  without the `.homeshell-demo` mark a previous run left is refused.
+- Env: `DEMO_PROJECTS` (default `/tmp/code`), `DEMO_ROOT` (default `/tmp/homeshell-demo`),
+  `DEMO_PORT`, `DEMO_DISPLAY` (must be free), `DEMO_KEEP=1` (keep the raw take and the daemon's
+  data), `DEMO_SKIP_CONTINUE=1` (end before the old conversation is continued), `DEMO_WIDTH`,
+  `DEMO_FPS`, `DEMO_FAST_SECONDS`, `FFMPEG`.
+
 ## CI
 
 `.github/workflows/ci.yml` runs on every pull request and on pushes to `main`. A new push to a
