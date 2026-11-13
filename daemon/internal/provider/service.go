@@ -454,8 +454,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Workstream
 
 	// Detached context so directory preparation is not cancelled when the HTTP
 	// request completes.
-	finishCtx := context.WithoutCancel(ctx)
-	goFinishCreate(func() { s.finishCreate(finishCtx, in, ref, wp, placeholderID) })
+	goFinishCreate(func() { s.finishCreate(context.WithoutCancel(ctx), in, ref, wp, placeholderID) })
 	return stored, nil
 }
 

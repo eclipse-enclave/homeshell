@@ -365,14 +365,19 @@ func TestServiceAddProjectRefusesADuplicatePath(t *testing.T) {
 }
 
 // An in-place create is listed in the project folder from its placeholder on,
-// before the create has made the workstream that works there.
+// before the create has made the workstream that works there. Create answers
+// with the placeholder as the store shows it, even when the create behind it
+// has finished first, as an in-place one can.
 func TestCreatePlaceholderOfAnInPlaceCreateIsInTheProjectFolder(t *testing.T) {
+	previous := goFinishCreate
+	t.Cleanup(func() { goFinishCreate = previous })
+	goFinishCreate = func(work func()) { work() }
 	tests := []struct {
-		name, config string
-		want         bool
+		name, strategy string
+		want           bool
 	}{
-		{"in place", `{"strategy":"in-place"}`, true},
-		{"a copy", `{"strategy":"copy"}`, false},
+		{"in place", "in-place", true},
+		{"a copy", "copy", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -380,36 +385,18 @@ func TestCreatePlaceholderOfAnInPlaceCreateIsInTheProjectFolder(t *testing.T) {
 			st := store.NewTestStore(t, []domain.Project{{ID: "p1", Name: "p", Path: dir}})
 			svc := NewService(st, NewRegistry(), 0)
 			placeholder, err := svc.Create(context.Background(), CreateInput{
-				ProjectID: "p1", ProviderID: CoreProviderID, Name: "work", Config: []byte(tt.config),
+				ProjectID: "p1", ProviderID: CoreProviderID, Name: "work",
+				Config: []byte(`{"strategy":"` + tt.strategy + `"}`),
 			})
 			if err != nil {
 				t.Fatalf("Create: %v", err)
 			}
-			if placeholder.InProjectFolder != tt.want {
-				t.Errorf("placeholder InProjectFolder = %v, want %v", placeholder.InProjectFolder, tt.want)
+			if !strings.HasPrefix(placeholder.ID, PlaceholderIDPrefix) || placeholder.InProjectFolder != tt.want ||
+				placeholder.Strategy != domain.StrategyLabel(tt.strategy) {
+				t.Errorf("Create = %+v, want the placeholder of a %s create, in the project folder %v",
+					placeholder, tt.strategy, tt.want)
 			}
 		})
-	}
-}
-
-// Create answers with the placeholder as the store shows it, in the project
-// folder, even when the create behind it has already finished.
-func TestCreateAnswersWithTheStoredPlaceholderWhenTheCreateFinishedFirst(t *testing.T) {
-	defer func(previous func(func())) { goFinishCreate = previous }(goFinishCreate)
-	goFinishCreate = func(work func()) { work() }
-	dir := t.TempDir()
-	st := store.NewTestStore(t, []domain.Project{{ID: "p1", Name: "p", Path: dir}})
-	svc := NewService(st, NewRegistry(), 0)
-
-	placeholder, err := svc.Create(context.Background(), CreateInput{
-		ProjectID: "p1", ProviderID: CoreProviderID, Name: "work", Config: []byte(`{"strategy":"in-place"}`),
-	})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if !strings.HasPrefix(placeholder.ID, PlaceholderIDPrefix) || !placeholder.InProjectFolder ||
-		placeholder.Strategy != domain.StrategyLabel("in-place") {
-		t.Errorf("Create = %+v, want the placeholder in place, in the project folder", placeholder)
 	}
 }
 
