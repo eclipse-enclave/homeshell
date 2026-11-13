@@ -147,8 +147,9 @@ test('a create without a base starts from the default branch, not the current on
 });
 
 // The form sends the branch it derived from the name whatever the strategy; a
-// workstream that is not a worktree is on no branch of its own.
-test('a non-worktree workstream carries no branch, whatever was sent', async ({
+// workstream that is not a worktree is on no branch of its own. In place, it is
+// on the branch checked out in the project; a copy is on none.
+test('a non-worktree workstream carries no branch of its own, whatever was sent', async ({
   request,
 }) => {
   const { projectId } = await gitProject(request, 'hs-refs-');
@@ -165,5 +166,5 @@ test('a non-worktree workstream carries no branch, whatever was sent', async ({
   });
   expect(res.status()).toBe(201);
   const workstream = await awaitRealWorkstream(request, projectId, 20_000);
-  expect(workstream.branch ?? '').toBe('');
+  expect(workstream.branch).toBe('feature');
 });

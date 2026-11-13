@@ -15,16 +15,19 @@ describe('ThemeToggle', () => {
         <ThemeToggle />
       </ThemeProvider>
     );
-    const button = screen.getByRole('button');
 
     // Default resolves to dark in jsdom (no matchMedia), so the first click
     // switches to light and writes the browser-local preference.
-    fireEvent.click(button);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Switch to light theme' }),
+    );
     expect(document.documentElement.getAttribute('data-theme')).toBe('light');
     expect(localStorage.getItem('hs-theme')).toBe('light');
 
     // Clicking again flips back to dark.
-    fireEvent.click(button);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Switch to dark theme' }),
+    );
     expect(document.documentElement.getAttribute('data-theme')).toBeNull();
     expect(localStorage.getItem('hs-theme')).toBe('dark');
   });

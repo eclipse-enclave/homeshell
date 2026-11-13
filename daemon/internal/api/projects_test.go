@@ -76,6 +76,29 @@ func TestAddProjectEndpoint(t *testing.T) {
 	}
 }
 
+// A project is added with a workstream to start sessions in: in place, in the
+// project folder. The response carries it, so the client has it at once.
+func TestAddProjectComesWithAnInPlaceWorkstream(t *testing.T) {
+	dir := t.TempDir()
+	handler := projectRemovalHandler(t)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/projects", strings.NewReader(fmt.Sprintf(`{"path":%q}`, dir))))
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+	var project domain.Project
+	if err := json.Unmarshal(recorder.Body.Bytes(), &project); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	if len(project.Workstreams) != 1 {
+		t.Fatalf("workstreams = %+v, want the default one", project.Workstreams)
+	}
+	if ws := project.Workstreams[0]; ws.StrategyID != "in-place" || ws.WorkingDir != dir || ws.Name != filepath.Base(dir) {
+		t.Errorf("default workstream = %+v, want one in place in %q named after it", ws, dir)
+	}
+}
+
 func TestAddProjectWithExplicitName(t *testing.T) {
 	dir := t.TempDir()
 	handler, _ := testHandler(t, time.Minute)

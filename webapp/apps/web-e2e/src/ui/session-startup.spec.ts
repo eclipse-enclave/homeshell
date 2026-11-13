@@ -1,7 +1,13 @@
 import { basename } from 'node:path';
 import { type APIRequestContext, type Locator, type Page } from '@playwright/test';
 import { expect, tempProjectDir, test } from '../fixtures';
-import { selectProject } from './workstream-helpers';
+import {
+  openMoreActions,
+  selectProject,
+  sessionRows,
+} from './workstream-helpers';
+import { addEmptyProject } from '../projects';
+import { createWorkstream } from '../api/workstream-helpers';
 
 /**
  * What the user sees while a session starts: a row named after the agent coming
@@ -18,29 +24,10 @@ async function projectWithWorkstream(
   request: APIRequestContext,
 ): Promise<{ dirName: string; projectId: string; workstreamId: string }> {
   const dir = await tempProjectDir('hs-ui-startup-');
-  const created = await request.post('/api/projects', { data: { path: dir } });
-  expect(created.status()).toBe(201);
-  const projectId = (await created.json()).id as string;
+  const projectId = await addEmptyProject(request, dir);
 
-  const res = await request.post(`/api/projects/${projectId}/workstreams`, {
-    data: {
-      providerId: 'fake',
-      name: 'ui-startup',
-      config: { branch: 'main' },
-    },
-  });
-  expect(res.status()).toBe(201);
-
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
-    const state = await (await request.get('/api/projects')).json();
-    const ws = state.projects
-      ?.find((p: { id: string }) => p.id === projectId)
-      ?.workstreams?.find((w: { id: string }) => !w.id.startsWith('creating-'));
-    if (ws) return { dirName: basename(dir), projectId, workstreamId: ws.id };
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error('timed out waiting for the workstream');
+  const workstreamId = await createWorkstream(request, projectId, 'ui-startup');
+  return { dirName: basename(dir), projectId, workstreamId };
 }
 
 async function openCard(page: Page, dirName: string) {
@@ -67,7 +54,7 @@ test('a starting session shows its name and streams the startup log into its box
   );
 
   // The agent coming up is named, in the starting state. The row's own title is
-  // the specific locator here: "Claude Code" alone also matches the agent pill
+  // the specific locator here: "Claude Code" alone also matches the agent
   // and the workstream's "Starting Claude Code…" line.
   await expect(card.getByTestId('session-state')).toHaveText('Starting');
   await expect(card.getByText('Claude Code session')).toBeVisible();
@@ -82,9 +69,9 @@ test('a starting session shows its name and streams the startup log into its box
   // daemon handles its own placeholder row, and removing it cancels the build.
   await expect(card.getByLabel('Send text to session')).toHaveCount(0);
   await expect(card.getByRole('button', { name: 'Stop' })).toHaveCount(0);
-  await expect(
-    card.getByRole('button', { name: /Delete session/ }),
-  ).toBeVisible();
+  await openMoreActions(sessionRows(card));
+  await expect(page.getByRole('menuitem', { name: 'Delete' })).toBeVisible();
+  await page.keyboard.press('Escape');
 
   // And it becomes the real session in place, without a second row appearing.
   await expect(card.getByTestId('session-state')).toHaveText('Idle', {

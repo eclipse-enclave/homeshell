@@ -3,7 +3,7 @@ import { basename, dirname, join } from 'node:path';
 import { expect, test } from '../fixtures';
 import { gitProject } from '../git-repo';
 import { withSettingsLock } from '../settings-lock';
-import { awaitRealWorkstream } from './workstream-helpers';
+import { awaitRealWorkstream, createProject } from './workstream-helpers';
 
 /**
  * A draft answers what a create would derive for what it leaves blank — the
@@ -16,10 +16,10 @@ interface Draft {
   config: Record<string, string>;
 }
 
-test('a blank in-place draft takes the project folder name', async ({
+test('a blank in-place draft takes the branch checked out in the project', async ({
   request,
 }) => {
-  const { dir, projectId } = await gitProject(request, 'hs-draft-');
+  const { projectId } = await gitProject(request, 'hs-draft-');
   const res = await request.post(
     `/api/projects/${projectId}/workstream-draft`,
     {
@@ -28,8 +28,8 @@ test('a blank in-place draft takes the project folder name', async ({
   );
   expect(res.status()).toBe(200);
   expect(await res.json()).toEqual({
-    name: basename(dir),
-    config: { branch: '', path: '' },
+    name: 'feature',
+    config: { branch: 'feature', path: '' },
   });
 
   const state = await (await request.get('/api/projects')).json();
@@ -37,6 +37,22 @@ test('a blank in-place draft takes the project folder name', async ({
     (p: { id: string }) => p.id === projectId,
   );
   expect(project.workstreams).toHaveLength(0);
+});
+
+test('a blank in-place draft outside git takes the project folder name', async ({
+  request,
+}) => {
+  const projectId = await createProject(request, 'hs-draft-plain-');
+  const res = await request.post(
+    `/api/projects/${projectId}/workstream-draft`,
+    {
+      data: { providerId: 'core', config: { strategy: 'in-place' } },
+    },
+  );
+  expect(res.status()).toBe(200);
+  const draft: Draft = await res.json();
+  expect(draft.name).toMatch(/^hs-draft-plain-/);
+  expect(draft.config).toEqual({ branch: '', path: '' });
 });
 
 // Tests that draft and then create hold the settings lock: both read
@@ -191,6 +207,7 @@ test('a very long name gets a worktree branch within git limits', async ({
 test('a worktree whose kept folder was removed by hand can be made again', async ({
   request,
 }) => {
+  // The managed folder it is made in again follows workstreams.location.
   await withSettingsLock(async () => {
     const { projectId } = await gitProject(request, 'hs-draft-');
     const input = {

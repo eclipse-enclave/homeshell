@@ -51,7 +51,10 @@ describe('ShortcutsDialog', () => {
     ['Go to the first or last item', 'HomeEnd'],
     ['Expand, or go to the first session', '→'],
     ['Collapse, or go to the workstream', '←'],
-    ['Open the focused workstream or session', 'Enter'],
+    [
+      "Open the focused workstream or session, or show an ended one's details",
+      'Enter',
+    ],
     ['Rename the focused workstream or session', 'F2'],
     ['Delete the focused workstream or session', 'Delete'],
     ['Open the actions menu', 'Shift+F10'],

@@ -1,0 +1,44 @@
+.sessions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Ended sessions sit recessed below the live ones, under a small caps
+   heading, with what is folded away last. */
+.divider,
+.fold {
+  border-top: 1px solid var(--hs-border, #27313d);
+  background: var(--hs-recess, rgba(0, 0, 0, 0.18));
+}
+
+.divider {
+  padding: 0.35rem 0.95rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.foldButton {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.45rem 0.95rem;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--hs-text-muted, #8494a7);
+  cursor: pointer;
+  text-align: left;
+}
+
+.foldButton:hover {
+  color: var(--hs-text, #dbe4ee);
+}
+
+.foldButton[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}

@@ -5,6 +5,7 @@ import { createWorkstream } from '../api/workstream-helpers';
 import {
   selectProject,
   unique,
+  waitForRealCard,
   workstreamWithSessions,
 } from './workstream-helpers';
 
@@ -22,11 +23,9 @@ test('New session skips a workstream that is still being set up', async ({
   const stream = await controlEventStream(page);
   await loadApp(page);
   await selectProject(page, projectPrefix);
-  await expect(
-    page
-      .getByRole('region', { name: `Workstream ${workstreamName}` })
-      .getByTestId('workstream-sessions'),
-  ).toBeVisible({ timeout: 20_000 });
+  await waitForRealCard(
+    page.getByRole('region', { name: `Workstream ${workstreamName}` }),
+  );
 
   const state = await (await request.get('/api/projects')).json();
   const project = state.projects.find(

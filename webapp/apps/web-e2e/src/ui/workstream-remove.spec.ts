@@ -6,6 +6,7 @@ import {
   isPlaceholderWorkstream,
 } from '../placeholders';
 import { selectProject, unique } from './workstream-helpers';
+import { addEmptyProject } from '../projects';
 
 /**
  * The UI half of the removal guard: the daemon's 409 becomes a confirmation that
@@ -37,9 +38,7 @@ async function projectWithRunningSession(
   request: APIRequestContext,
 ): Promise<{ dirName: string; workstreamName: string }> {
   const dir = await tempProjectDir('hs-ui-wsrm-');
-  const created = await request.post('/api/projects', { data: { path: dir } });
-  expect(created.status()).toBe(201);
-  const projectId = (await created.json()).id as string;
+  const projectId = await addEmptyProject(request, dir);
 
   // A name no parallel worker collides with: the daemon is shared, and both
   // tests here would otherwise open the same card.

@@ -1,4 +1,12 @@
-import { type ReactNode, useEffect } from 'react';
+import {
+  type ReactNode,
+  type RefCallback,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+} from 'react';
+import { flushSync } from 'react-dom';
 import { ariaKeys, formatKeys, isMac, isTextEntry } from './keys';
 import styles from './mnemonic.module.css';
 
@@ -35,6 +43,32 @@ const MNEMONIC = 'data-mnemonic';
  * — takes it by cancelling it, and is not clicked.
  */
 export const MNEMONIC_EVENT = 'mnemonic';
+/**
+ * A ref that has the element it is set on take its letter (see MNEMONIC_EVENT)
+ * rather than be clicked, and run `handler`, if set, instead. flushSync renders
+ * what it does before the next key arrives: React would render an update from
+ * this non-React event a task later, and keys typed straight after it would be
+ * lost.
+ */
+export function useMnemonicHandler<T extends HTMLElement>(
+  handler: (() => void) | undefined,
+): RefCallback<T> {
+  const current = useRef(handler);
+  useLayoutEffect(() => {
+    current.current = handler;
+  });
+  return useCallback((element: T | null) => {
+    if (!element) return;
+    const onMnemonic = (event: Event) => {
+      event.preventDefault();
+      const run = current.current;
+      if (run) flushSync(run);
+    };
+    element.addEventListener(MNEMONIC_EVENT, onMnemonic);
+    return () => element.removeEventListener(MNEMONIC_EVENT, onMnemonic);
+  }, []);
+}
+
 /** On each button a letter reaches, while Alt is held. */
 const SHOWN = 'data-mnemonic-shown';
 const MODAL = '[aria-modal="true"]';

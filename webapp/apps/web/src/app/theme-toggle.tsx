@@ -1,5 +1,6 @@
+import { MoonIcon, SunIcon } from '@homeshell/components';
 import { resolveTheme, toggledTheme, useTheme } from './use-theme';
-import styles from './theme-toggle.module.css';
+import { TopBarButton } from './top-bar-button';
 
 /**
  * Top-bar one-click theme switch. Theme is a fast, frequently-toggled
@@ -12,20 +13,12 @@ export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
   const current = resolveTheme(theme);
   const next = toggledTheme(theme);
-  const label = `Switch to ${next} theme`;
+  const Icon = current === 'dark' ? SunIcon : MoonIcon;
   return (
-    <button
-      type="button"
-      className={styles.button}
+    <TopBarButton
+      label={`Switch to ${next} theme`}
+      icon={<Icon size={16} />}
       onClick={() => setTheme(next)}
-      aria-label={label}
-      title={label}
-    >
-      <span role="img" aria-hidden="true">
-        {current === 'dark' ? '☀️' : '🌙'}
-      </span>
-    </button>
+    />
   );
 }
-
-export default ThemeToggle;

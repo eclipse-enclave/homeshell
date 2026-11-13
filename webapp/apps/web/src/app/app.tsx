@@ -18,7 +18,6 @@ import { type Command, useCommands } from './keyboard/commands';
 import { labelOf } from './keyboard/keybindings';
 import { ShortcutsDialog } from './keyboard/shortcuts-dialog';
 import { usePendingFocus } from './keyboard/use-pending-focus';
-import { LogsButton } from './logs-button';
 import { LogPane } from './logs/logs-view';
 import { offlineReason } from './offline-reason';
 import { DEFAULT_MAX_RECORDS, MIN_RECORDS, useLogStream } from './logs/use-log-stream';
@@ -250,7 +249,6 @@ export function App() {
         <span className={styles.topBarRight}>
           <DaemonStatus connection={connection} />
           <ThemeToggle />
-          <LogsButton onClick={() => setShowLogs((open) => !open)} />
           <SettingsButton
             onClick={() => navigate(route === 'settings' ? 'home' : 'settings')}
           />

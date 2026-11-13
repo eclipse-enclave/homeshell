@@ -56,8 +56,10 @@ test('the checked pill keeps its look under the pointer, and stands apart from a
   // Without transitions, a look read right after the pointer moves is final.
   await page.addStyleTag({ content: '*{transition:none!important}' });
   await form.getByRole('radio', { name: 'Default' }).click();
-  const checked = form.getByRole('radio', { name: 'in-place' });
-  const other = form.getByRole('radio', { name: 'copy' });
+  const checked = form.getByRole('radio', { name: 'In place' });
+  const other = form.getByRole('radio', {
+    name: 'Folder: a copy of the project',
+  });
   await expect(checked).toHaveAttribute('aria-checked', 'true');
 
   await page.mouse.move(0, 0);
@@ -118,9 +120,9 @@ test('Home and End choose the first and last pill', async ({
   await form.getByRole('radio', { name: 'Default' }).click();
   const group = form
     .getByRole('radiogroup')
-    .filter({ has: page.getByRole('radio', { name: 'in-place' }) });
+    .filter({ has: page.getByRole('radio', { name: 'In place' }) });
   const pills = group.getByRole('radio');
-  await group.getByRole('radio', { name: 'in-place' }).focus();
+  await group.getByRole('radio', { name: 'In place' }).focus();
 
   await page.keyboard.press('End');
   await expect(pills.last()).toBeFocused();

@@ -133,7 +133,7 @@ Flags, environment variables and the data directory location are in
 
 All states are defined in [CONTEXT.md](../CONTEXT.md#states) and implemented in
 `daemon/internal/domain`. Session state is observed and never persisted; only the structure the
-user created survives a restart (see [Persistence](#persistence)).
+user created, and when a session ended, survive a restart (see [Persistence](#persistence)).
 
 ### Session states
 
@@ -200,6 +200,7 @@ stateDiagram-v2
     creating --> Workstream: directory ready, record promoted
     creating --> error: provider failed, or name or directory taken
     [*] --> Workstream: sessions found in an unclaimed directory (adopted)
+    [*] --> Workstream: project added (default workstream, in place)
 
     state Workstream {
         [*] --> unknown
@@ -213,6 +214,8 @@ stateDiagram-v2
     Workstream --> [*]: remove (forced if any session is busy)
 ```
 
+- **Default workstream.** Adding a project creates its `in-place` workstream directly, with no
+  placeholder ([Core](PROVIDERS.md#core)).
 - **Create.** `provider.Service.Create` validates, adds a placeholder (`creating-…` ID) and runs
   the workstream provider in the background, streaming progress into its status message.
   `store.PromoteWorkstream` replaces it with the real workstream (new ID, `PlaceholderID` links
@@ -281,6 +284,9 @@ flowchart TB
 - `provider.Reconciler` (`provider/reconcile.go`) runs one full pass at startup, then on demand:
   providers that watch (`Watcher`) poll on their own loop and report changes, and the reconciler
   re-asks only the provider that changed.
+- **Refresh.** Each pass asks a workstream provider that is a `Refresher` for each of its
+  workstreams as it is now (the branch checked out in its folder); a name it gives that another
+  workstream in the project has is not taken.
 - **Matching.** Sessions group by cleaned working directory: existing workstreams take theirs,
   unclaimed directories get an adopted workstream. A session ID reported again supersedes the
   stored one wherever it was.
@@ -289,6 +295,12 @@ flowchart TB
   must not flush sessions, but a session nothing can confirm must not linger as a ghost.
 - Per-project locks serialize passes; the store is re-read after discovery so concurrent creates
   survive.
+- **Changes during a pass win.** A pass writes back with the read it started from, and
+  `store.ReplaceWorkstreams` keeps what changed in the store since (`keepChangesSinceRead`): a
+  workstream or session changed meanwhile is taken from the store whole, one removed stays
+  removed, one added stays, and a name the pass gave that another workstream now has is not
+  taken. The next pass brings the kept entries up to date. Why: a rename, a dismissed message, a
+  Work here or a removal made while the pass ran is newer than the pass's copy.
 
 ## Persistence
 
@@ -296,7 +308,7 @@ All files live in the data directory (`persist.DefaultDir`; [how it is chosen](C
 
 | File | Owner | Holds |
 |---|---|---|
-| `state.json` | `persist` | Projects, workstreams, sessions (structure only), titles, launch configs |
+| `state.json` | `persist` | Projects, workstreams, sessions (structure, end time), titles, launch configs |
 | `settings.json` | `settings` | User settings and the startup log level |
 | `agents.json` | `agentcatalog` | The agent catalog |
 | `daemon.json` | `daemonstate` | Discovery record, including the API token (`0600`) |
@@ -309,6 +321,9 @@ All files live in the data directory (`persist.DefaultDir`; [how it is chosen](C
   branches, working directories, provider data. **Never persisted:** session, runtime and
   effective states, previews, observation data, errors, open modes, actions, placeholders.
   Why: a persisted state would be a stale lie after a restart until the provider reports again.
+- A session's `endedAt` is persisted too. Why: an end time cannot be re-observed. A restored
+  session is an `idle` placeholder until its provider reports on it, and a projection that only
+  carries it over is no report, so its persisted `endedAt` stands (`store.stampEndedAtLocked`).
 - `state.json`, `settings.json`, `agents.json` and `enclave-provider.json` carry a schema
   version; `state.json` rejects any version but its own. They are written atomically: temp file,
   fsync, rename, fsync the directory (`persist.WriteFileAtomic`).

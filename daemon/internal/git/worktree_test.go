@@ -1071,3 +1071,127 @@ func TestFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestCurrentBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	t.Run("the checked-out branch", func(t *testing.T) {
+		dir := t.TempDir()
+		initRepo(t, dir)
+		runGit(t, dir, "checkout", "-q", "-b", "feature/x")
+		got, err := CurrentBranch(context.Background(), dir)
+		if err != nil || got != "feature/x" {
+			t.Errorf("CurrentBranch = %q, %v; want feature/x", got, err)
+		}
+	})
+
+	// An unborn branch is still the one a first commit lands on.
+	t.Run("a repository with no commits", func(t *testing.T) {
+		dir := t.TempDir()
+		initEmptyRepo(t, dir)
+		runGit(t, dir, "symbolic-ref", "HEAD", "refs/heads/trunk")
+		got, err := CurrentBranch(context.Background(), dir)
+		if err != nil || got != "trunk" {
+			t.Errorf("CurrentBranch = %q, %v; want trunk", got, err)
+		}
+	})
+
+	t.Run("a detached HEAD has none", func(t *testing.T) {
+		dir := t.TempDir()
+		initRepo(t, dir)
+		runGit(t, dir, "checkout", "-q", "--detach")
+		got, err := CurrentBranch(context.Background(), dir)
+		if err != nil || got != "" {
+			t.Errorf("CurrentBranch = %q, %v; want no branch and no error", got, err)
+		}
+	})
+
+	t.Run("not a repository is an error", func(t *testing.T) {
+		if _, err := CurrentBranch(context.Background(), t.TempDir()); err == nil {
+			t.Error("CurrentBranch(not a repo) err = nil, want an error")
+		}
+	})
+}
+
+func TestHeadBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	repo := t.TempDir()
+	initRepo(t, repo)
+	runGit(t, repo, "checkout", "-q", "-b", "feature/x")
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGit(t, repo, "worktree", "add", "-q", "-b", "topic", worktree)
+	detached := filepath.Join(t.TempDir(), "detached")
+	runGit(t, repo, "worktree", "add", "-q", "--detach", detached)
+	// A folder inside a repository that is no repository itself, as a copy
+	// made without .git is.
+	inside := filepath.Join(repo, "copy")
+	if err := os.Mkdir(inside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		dir     string
+		want    string
+		wantErr bool
+	}{
+		{"a repository's checked-out branch", repo, "feature/x", false},
+		{"a linked worktree's own branch", worktree, "topic", false},
+		{"a detached HEAD has none", detached, "", false},
+		{"a folder with no .git of its own is an error", inside, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := HeadBranch(context.Background(), tt.dir)
+			if got != tt.want || (err != nil) != tt.wantErr {
+				t.Errorf("HeadBranch = %q, %v; want %q, error %v", got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestEnclosingHeadBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	repo := t.TempDir()
+	initRepo(t, repo)
+	runGit(t, repo, "checkout", "-q", "-b", "feature/x")
+	below := filepath.Join(repo, "sub", "dir")
+	if err := os.MkdirAll(below, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGit(t, repo, "worktree", "add", "-q", "-b", "topic", worktree)
+	worktreeBelow := filepath.Join(worktree, "sub")
+	if err := os.Mkdir(worktreeBelow, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	detached := filepath.Join(t.TempDir(), "detached")
+	runGit(t, repo, "worktree", "add", "-q", "--detach", detached)
+
+	tests := []struct {
+		name    string
+		dir     string
+		want    string
+		wantErr bool
+	}{
+		{"a repository's checked-out branch", repo, "feature/x", false},
+		{"a folder below the repository's root", below, "feature/x", false},
+		{"a folder below a linked worktree's root", worktreeBelow, "topic", false},
+		{"a detached HEAD has none", detached, "", false},
+		{"no repository around it is an error", t.TempDir(), "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := EnclosingHeadBranch(context.Background(), tt.dir)
+			if got != tt.want || (err != nil) != tt.wantErr {
+				t.Errorf("EnclosingHeadBranch = %q, %v; want %q, error %v", got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}

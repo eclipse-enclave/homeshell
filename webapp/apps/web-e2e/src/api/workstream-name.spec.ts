@@ -1,5 +1,6 @@
 import { type APIRequestContext } from '@playwright/test';
-import { expect, tempProjectDir, test } from '../fixtures';
+import { expect, test } from '../fixtures';
+import { createProject } from './workstream-helpers';
 
 /**
  * Workstream names are unique per project.
@@ -10,13 +11,6 @@ import { expect, tempProjectDir, test } from '../fixtures';
  * create and the rename. It is refused before anything is materialized, so a
  * rejected name never leaves a workstream behind to clean up.
  */
-
-async function project(request: APIRequestContext): Promise<string> {
-  const dir = await tempProjectDir('hs-ws-name-');
-  const res = await request.post('/api/projects', { data: { path: dir } });
-  expect(res.status()).toBe(201);
-  return (await res.json()).id as string;
-}
 
 async function create(
   request: APIRequestContext,
@@ -61,7 +55,7 @@ async function workstreamsOf(request: APIRequestContext, projectId: string) {
 test('a second workstream cannot take a name already in the project', async ({
   request,
 }) => {
-  const projectId = await project(request);
+  const projectId = await createProject(request, 'hs-ws-name-');
   expect((await create(request, projectId, 'feature', 'main')).status()).toBe(
     201,
   );
@@ -84,7 +78,7 @@ test('a second workstream cannot take a name already in the project', async ({
 test('names differing only by case or padding are the same name', async ({
   request,
 }) => {
-  const projectId = await project(request);
+  const projectId = await createProject(request, 'hs-ws-name-');
   expect((await create(request, projectId, 'Feature', 'main')).status()).toBe(
     201,
   );
@@ -101,8 +95,8 @@ test('names differing only by case or padding are the same name', async ({
 });
 
 test('the same name in another project is fine', async ({ request }) => {
-  const first = await project(request);
-  const second = await project(request);
+  const first = await createProject(request, 'hs-ws-name-');
+  const second = await createProject(request, 'hs-ws-name-');
 
   expect((await create(request, first, 'main', 'main')).status()).toBe(201);
   await awaitNamed(request, first, 'main');
@@ -110,7 +104,7 @@ test('the same name in another project is fine', async ({ request }) => {
 });
 
 test('a rename cannot take another workstream’s name', async ({ request }) => {
-  const projectId = await project(request);
+  const projectId = await createProject(request, 'hs-ws-name-');
   expect((await create(request, projectId, 'feature', 'main')).status()).toBe(
     201,
   );
@@ -140,7 +134,7 @@ test('a rename cannot take another workstream’s name', async ({ request }) => 
 test('a rename to a free name still works, and to its own name is a no-op', async ({
   request,
 }) => {
-  const projectId = await project(request);
+  const projectId = await createProject(request, 'hs-ws-name-');
   expect((await create(request, projectId, 'feature', 'main')).status()).toBe(
     201,
   );

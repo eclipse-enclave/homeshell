@@ -103,6 +103,100 @@ func BranchExists(ctx context.Context, dir, branch string) (bool, error) {
 	return false, fmt.Errorf("checking branch %q: %w", branch, err)
 }
 
+// CurrentBranch returns the branch checked out in the work tree at dir, which
+// may have no commits yet. A detached HEAD has none and returns "". A git that
+// fails or is killed is an error, not a detached HEAD.
+func CurrentBranch(ctx context.Context, dir string) (string, error) {
+	branch, err := query(ctx, dir, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err == nil {
+		return branch, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		// exit 1 means HEAD is detached; a killed git exits with -1.
+		return "", nil
+	}
+	return "", fmt.Errorf("reading the current branch: %w", err)
+}
+
+// HeadBranch is the branch checked out in dir, which must hold a repository or
+// linked worktree of its own (a .git folder or file): unlike CurrentBranch it
+// does not look in the folders above, so a folder copied without .git into
+// another repository has none. A detached HEAD has no branch. It reads HEAD
+// rather than running git, so it is cheap enough to poll; a HEAD it cannot
+// read as a branch (a reftable repository's) it leaves to CurrentBranch.
+func HeadBranch(ctx context.Context, dir string) (string, error) {
+	gitDir, err := ownGitDir(dir)
+	if err != nil {
+		return "", err
+	}
+	return headFileBranch(ctx, gitDir, dir)
+}
+
+// EnclosingHeadBranch is the branch checked out in the repository dir is in,
+// which git finds from a folder below the repository's root too: the nearest
+// folder at or above dir with a .git of its own. Like HeadBranch it reads HEAD
+// rather than running git, so it is cheap enough to poll, and leaves a HEAD it
+// cannot read as a branch to CurrentBranch.
+func EnclosingHeadBranch(ctx context.Context, dir string) (string, error) {
+	for current := filepath.Clean(dir); ; {
+		gitDir, err := ownGitDir(current)
+		if err == nil {
+			return headFileBranch(ctx, gitDir, dir)
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("no repository at or above %s", dir)
+		}
+		current = parent
+	}
+}
+
+// headFileBranch reads the branch from the HEAD file in gitDir, the git
+// directory of the work tree at dir.
+func headFileBranch(ctx context.Context, gitDir, dir string) (string, error) {
+	head, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	if err != nil {
+		return "", fmt.Errorf("reading HEAD: %w", err)
+	}
+	ref, symbolic := strings.CutPrefix(strings.TrimSpace(string(head)), "ref: ")
+	if !symbolic {
+		return "", nil
+	}
+	if branch, ok := strings.CutPrefix(ref, "refs/heads/"); ok && branch != ".invalid" {
+		return branch, nil
+	}
+	return CurrentBranch(ctx, dir)
+}
+
+// ownGitDir is the git directory of the repository or linked worktree at dir:
+// dir/.git, or where a .git file's "gitdir:" line points.
+func ownGitDir(dir string) (string, error) {
+	dotGit := filepath.Join(dir, ".git")
+	info, err := os.Stat(dotGit)
+	if err != nil {
+		return "", fmt.Errorf("no repository in %s: %w", dir, err)
+	}
+	if info.IsDir() {
+		return dotGit, nil
+	}
+	content, err := os.ReadFile(dotGit)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", dotGit, err)
+	}
+	target, ok := strings.CutPrefix(strings.TrimSpace(string(content)), "gitdir: ")
+	if !ok {
+		return "", fmt.Errorf("%s names no git directory", dotGit)
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(dir, target)
+	}
+	return target, nil
+}
+
 // BranchCheckedOutInWorktree reports whether branch is checked out in any
 // existing worktree of the repository at dir.
 func BranchCheckedOutInWorktree(ctx context.Context, dir, branch string) (bool, error) {

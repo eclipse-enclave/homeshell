@@ -122,14 +122,14 @@ test('a long name leaves the command and its key in view', async ({
 
 test('F1 opens it too, and Escape gives focus back', async ({ page }) => {
   await loadApp(page);
-  const logs = page.getByRole('button', { name: 'Logs' });
-  await logs.focus();
+  const settings = page.getByRole('button', { name: 'Settings' });
+  await settings.focus();
   await page.keyboard.press('F1');
   const palette = page.getByRole('dialog', { name: 'Command palette' });
   await expect(palette).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(palette).toHaveCount(0);
-  await expect(logs).toBeFocused();
+  await expect(settings).toBeFocused();
 });
 
 test('picking Go to from the command palette switches it to quick open', async ({

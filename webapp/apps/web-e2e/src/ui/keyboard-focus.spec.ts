@@ -108,13 +108,13 @@ test('quick open to an empty project focuses its New workstream', async ({
   request,
 }) => {
   const name = await selectEmptyProject(page, request, 'hs-ui-kbd-focus-');
-  await page.getByRole('button', { name: 'Logs' }).focus();
+  await page.getByRole('button', { name: 'Settings' }).focus();
   await page.keyboard.press('ControlOrMeta+P');
   await page.keyboard.type(name);
   await page.keyboard.press('Enter');
 
   await expect(
-    page.getByRole('button', { name: 'New workstream' }).last(),
+    page.getByRole('button', { name: 'New workstream' }),
   ).toBeFocused();
 });
 

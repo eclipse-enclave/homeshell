@@ -60,14 +60,38 @@ export async function createWorkstream(
   projectId: string,
   data: NewWorkstreamData,
 ): Promise<Workstream | string | Refusal> {
+  return postWorkstream(projectId, 'workstreams', data);
+}
+
+/**
+ * Gives the project the workstream a new project comes with, in the project
+ * folder itself; the daemon says what that is.
+ */
+export async function addDefaultWorkstream(
+  projectId: string,
+): Promise<Workstream | string> {
+  const result = await postWorkstream(projectId, 'default-workstream');
+  return typeof result !== 'string' && 'message' in result
+    ? result.message
+    : result;
+}
+
+/** POSTs `body`, if any, to a project's workstream-creating `path`. */
+async function postWorkstream(
+  projectId: string,
+  path: string,
+  body?: unknown,
+): Promise<Workstream | string | Refusal> {
   try {
     const res = await fetch(
-      `/api/projects/${encodeURIComponent(projectId)}/workstreams`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      },
+      `/api/projects/${encodeURIComponent(projectId)}/${path}`,
+      body === undefined
+        ? { method: 'POST' }
+        : {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          },
     );
     if (!res.ok) return await refusalFrom(res, 'Create failed.');
     return (await res.json()) as Workstream;

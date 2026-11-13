@@ -1,4 +1,4 @@
-import type { Workstream } from '@homeshell/model';
+import { splitSessions, type Workstream } from '@homeshell/model';
 import {
   type FocusEvent,
   type KeyboardEvent,
@@ -8,7 +8,13 @@ import {
   useState,
 } from 'react';
 import type { FocusTarget } from './focus-return';
-import { ariaKeys, isMac, isModified, type KeyHelp, platformKeys } from './keys';
+import {
+  ariaKeys,
+  isMac,
+  isModified,
+  type KeyHelp,
+  platformKeys,
+} from './keys';
 
 const NAV_ITEM_SELECTOR = '[data-nav-id]';
 
@@ -61,7 +67,8 @@ export const LIST_KEYS: readonly ListKey[] = [
   },
   {
     keys: ['enter'],
-    label: 'Open the focused workstream or session',
+    label:
+      "Open the focused workstream or session, or show an ended one's details",
     on: ['card', 'session'],
   },
   {
@@ -143,11 +150,15 @@ export function handleListKeyDown(event: KeyboardEvent<HTMLElement>) {
   target.focus();
 }
 
-/** A card's items in the list: the card, then its session rows. */
-const cardItems = (workstream: Workstream) => [
-  workstream.id,
-  ...workstream.sessions.map((session) => session.id),
-];
+/**
+ * A card's items in the order it shows them: the card, its live sessions, then
+ * its ended ones (see splitSessions). Rows folded away count too: the card
+ * shows whichever row holds the tab stop.
+ */
+function cardItems(workstream: Workstream): string[] {
+  const { live, ended } = splitSessions(workstream.sessions);
+  return [workstream.id, ...[...live, ...ended].map((session) => session.id)];
+}
 
 /** Where the list's tab stop was put: the item, and where it sat. */
 interface TabStop {
@@ -174,8 +185,9 @@ function placeTabStop(
 
 /**
  * The item holding the tab stop: the one it was put on or, when that has gone,
- * whatever took its place — in its own card first, since a promoted session is
- * listed before the placeholder it replaces goes, else in the whole list.
+ * whatever is shown in its place — in its own card first, since a promoted
+ * session is listed before the placeholder it replaces goes, else in the whole
+ * list.
  */
 function tabStopHolder(
   stop: TabStop | null,
@@ -205,7 +217,7 @@ export interface ListTabStopOptions {
  * The workstream list's one tab stop (roving tabindex), its keys and its
  * selection, for the element around the cards: spread `listProps` on it, have
  * it described by `describedBy`, and give each card `tabStopId` and
- * `selectedId`.
+ * `selectedId`. `workstreams` come in the order the page shows their cards.
  *
  * The tab stop follows focus, into an item's controls too, so Tab comes back
  * to where the user left off. Once focus has been in the list, the item
@@ -236,7 +248,8 @@ export function useListTabStop(
 
   useLayoutEffect(() => {
     if (!hasFocus.current || document.activeElement !== document.body) return;
-    if (listRef.current) {
+    // The list can stay on the page with nothing left in it.
+    if (listRef.current && tabStopId) {
       recoverFocus(listRef.current);
     } else {
       hasFocus.current = false;
@@ -262,8 +275,10 @@ export function useListTabStop(
         // A portalled menu's focus bubbles here through React too, but its
         // outside click unmounts it before any blur could say focus left.
         if (!event.currentTarget.contains(event.target)) return;
-        hasFocus.current = true;
+        // Only an item, or a control in one, counts: what else the list holds
+        // (a section's buttons, its form) hands focus back on its own.
         const id = closestNavItem(event.target)?.dataset.navId;
+        hasFocus.current = id !== undefined;
         if (id) setStop(placeTabStop(id, workstreams));
       },
       onBlur: (event: FocusEvent<HTMLElement>) => {

@@ -1,3 +1,4 @@
+import { displayPath, NOTE_ACTION_ID, sessionCounts } from '@homeshell/model';
 import type {
   RuntimeState,
   Session,
@@ -8,6 +9,7 @@ import type {
 import { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { KeyboardEvent, Ref } from 'react';
 import { Button } from './button';
+import { CopyablePath } from './copyable-path';
 import type { FormHandle, Refusal } from './create-form';
 import {
   DeleteWorkstreamDialog,
@@ -15,15 +17,24 @@ import {
   type DeleteWorkstreamOptions,
 } from './delete-workstream-dialog';
 import { useReturnFocus } from './focus-return';
+import {
+  ExternalLinkIcon,
+  FolderIcon,
+  GitBranchIcon,
+  GitForkIcon,
+  PlusIcon,
+  StickyNoteIcon,
+  TrashIcon,
+} from './icons';
 import { type ItemAction, runAction, useActionsMenu } from './item-actions';
 import { isDeleteKey, isModified } from './keys';
 import { controlTabIndexFor, listItemKeyShortcuts } from './list-navigation';
 import { MenuButton } from './menu-button';
 import { assignMnemonics, MNEMONICS, mnemonicScope } from './mnemonic';
 import { NewSessionForm, type NewSessionData } from './new-session-form';
-import { Pill } from './pill';
 import { renameInputClass, useRenamableTitle } from './renamable-title';
-import { SessionBadges } from './session-badges';
+import { SessionCounts } from './session-counts';
+import { SessionList } from './session-list';
 import { SessionRow, type SessionRowHandle } from './session-row';
 import { StatusDot } from './status-dot';
 import { titleWhenTruncated } from './truncated-title';
@@ -32,6 +43,8 @@ import styles from './workstream-card.module.css';
 
 export interface WorkstreamCardProps {
   workstream: Workstream;
+  /** The project's folder, which a separate folder's path is shown relative to. */
+  projectPath: string;
   /** Opens a session in this workstream. Called with the session ID. */
   onOpenSession?: (sessionId: string) => void;
   /** Stops a session (wired only for sessions whose provider supports it). */
@@ -147,6 +160,7 @@ const LIVE_RUNTIME: readonly RuntimeState[] = ['running', 'idle', 'unknown'];
 /** A workstream and the sessions it hosts, with the actions its providers support. */
 export function WorkstreamCard({
   workstream,
+  projectPath,
   onOpenSession,
   onStopSession,
   onStartSession,
@@ -313,7 +327,7 @@ export function WorkstreamCard({
     if (!onDelete) return;
     // Workstreams with files always show the dialog, so the user can choose
     // "Keep files"; only in-place can skip it.
-    if (skipConfirmation && !hasMaterializedFiles(workstream.strategyId)) {
+    if (skipConfirmation && !hasMaterializedFiles(workstream)) {
       onDelete({ keepFiles: false });
     } else {
       setConfirming(true);
@@ -349,14 +363,15 @@ export function WorkstreamCard({
         shortcut: navigable ? 'delete' : undefined,
       }
     : undefined;
-  const canOpen = Boolean(onOpen) && !failed;
+  const runOpen = failed ? undefined : onOpen;
+  const canOpen = runOpen !== undefined;
   // The plain open runs the mode the daemon marked default; without one it
   // would fail, so there is no such action and the Open control is the menu.
   const hasDefaultOpen =
     workstream.openModes?.some((mode) => mode.default) ?? false;
   const open: ItemAction | undefined =
-    onOpen && canOpen && hasDefaultOpen
-      ? { id: 'open', label: 'Open', run: onOpen, disabled: blocked }
+    runOpen && hasDefaultOpen
+      ? { id: 'open', label: 'Open', run: runOpen, disabled: blocked }
       : undefined;
   const openModes = (canOpen ? (workstream.openModes ?? []) : []).map(
     (mode) => ({
@@ -444,10 +459,17 @@ export function WorkstreamCard({
   // is what a workstream named for its branch (the default) always is.
   const branch =
     workstream.branch !== workstream.name ? workstream.branch : undefined;
+  // Where a separate folder is and how it was made; the project folder's own
+  // workstream needs neither, as its section says where it works, but names
+  // its provider all the same.
+  const separate = !workstream.inProjectFolder;
+  const meta =
+    Boolean(workstream.providerLabel) ||
+    (separate && Boolean(workstream.strategy || workstream.workingDir));
   const runtimeNews = !LIVE_RUNTIME.includes(workstream.runtimeState);
   // A renamable name is how it is renamed, and says so; any other is titled
   // only while it is cut off.
-  const renamableName = useRenamableTitle({
+  const renamableName = useRenamableTitle<HTMLHeadingElement>({
     name: workstream.name,
     onRename: startRename,
     disabledReason,
@@ -458,11 +480,68 @@ export function WorkstreamCard({
     ? renamableName
     : { ...titleWhenTruncated(workstream.name), className: styles.name };
 
+  const sessionRow = (session: Session) => {
+    const startStop = canSessionStartStop ? canSessionStartStop(session) : true;
+    // Gated on the session's own provider, not the workstream's.
+    const prompt = canPromptSession ? canPromptSession(session) : true;
+    return (
+      <SessionRow
+        key={session.id}
+        ref={(handle) => {
+          if (handle) rows.current.set(session.id, handle);
+          else rows.current.delete(session.id);
+        }}
+        session={session}
+        displayState={displayStateFor?.(session)}
+        onOpen={onOpenSession ? () => onOpenSession(session.id) : undefined}
+        onStop={
+          startStop && onStopSession
+            ? () => onStopSession(session.id)
+            : undefined
+        }
+        onStart={
+          startStop && onStartSession
+            ? () => onStartSession(session.id)
+            : undefined
+        }
+        onRestartWithSettings={
+          onRestartSession && session.restartable
+            ? () => onRestartSession(session.id)
+            : undefined
+        }
+        onRemove={
+          onRemoveSession ? () => onRemoveSession(session.id) : undefined
+        }
+        onRename={
+          onRenameSession
+            ? (title) => onRenameSession(session.id, title)
+            : undefined
+        }
+        onSeen={onSeenSession ? () => onSeenSession(session.id) : undefined}
+        onPrompt={
+          prompt && onPromptSession
+            ? (text) => onPromptSession(session.id, text)
+            : undefined
+        }
+        onSendKey={
+          prompt && onSendKeySession
+            ? (key) => onSendKeySession(session.id, key)
+            : undefined
+        }
+        previewLines={previewLines}
+        disabledReason={disabledReason}
+        tabIndex={tabIndexFor(session.id)}
+        selected={selectedId === session.id}
+      />
+    );
+  };
+
   return (
     <section
       ref={cardRef}
       className={styles.card}
       aria-label={`Workstream ${workstream.name}`}
+      aria-busy={isPlaceholder || undefined}
       tabIndex={tabIndexFor(workstream.id)}
       data-nav-id={workstream.id}
       {...mnemonicScope('item')}
@@ -476,49 +555,83 @@ export function WorkstreamCard({
     >
       <header ref={headerRef} className={styles.header}>
         <div className={styles.identity}>
-          {renaming ? (
-            <input
-              ref={renameInputRef}
-              className={`${renameInputClass} ${styles.nameInput}`}
-              type="text"
-              value={draftName}
-              onChange={(event) => {
-                setDraftName(event.target.value);
-                setRenameError(null);
-              }}
-              onBlur={commitRename}
-              onKeyDown={handleRenameKeyDown}
-              aria-label="Workstream name"
-            />
-          ) : (
-            <h3 {...nameProps}>{workstream.name}</h3>
-          )}
-          <span className={styles.pills}>
-            {workstream.providerLabel && (
-              <Pill>{workstream.providerLabel}</Pill>
+          <div className={styles.titleLine}>
+            {renaming ? (
+              <input
+                ref={renameInputRef}
+                className={`${renameInputClass} ${styles.nameInput}`}
+                type="text"
+                value={draftName}
+                onChange={(event) => {
+                  setDraftName(event.target.value);
+                  setRenameError(null);
+                }}
+                onBlur={commitRename}
+                onKeyDown={handleRenameKeyDown}
+                aria-label="Workstream name"
+              />
+            ) : (
+              <h3 {...nameProps}>{workstream.name}</h3>
             )}
-            {workstream.strategy && <Pill>{workstream.strategy}</Pill>}
-            {branch && <Pill>{branch}</Pill>}
-          </span>
-          {runtimeNews || isPlaceholder || failed ? (
-            <span className={styles.state} data-testid="workstream-state">
-              <StatusDot state={workstream.effectiveState} showLabel />
-            </span>
-          ) : (
-            <SessionBadges
-              states={workstream.sessions.map(
-                (session) => displayStateFor?.(session) ?? session.state,
+            {branch && (
+              <span className={styles.branch}>
+                <GitBranchIcon size={13} />
+                <span
+                  className={styles.branchName}
+                  {...titleWhenTruncated(branch)}
+                >
+                  {branch}
+                </span>
+              </span>
+            )}
+          </div>
+          {meta && (
+            <div className={styles.meta}>
+              {workstream.providerLabel && (
+                <span>{workstream.providerLabel}</span>
               )}
-            />
+              {separate && (
+                <>
+                  {workstream.strategyId === 'worktree' && (
+                    <GitForkIcon size={13} />
+                  )}
+                  {workstream.strategyId === 'copy' && <FolderIcon size={13} />}
+                  {workstream.strategy && <span>{workstream.strategy}</span>}
+                  {workstream.workingDir && (
+                    <CopyablePath
+                      className={styles.path}
+                      tabIndex={controlTabIndex}
+                      path={workstream.workingDir}
+                      label={displayPath(workstream.workingDir, projectPath)}
+                    />
+                  )}
+                </>
+              )}
+            </div>
           )}
         </div>
         <div className={styles.controls}>
+          <span className={styles.status}>
+            {runtimeNews || isPlaceholder || failed ? (
+              <span className={styles.state} data-testid="workstream-state">
+                <StatusDot state={workstream.effectiveState} showLabel />
+              </span>
+            ) : (
+              <SessionCounts
+                counts={sessionCounts(
+                  workstream.sessions,
+                  (session) => displayStateFor?.(session) ?? session.state,
+                )}
+              />
+            )}
+          </span>
           {canOpen && (
             // A split control: the button is the default open, the menu holds the
             // daemon-advertised modes. Without a default mode the plain open would
             // fail, so the control is the menu alone.
             <MenuButton
               label="Open"
+              icon={<ExternalLinkIcon size={13} />}
               items={workstream.openModes ?? []}
               onPrimary={open?.run}
               onSelect={(id) =>
@@ -537,6 +650,7 @@ export function WorkstreamCard({
             <Button
               ref={newSessionButtonRef}
               variant="primary"
+              icon={<PlusIcon size={14} />}
               onClick={newSession.run}
               disabled={newSession.disabled}
               tabIndex={controlTabIndex}
@@ -553,21 +667,27 @@ export function WorkstreamCard({
               New session
             </Button>
           )}
-          {advertised.map(({ entry, action, mnemonic }) => (
-            <Button
-              key={entry.id}
-              onClick={action.run}
-              disabled={action.disabled}
-              tabIndex={controlTabIndex}
-              mnemonic={mnemonic}
-              aria-label={`${action.label} for workstream ${workstream.name}`}
-              title={disabledReason ?? entry.description}
-            >
-              {action.label}
-            </Button>
-          ))}
+          {advertised.map(({ entry, action, mnemonic }) => {
+            // The note is an icon; the others show their label.
+            const note = entry.id === NOTE_ACTION_ID;
+            return (
+              <Button
+                key={entry.id}
+                icon={note ? <StickyNoteIcon size={14} /> : undefined}
+                onClick={action.run}
+                disabled={action.disabled}
+                tabIndex={controlTabIndex}
+                mnemonic={mnemonic}
+                aria-label={`${action.label} for workstream ${workstream.name}`}
+                title={disabledReason ?? entry.description ?? action.label}
+              >
+                {note ? undefined : action.label}
+              </Button>
+            );
+          })}
           {deletion && (
             <Button
+              icon={<TrashIcon size={14} />}
               disabled={deletion.disabled}
               tabIndex={controlTabIndex}
               mnemonic={MNEMONICS.delete}
@@ -575,10 +695,15 @@ export function WorkstreamCard({
               title={disabledReason ?? 'Delete this workstream'}
               onClick={deletion.run}
               aria-label={`Delete workstream ${workstream.name}`}
-            >
-              Delete
-            </Button>
+            />
           )}
+          {/* A failed create offers only Delete, which is already here. While
+              everything is disabled (offline), so is this, in its place. */}
+          {!failed &&
+            actionsMenu.moreActionsButton({
+              tabIndex: controlTabIndex,
+              title: disabledReason,
+            })}
         </div>
       </header>
       {renameError && (
@@ -631,72 +756,18 @@ export function WorkstreamCard({
         ) : (
           <p className={styles.empty}>Loading session types…</p>
         ))}
+      {workstream.sessions.length === 0 &&
+        !creating &&
+        !isPlaceholder &&
+        !failed && <p className={styles.empty}>No sessions yet.</p>}
       {workstream.sessions.length > 0 && (
-        <ul className={styles.sessions}>
-          {workstream.sessions.map((session) => {
-            const startStop = canSessionStartStop
-              ? canSessionStartStop(session)
-              : true;
-            // Gated on the session's own provider, not the workstream's.
-            const prompt = canPromptSession ? canPromptSession(session) : true;
-            return (
-              <SessionRow
-                key={session.id}
-                ref={(handle) => {
-                  if (handle) rows.current.set(session.id, handle);
-                  else rows.current.delete(session.id);
-                }}
-                session={session}
-                displayState={displayStateFor?.(session)}
-                onOpen={
-                  onOpenSession ? () => onOpenSession(session.id) : undefined
-                }
-                onStop={
-                  startStop && onStopSession
-                    ? () => onStopSession(session.id)
-                    : undefined
-                }
-                onStart={
-                  startStop && onStartSession
-                    ? () => onStartSession(session.id)
-                    : undefined
-                }
-                onRestartWithSettings={
-                  onRestartSession && session.restartable
-                    ? () => onRestartSession(session.id)
-                    : undefined
-                }
-                onRemove={
-                  onRemoveSession
-                    ? () => onRemoveSession(session.id)
-                    : undefined
-                }
-                onRename={
-                  onRenameSession
-                    ? (title) => onRenameSession(session.id, title)
-                    : undefined
-                }
-                onSeen={
-                  onSeenSession ? () => onSeenSession(session.id) : undefined
-                }
-                onPrompt={
-                  prompt && onPromptSession
-                    ? (text) => onPromptSession(session.id, text)
-                    : undefined
-                }
-                onSendKey={
-                  prompt && onSendKeySession
-                    ? (key) => onSendKeySession(session.id, key)
-                    : undefined
-                }
-                previewLines={previewLines}
-                disabledReason={disabledReason}
-                tabIndex={tabIndexFor(session.id)}
-                selected={selectedId === session.id}
-              />
-            );
-          })}
-        </ul>
+        <SessionList
+          sessions={workstream.sessions}
+          selectedId={selectedId}
+          tabStopId={tabStopId}
+          tabIndexFor={tabIndexFor}
+          renderRow={sessionRow}
+        />
       )}
     </section>
   );

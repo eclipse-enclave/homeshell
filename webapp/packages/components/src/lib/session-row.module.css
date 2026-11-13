@@ -1,14 +1,25 @@
 /* The list item wraps the top row plus an optional expanded panel below. */
 .item {
+  composes: selectionMark focusMark from './nav-mark.module.css';
   border-top: 1px solid var(--hs-border, #27313d);
 }
 
-/* The list's selection and its focus, as one mark: a bar, not a tint, which
-   would swallow the borders of the row's buttons. */
-.item[aria-current='true'],
-.item:focus-visible {
-  box-shadow: inset 3px 0 0 var(--hs-accent, #2dd4bf);
-  outline: none;
+/* An ended session sits back: recessed, its name muted, until the pointer is
+   on it. The selection's tint wins. */
+.item[data-ended='true']:not([aria-current='true'], :focus-visible) {
+  background: var(--hs-recess, rgba(0, 0, 0, 0.18));
+}
+
+.item[data-ended='true']:not([aria-current='true'], :focus-visible):hover {
+  background: var(--hs-recess-hover, #232e3c);
+}
+
+.item[data-ended='true'] .title {
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.item[data-ended='true']:hover .title {
+  color: var(--hs-text, #dbe4ee);
 }
 
 /* Wraps: when the window is too narrow for the info and the actions side by
@@ -22,12 +33,11 @@
   padding: 0.5rem 0.75rem;
 }
 
-/* The clickable info area (marks the session seen). Also rendered as a plain
-   <div> when no attention tracking applies; both stretch to fill the row so the
-   state badge stays right-aligned. Button-reset so it reads as a row, not a
-   control. A single horizontal line: status dot, title, agent pill, state
-   badge. The basis is what it needs to show all of them with some of the title;
-   narrower than that and `.row` wraps the actions below instead. */
+/* The clickable info area (toggles details, or marks the session seen). A plain <div> while renaming; both stretch to fill
+   the row so the state word stays right-aligned. Button-reset so it reads as a
+   row, not a control. A single horizontal line: status dot, title, agent,
+   state word. The basis is what it needs to show all of them with some of
+   the title; narrower than that and `.row` wraps the actions below instead. */
 .info {
   display: flex;
   align-items: center;
@@ -119,18 +129,28 @@ button.info:focus-visible {
   --rename-fill: var(--hs-panel, #161d26);
 }
 
-.stateBadge {
-  margin-left: auto;
+/* Fits the largest dot (the error's "!"), so every title starts in line. */
+.dotSlot {
   display: inline-flex;
-  align-items: center;
-  line-height: 1;
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 0.7rem;
+}
+
+/* Who the session is, after its name: muted text rather than a pill. */
+.agent {
+  flex-shrink: 0;
+  font-size: 0.76rem;
+  color: var(--hs-text-muted, #8494a7);
   white-space: nowrap;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  border: 1px solid currentColor;
+}
+
+/* The state word, plus when an ended session ended, at the line's end. */
+.status {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--hs-text-muted, #8494a7);
+  white-space: nowrap;
 }
 
 .actions {
@@ -141,28 +161,14 @@ button.info:focus-visible {
   gap: 0.35rem;
 }
 
+/* Continue is quiet: muted and neutral, so it does not compete with New
+   session. */
+.actions .continue {
+  color: var(--hs-text-muted, #8494a7);
+}
+
 /* Disclosure caret: a bare chevron that rotates when open, lighter weight than
    the bordered action buttons so it reads as a twisty, not a command. */
-.toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.6rem;
-  height: 1.6rem;
-  padding: 0;
-  font: inherit;
-  color: var(--hs-text-muted, #8494a7);
-  background: none;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.toggle:hover {
-  color: var(--hs-text, #dbe4ee);
-  background: var(--hs-hover, #232e3c);
-}
-
 .caret {
   display: inline-block;
   font-size: 1rem;
@@ -261,7 +267,7 @@ button.info:focus-visible {
   opacity: 0.45;
 }
 
-/* State colors, shared with StatusDot's CSS variables. */
+/* State word colours, shared with StatusDot's CSS variables. */
 .idle {
   color: var(--hs-state-idle-text, #8494a7);
 }
@@ -276,9 +282,6 @@ button.info:focus-visible {
 }
 .unknown {
   color: var(--hs-state-unknown-text, #8494a7);
-}
-.stopped {
-  color: var(--hs-state-stopped-text, #94a3b8);
 }
 .done {
   color: var(--hs-state-done-text, #60a5fa);

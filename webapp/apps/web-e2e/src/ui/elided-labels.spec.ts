@@ -1,6 +1,7 @@
 import { basename } from 'node:path';
 
 import { expect, tempProjectDir, test } from '../fixtures';
+import { addEmptyProject } from '../projects';
 
 /**
  * Labels that are cut off with an ellipsis when space runs out show their
@@ -15,10 +16,8 @@ test('elided labels show their full text on hover', async ({
     `hs-ui-elided-${'a-project-name-long-enough-'.repeat(6)}`,
   );
   const dirName = basename(dir);
-  const created = await request.post('/api/projects', { data: { path: dir } });
-  expect(created.status()).toBe(201);
-  const projectId = (await created.json()).id as string;
-  const branch = 'feature/a-branch-name-far-too-long-for-its-pill';
+  const projectId = await addEmptyProject(request, dir);
+  const branch = `feature/${'a-branch-name-too-long-to-fit-beside-its-name-'.repeat(3)}`;
   const res = await request.post(`/api/projects/${projectId}/workstreams`, {
     data: { providerId: 'fake', name: 'elided', config: { branch } },
   });
@@ -38,24 +37,22 @@ test('elided labels show their full text on hover', async ({
   await expect(path).toHaveAttribute('title', dir);
 
   const card = page.getByRole('region', { name: 'Workstream elided' });
-  const branchPill = card.getByText(branch, { exact: true });
-  await branchPill.hover();
-  await expect(branchPill).toHaveAttribute('title', branch);
+  const branchName = card.getByText(branch, { exact: true });
+  await branchName.hover();
+  await expect(branchName).toHaveAttribute('title', branch);
 
-  const providerPill = card.getByText('Fake Provider', { exact: true });
-  await providerPill.hover();
-  await expect(providerPill).not.toHaveAttribute('title');
+  const provider = card.getByText('Fake Provider', { exact: true });
+  await provider.hover();
+  await expect(provider).not.toHaveAttribute('title');
 });
 
-// The name gives way first: the pills beside it stay readable.
-test('a long workstream name leaves its pills readable', async ({
+// The name gives way first: the branch beside it and the provider stay readable.
+test('a long workstream name leaves its branch and provider readable', async ({
   page,
   request,
 }) => {
   const dir = await tempProjectDir('hs-ui-elided-pills-');
-  const created = await request.post('/api/projects', { data: { path: dir } });
-  expect(created.status()).toBe(201);
-  const projectId = (await created.json()).id as string;
+  const projectId = await addEmptyProject(request, dir);
   const name = `a workstream name ${'long enough to crowd its pills '.repeat(4)}`;
   const res = await request.post(`/api/projects/${projectId}/workstreams`, {
     data: { providerId: 'fake', name, config: { branch: 'main' } },

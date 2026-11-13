@@ -134,9 +134,6 @@ test("a session's send box leaves the page's letters in reach", async ({
     page.getByRole('button', { name: 'New workstream' }),
   ).toHaveAttribute(SHOWN, '');
   await expect(
-    row.getByRole('button', { name: /^Delete session/ }),
-  ).not.toHaveAttribute(SHOWN);
-  await expect(
     card.getByRole('button', { name: `Delete workstream ${workstreamName}` }),
   ).not.toHaveAttribute(SHOWN);
   await page.keyboard.up('Alt');
@@ -311,7 +308,9 @@ test('the New session form marks its letters, and Alt+C cancels', async ({
   await card.getByRole('heading', { name: workstreamName }).click();
   await page.keyboard.press('Alt+n');
   const form = card.getByRole('form', { name: 'New session' });
-  await expect(form).toBeVisible();
+  // The form is the scope once focus is in it, and Alt reads the scope when
+  // it goes down.
+  await expect(form.locator(':focus')).toHaveCount(1);
 
   await page.keyboard.down('Alt');
   for (const name of ['Start session', 'Cancel']) {

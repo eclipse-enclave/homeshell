@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { type APIRequestContext } from '@playwright/test';
-import { expect, tempProjectDir } from './fixtures';
+import { tempProjectDir } from './fixtures';
+import { addEmptyProject } from './projects';
 
 const execFileAsync = promisify(execFile);
 
@@ -37,13 +38,11 @@ export async function tempGitRepo(prefix: string): Promise<string> {
   return dir;
 }
 
-/** A project over a fresh `tempGitRepo`. */
+/** A project over a fresh `tempGitRepo`, without its default workstream. */
 export async function gitProject(
   request: APIRequestContext,
   prefix: string,
 ): Promise<{ dir: string; projectId: string }> {
   const dir = await tempGitRepo(prefix);
-  const res = await request.post('/api/projects', { data: { path: dir } });
-  expect(res.status()).toBe(201);
-  return { dir, projectId: (await res.json()).id as string };
+  return { dir, projectId: await addEmptyProject(request, dir) };
 }

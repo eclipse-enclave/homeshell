@@ -1,50 +1,12 @@
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { expect, test, type APIRequestContext } from '@playwright/test';
+import { type APIRequestContext } from '@playwright/test';
+import { expect, test } from '../fixtures';
 import { isPlaceholderSession } from '../placeholders';
+import { awaitRealWorkstream, createProject } from './workstream-helpers';
 
 /**
  * The workstream hand-off: `POST …/open` (the default open, no body) and
  * `POST …/open-with` (one of the modes the daemon advertises).
  */
-
-async function createProject(request: APIRequestContext): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'hs-wsopen-e2e-'));
-  const res = await request.post('/api/projects', { data: { path: dir } });
-  expect(res.status()).toBe(201);
-  return (await res.json()).id as string;
-}
-
-/** Polls until the asynchronously-created (non-placeholder) workstream lands. */
-async function awaitRealWorkstream(
-  request: APIRequestContext,
-  projectId: string,
-  timeoutMs = 5000,
-): Promise<{
-  id: string;
-  workingDir?: string;
-  openModes?: {
-    id: string;
-    label: string;
-    opensInBrowser?: boolean;
-    default?: boolean;
-  }[];
-}> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const state = await (await request.get('/api/projects')).json();
-    const project = state.projects?.find(
-      (p: { id: string }) => p.id === projectId,
-    );
-    const real = project?.workstreams?.find(
-      (w: { id: string }) => !String(w.id).startsWith('creating-'),
-    );
-    if (real) return real;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`timed out waiting for a workstream in project ${projectId}`);
-}
 
 /** Polls until the asynchronously-created session lands in the workstream. */
 async function awaitRealSession(
@@ -73,7 +35,7 @@ async function awaitRealSession(
 test('a live containerized session is its own open mode; the default open stays on the host', async ({
   request,
 }) => {
-  const projectId = await createProject(request);
+  const projectId = await createProject(request, 'hs-wsopen-e2e-');
   const created = await request.post(`/api/projects/${projectId}/workstreams`, {
     data: { providerId: 'fake', name: 'shellable', config: { branch: 'main' } },
   });
@@ -116,7 +78,7 @@ test('a live containerized session is its own open mode; the default open stays 
 test("a session's shell is refused once the session has no container", async ({
   request,
 }) => {
-  const projectId = await createProject(request);
+  const projectId = await createProject(request, 'hs-wsopen-e2e-');
   await request.post(`/api/projects/${projectId}/workstreams`, {
     data: { providerId: 'fake', name: 'noshell', config: { branch: 'main' } },
   });
@@ -146,7 +108,7 @@ test("a session's shell is refused once the session has no container", async ({
 test('refuses to open a workstream that is not materialized on disk', async ({
   request,
 }) => {
-  const projectId = await createProject(request);
+  const projectId = await createProject(request, 'hs-wsopen-e2e-');
   const created = await request.post(`/api/projects/${projectId}/workstreams`, {
     data: { providerId: 'fake', name: 'openable', config: { branch: 'main' } },
   });
@@ -163,7 +125,7 @@ test('refuses to open a workstream that is not materialized on disk', async ({
 });
 
 test('opening an unknown workstream is a 404', async ({ request }) => {
-  const projectId = await createProject(request);
+  const projectId = await createProject(request, 'hs-wsopen-e2e-');
 
   const open = await request.post(
     `/api/projects/${projectId}/workstreams/ghost/open`,
@@ -180,7 +142,7 @@ test('opening an unknown workstream is a 404', async ({ request }) => {
 test('advertises the open modes each workstream supports', async ({
   request,
 }) => {
-  const projectId = await createProject(request);
+  const projectId = await createProject(request, 'hs-wsopen-e2e-');
   await request.post(`/api/projects/${projectId}/workstreams`, {
     data: { providerId: 'fake', name: 'modes', config: { branch: 'main' } },
   });
@@ -219,7 +181,7 @@ test('advertises the open modes each workstream supports', async ({
 test('a provider-declared link resolves to a URL for the client to open', async ({
   request,
 }) => {
-  const projectId = await createProject(request);
+  const projectId = await createProject(request, 'hs-wsopen-e2e-');
   await request.post(`/api/projects/${projectId}/workstreams`, {
     data: { providerId: 'fake', name: 'weblink', config: { branch: 'main' } },
   });
@@ -242,7 +204,7 @@ test('a provider-declared link resolves to a URL for the client to open', async 
 });
 
 test('a link no live session declares is refused', async ({ request }) => {
-  const projectId = await createProject(request);
+  const projectId = await createProject(request, 'hs-wsopen-e2e-');
   await request.post(`/api/projects/${projectId}/workstreams`, {
     data: { providerId: 'fake', name: 'nolink', config: { branch: 'main' } },
   });
@@ -257,7 +219,7 @@ test('a link no live session declares is refused', async ({ request }) => {
 });
 
 test('open-with requires a mode', async ({ request }) => {
-  const projectId = await createProject(request);
+  const projectId = await createProject(request, 'hs-wsopen-e2e-');
   await request.post(`/api/projects/${projectId}/workstreams`, {
     data: { providerId: 'fake', name: 'nomode', config: { branch: 'main' } },
   });
@@ -275,7 +237,7 @@ test('open-with requires a mode', async ({ request }) => {
 // A live session declares links but not this id, so the id is the bad part of
 // the request rather than the workstream's state.
 test('a link id no session declares is a 400', async ({ request }) => {
-  const projectId = await createProject(request);
+  const projectId = await createProject(request, 'hs-wsopen-e2e-');
   await request.post(`/api/projects/${projectId}/workstreams`, {
     data: { providerId: 'fake', name: 'badlink', config: { branch: 'main' } },
   });
@@ -294,7 +256,7 @@ test('a link id no session declares is a 400', async ({ request }) => {
 });
 
 test('an unknown open mode is a 400', async ({ request }) => {
-  const projectId = await createProject(request);
+  const projectId = await createProject(request, 'hs-wsopen-e2e-');
   await request.post(`/api/projects/${projectId}/workstreams`, {
     data: { providerId: 'fake', name: 'badmode', config: { branch: 'main' } },
   });

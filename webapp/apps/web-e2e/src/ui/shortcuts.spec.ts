@@ -1,7 +1,8 @@
 import { basename } from 'node:path';
 import { expect, tempProjectDir, test } from '../fixtures';
 import { loadApp } from './keyboard-helpers';
-import { selectProject, unique } from './workstream-helpers';
+import { selectProject, unique, waitForRealCard } from './workstream-helpers';
+import { addEmptyProject } from '../projects';
 
 /** The shortcut reference: Ctrl/Cmd+K Ctrl/Cmd+S, as in VS Code, or `?`. */
 
@@ -62,9 +63,7 @@ test('closing it after an actions menu gives focus back to the list', async ({
   request,
 }) => {
   const dir = await tempProjectDir('hs-ui-shortcuts-');
-  const created = await request.post('/api/projects', { data: { path: dir } });
-  expect(created.status()).toBe(201);
-  const projectId = (await created.json()).id as string;
+  const projectId = await addEmptyProject(request, dir);
   const name = unique('shortcuts');
   const workstream = await request.post(
     `/api/projects/${projectId}/workstreams`,
@@ -75,8 +74,7 @@ test('closing it after an actions menu gives focus back to the list', async ({
   await loadApp(page);
   await selectProject(page, basename(dir));
   const card = page.getByRole('region', { name: `Workstream ${name}` });
-  // Past the placeholder, which the real card replaces.
-  await expect(card.getByTestId('workstream-sessions')).toBeVisible();
+  await waitForRealCard(card);
   await card.focus();
   await page.keyboard.press('Shift+F10');
   await expect(

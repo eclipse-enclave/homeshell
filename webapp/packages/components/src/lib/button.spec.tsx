@@ -77,7 +77,6 @@ describe('Button with keys', () => {
     expect(button.getAttribute('data-mnemonic')).toBe('o');
     expect(button.getAttribute('aria-keyshortcuts')).toBe('Enter Alt+O');
     expect(button.title).toMatch(/^Open it \((Enter, Alt\+O|Enter, ⌥O)\)$/);
-    expect(button.querySelector('span span')?.textContent).toBe('O');
   });
 
   it('titles itself with its label when given no title', () => {
@@ -121,5 +120,25 @@ describe('Button with keys', () => {
       </Button>,
     );
     expect(screen.getByRole('button').innerHTML).toBe('<b>Open</b>');
+  });
+});
+
+describe('Button with an icon', () => {
+  it('titles itself with the label beside its icon', () => {
+    render(
+      <Button icon={<svg />} mnemonic="o">
+        Open
+      </Button>,
+    );
+    const button = screen.getByRole('button', { name: 'Open' });
+    expect(button.querySelector('svg')).not.toBeNull();
+    expect(button.title).toMatch(/^Open \((Alt\+O|⌥O)\)$/);
+  });
+
+  it('shows only the icon without a label, named by aria-label', () => {
+    render(<Button icon={<svg />} aria-label="Delete project alpha" />);
+    const button = screen.getByRole('button', { name: 'Delete project alpha' });
+    expect(button.querySelector('svg')).not.toBeNull();
+    expect(button.textContent).toBe('');
   });
 });

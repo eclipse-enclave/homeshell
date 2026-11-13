@@ -122,7 +122,7 @@ func TestPromoteEphemeralSessionAlreadyListedByAProjection(t *testing.T) {
 		t.Fatalf("AddEphemeralSession() error = %v", err)
 	}
 	projected := domain.Session{ID: "sess-1", Agent: "Claude", State: domain.SessionIdle}
-	if err := testStore.ReplaceWorkstreams("p1", []domain.Workstream{{
+	if err := testStore.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place",
 		Sessions: []domain.Session{projected},
 	}}); err != nil {
@@ -309,7 +309,7 @@ func TestReplaceWorkstreamsDoesNotPersistAPlaceholder(t *testing.T) {
 		t.Fatalf("AddEphemeralSession: %v", err)
 	}
 
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{{
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place",
 		Sessions: []domain.Session{real, placeholder},
 	}}); err != nil {
@@ -354,7 +354,7 @@ func TestReplaceWorkstreamsKeepsAPlaceholderAddedDuringTheCycle(t *testing.T) {
 	}
 
 	// The projection, built from the stale snapshot, finally lands.
-	if err := s.ReplaceWorkstreams("p1", snapshot); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
 		t.Fatalf("ReplaceWorkstreams: %v", err)
 	}
 
@@ -380,7 +380,7 @@ func TestReplaceWorkstreamsDoesNotDuplicateARetainedPlaceholder(t *testing.T) {
 	if err := s.AddEphemeralSession("p1", "ws-1", placeholder); err != nil {
 		t.Fatalf("AddEphemeralSession: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{{
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place",
 		Sessions: []domain.Session{placeholder},
 	}}); err != nil {
@@ -409,7 +409,7 @@ func TestReplaceWorkstreamsDoesNotResurrectAPromotedPlaceholder(t *testing.T) {
 	if err := s.PromoteEphemeralSession("p1", "ws-1", placeholder.ID, real, domain.LaunchConfig{}); err != nil {
 		t.Fatalf("PromoteEphemeralSession: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{{
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place",
 		Sessions: []domain.Session{real},
 	}}); err != nil {
@@ -440,7 +440,7 @@ func TestReplaceWorkstreamsKeepsAWorkstreamPlaceholderAddedDuringTheCycle(t *tes
 	if err := s.AddWorkstream("p1", placeholder); err != nil {
 		t.Fatalf("AddWorkstream: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", snapshot); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
 		t.Fatalf("ReplaceWorkstreams: %v", err)
 	}
 	if _, err := s.Workstream("p1", placeholder.ID); err != nil {
@@ -468,7 +468,7 @@ func TestReplaceWorkstreamsKeepsAWorkstreamPromotedDuringTheCycle(t *testing.T) 
 	if err := s.PromoteWorkstream("p1", placeholder.ID, real); err != nil {
 		t.Fatalf("PromoteWorkstream: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", snapshot); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
 		t.Fatalf("ReplaceWorkstreams: %v", err)
 	}
 
@@ -503,7 +503,7 @@ func TestReplaceWorkstreamsDoesNotResurrectARemovedWorkstreamPlaceholder(t *test
 	if err := s.RemoveWorkstream("p1", placeholder.ID); err != nil {
 		t.Fatalf("RemoveWorkstream: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", snapshot); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
 		t.Fatalf("ReplaceWorkstreams: %v", err)
 	}
 	if ids, want := workstreamIDs(s, "p1"), []string{"ws-1"}; !slices.Equal(ids, want) {
@@ -533,7 +533,7 @@ func TestReplaceWorkstreamsDoesNotResurrectThePlaceholderOfARemovedWorkstream(t 
 	if err := s.RemoveWorkstream("p1", "ws-2"); err != nil {
 		t.Fatalf("RemoveWorkstream: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", snapshot); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
 		t.Fatalf("ReplaceWorkstreams: %v", err)
 	}
 	if ids, want := workstreamIDs(s, "p1"), []string{"ws-1"}; !slices.Equal(ids, want) {
@@ -559,7 +559,7 @@ func TestReplaceWorkstreamsKeepsTheLiveCopyOfAWorkstreamPlaceholder(t *testing.T
 	if err := s.UpdateWorkstream("p1", progressed); err != nil {
 		t.Fatalf("UpdateWorkstream: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", snapshot); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
 		t.Fatalf("ReplaceWorkstreams: %v", err)
 	}
 	got, err := s.Workstream("p1", placeholder.ID)
@@ -599,7 +599,7 @@ func TestReplaceWorkstreamsDoesNotPersistAWorkstreamPlaceholder(t *testing.T) {
 	if err := s.AddWorkstream("p1", placeholder); err != nil {
 		t.Fatalf("AddWorkstream: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{
 		{ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", Sessions: []domain.Session{}},
 		placeholder,
 	}); err != nil {
@@ -647,7 +647,7 @@ func TestPromotedSessionNamesItsPlaceholder(t *testing.T) {
 	}
 	assertLink("promoted")
 
-	if err := testStore.ReplaceWorkstreams("p1", []domain.Workstream{{
+	if err := testStore.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place",
 		Sessions: []domain.Session{real},
 	}}); err != nil {
@@ -721,7 +721,7 @@ func TestPromotedSessionListedElsewhereIsNotRetainedTwice(t *testing.T) {
 		t.Fatalf("PromoteEphemeralSession: %v", err)
 	}
 
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{
 		{ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place"},
 		{ID: "ws-2", Name: "other", Provider: "core", StrategyID: "in-place", Sessions: []domain.Session{promoted}},
 	}); err != nil {
@@ -759,7 +759,7 @@ func TestReplaceWorkstreamsDropsAPlaceholderPromotedDuringTheCycle(t *testing.T)
 	if err := s.PromoteEphemeralSession("p1", "ws-1", placeholder.ID, real, domain.LaunchConfig{}); err != nil {
 		t.Fatalf("PromoteEphemeralSession: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", snapshot); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
 		t.Fatalf("ReplaceWorkstreams: %v", err)
 	}
 	ws, err := s.Workstream("p1", "ws-1")
@@ -790,7 +790,7 @@ func TestReplaceWorkstreamsKeepsAWorkstreamCreatedDuringTheCycle(t *testing.T) {
 	if err := s.PromoteWorkstream("p1", placeholder.ID, real); err != nil {
 		t.Fatalf("PromoteWorkstream: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", snapshot); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, snapshot); err != nil {
 		t.Fatalf("ReplaceWorkstreams: %v", err)
 	}
 	if ids, want := workstreamIDs(s, "p1"), []string{"ws-1", "ws-2"}; !slices.Equal(ids, want) {

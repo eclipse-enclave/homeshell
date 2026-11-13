@@ -12,6 +12,9 @@ func init() {
 	register("POST /api/projects/{projectId}/workstreams", func(d Deps) http.HandlerFunc {
 		return createWorkstreamHandler(d)
 	})
+	register("POST /api/projects/{projectId}/default-workstream", func(deps Deps) http.HandlerFunc {
+		return addDefaultWorkstreamHandler(deps)
+	})
 	register("POST /api/projects/{projectId}/workstream-draft", func(deps Deps) http.HandlerFunc {
 		return workstreamDraftHandler(deps)
 	})
@@ -53,6 +56,23 @@ func createWorkstreamHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusCreated, created)
+	}
+}
+
+// addDefaultWorkstreamHandler gives a project the workstream a new project comes
+// with, in place in the project folder, and answers with it.
+func addDefaultWorkstreamHandler(deps Deps) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		if deps.Providers == nil {
+			jsonError(writer, "no providers are available", http.StatusServiceUnavailable)
+			return
+		}
+		created, err := deps.Providers.AddDefaultWorkstream(request.Context(), request.PathValue("projectId"))
+		if err != nil {
+			writeProviderError(writer, err)
+			return
+		}
+		writeJSON(writer, http.StatusCreated, created)
 	}
 }
 

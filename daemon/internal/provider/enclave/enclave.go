@@ -414,7 +414,7 @@ func (p *Provider) ownsDir(project provider.ProjectRef, sessionDir string) bool 
 	if sessionDir == "" {
 		return false
 	}
-	if filepath.Clean(sessionDir) == filepath.Clean(project.Path) {
+	if domain.SameFolder(sessionDir, project.Path) {
 		return true
 	}
 	return ownsDirIn(p.storeProjects(), project, sessionDir)
@@ -429,11 +429,7 @@ func (p *Provider) storeProjects() []domain.Project {
 
 // ownsDirIn is ownsDir against a store snapshot, for callers checking many directories.
 func ownsDirIn(projects []domain.Project, project provider.ProjectRef, sessionDir string) bool {
-	if sessionDir == "" {
-		return false
-	}
-	dir := filepath.Clean(sessionDir)
-	if dir == filepath.Clean(project.Path) {
+	if domain.SameFolder(sessionDir, project.Path) {
 		return true
 	}
 	for _, candidate := range projects {
@@ -441,7 +437,7 @@ func ownsDirIn(projects []domain.Project, project provider.ProjectRef, sessionDi
 			continue
 		}
 		for _, workstream := range candidate.Workstreams {
-			if workstream.WorkingDir != "" && filepath.Clean(workstream.WorkingDir) == dir {
+			if domain.SameFolder(workstream.WorkingDir, sessionDir) {
 				return true
 			}
 		}

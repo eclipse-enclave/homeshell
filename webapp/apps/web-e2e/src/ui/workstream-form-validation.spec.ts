@@ -36,7 +36,7 @@ async function openForm(page: Page, request: APIRequestContext) {
   // The core provider is the one with the branch rules; the demo daemon also
   // registers the fake, and the pick-list remembers a last-used choice.
   await form.getByRole('radio', { name: 'Default' }).click();
-  await form.getByRole('radio', { name: 'worktree' }).click();
+  await form.getByRole('radio', { name: 'Worktree' }).click();
   return form.getByLabel(/^Branch/i);
 }
 
@@ -141,6 +141,14 @@ test('a second in-place workstream is refused on the strategy, with the form ope
   request,
 }) => {
   const { dir, projectId } = await gitProject(request, 'hs-ui-inplace-');
+  await loadApp(page);
+  await selectProject(page, basename(dir));
+
+  // The form offers in place only while the folder is free, so it is opened,
+  // and in place chosen, before another workstream takes the folder.
+  const form = await openNewWorkstreamForm(page);
+  await form.getByRole('radio', { name: 'Default' }).click();
+  await form.getByRole('radio', { name: 'In place' }).click();
   const first = unique('first');
   expect(
     (
@@ -153,15 +161,9 @@ test('a second in-place workstream is refused on the strategy, with the form ope
       })
     ).status(),
   ).toBe(201);
-  await loadApp(page);
-  await selectProject(page, basename(dir));
   await expect(
     page.getByRole('region', { name: `Workstream ${first}` }),
   ).toBeVisible({ timeout: 20_000 });
-
-  const form = await openNewWorkstreamForm(page);
-  await form.getByRole('radio', { name: 'Default' }).click();
-  await form.getByRole('radio', { name: 'in-place' }).click();
   await form.getByLabel(/^Name/i).fill('second');
   await form.getByRole('button', { name: /^Create$/ }).click();
 
@@ -192,13 +194,13 @@ test('a second in-place workstream is refused on the strategy, with the form ope
         }
       ).getComputedStyle(pill).borderColor;
     });
-  for (const name of ['worktree', 'copy']) {
+  for (const name of ['Worktree', 'Folder: a copy of the project']) {
     await expect(form.getByRole('radio', { name })).toHaveCSS(
       'border-color',
       unrefused,
     );
   }
-  await expect(form.getByRole('radio', { name: 'in-place' })).not.toHaveCSS(
+  await expect(form.getByRole('radio', { name: 'In place' })).not.toHaveCSS(
     'border-color',
     unrefused,
   );

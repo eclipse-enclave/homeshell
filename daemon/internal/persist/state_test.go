@@ -7,11 +7,16 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/eclipsesource/homeshell/daemon/internal/domain"
 )
 
+// fixtureEndedAt is when fullSnapshot's session ended.
+var fixtureEndedAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
 func fullSnapshot() Snapshot {
+	endedAt := fixtureEndedAt
 	return Snapshot{
 		Projects: []ProjectRecord{{
 			ID: "p1", Name: "alpha", Path: "/alpha", GitBacked: true,
@@ -21,6 +26,7 @@ func fullSnapshot() Snapshot {
 				Sessions: []SessionRecord{{
 					ID: "sess-1", Title: "claude session", Agent: "claude", Provider: "enclave",
 					ProviderData: json.RawMessage(`{"container":"abc"}`),
+					EndedAt:      &endedAt,
 				}},
 			}},
 		}},
@@ -175,8 +181,8 @@ func TestMemorySaverRecordsAndFails(t *testing.T) {
 func TestSnapshotDropsOnlyLiveState(t *testing.T) {
 	dropped := map[string][]string{
 		"Project":    {"State", "RuntimeState", "Effective"},
-		"Workstream": {"ProviderLabel", "Strategy", "State", "RuntimeState", "Effective", "StatusMessage", "OpenModes", "Actions", "PlaceholderID", "CreateFailed"},
-		"Session":    {"State", "Preview", "Error", "PlaceholderID", "Restartable", "OutdatedSettings", "ObservationData"},
+		"Workstream": {"ProviderLabel", "Strategy", "InProjectFolder", "State", "RuntimeState", "Effective", "StatusMessage", "OpenModes", "Actions", "PlaceholderID", "CreateFailed"},
+		"Session":    {"State", "Ended", "Preview", "Error", "PlaceholderID", "Restartable", "OutdatedSettings", "ObservationData"},
 	}
 	tests := []struct {
 		name   string
@@ -218,8 +224,9 @@ func TestDomainProjectsRestoreSessionsIdle(t *testing.T) {
 		t.Fatalf("DomainProjects = %+v", projects)
 	}
 	session := projects[0].Workstreams[0].Sessions[0]
-	if session.State != domain.SessionIdle || session.Provider != "enclave" || string(session.ProviderData) != `{"container":"abc"}` {
-		t.Errorf("restored session = %+v; want idle, with its provider and data", session)
+	if session.State != domain.SessionIdle || session.Provider != "enclave" || string(session.ProviderData) != `{"container":"abc"}` ||
+		session.EndedAt == nil || !session.EndedAt.Equal(fixtureEndedAt) {
+		t.Errorf("restored session = %+v; want idle, with its provider, data and end", session)
 	}
 	ws := projects[0].Workstreams[0]
 	if ws.Branch != "feature/x" || string(ws.CreatorData) != `{"c":"d"}` || string(ws.ProviderData) != `{"k":1}` {

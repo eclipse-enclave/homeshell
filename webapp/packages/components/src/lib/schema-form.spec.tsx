@@ -41,6 +41,45 @@ describe('SchemaField', () => {
     expect(onChange).toHaveBeenCalledWith('worktree');
   });
 
+  it('shows a few enum values as pills by their enumNames, choosing the raw value', () => {
+    const onChange = vi.fn();
+    const prop: SchemaProp = {
+      type: 'string',
+      enum: ['in-place', 'worktree'],
+      enumNames: ['In place', 'Worktree'],
+    };
+    render(
+      <SchemaField
+        fieldKey="strategy"
+        prop={prop}
+        required
+        value="in-place"
+        disabled={false}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole('radio', { name: 'Worktree' }));
+    expect(onChange).toHaveBeenCalledWith('worktree');
+  });
+
+  it('shows many enum values as a select by their enumNames, choosing the raw value', () => {
+    const onChange = vi.fn();
+    const many = ['a', 'b', 'c', 'd', 'e', 'f'];
+    render(
+      <SchemaField
+        fieldKey="strategy"
+        prop={{ type: 'string', enum: many, enumNames: many.map((v) => v.toUpperCase()) }}
+        required
+        value="a"
+        disabled={false}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'c' } });
+    expect(onChange).toHaveBeenLastCalledWith('c');
+    expect(screen.getByRole('option', { name: 'C' })).toBeTruthy();
+  });
+
   it('suggests a string field’s examples', () => {
     render(
       <SchemaField

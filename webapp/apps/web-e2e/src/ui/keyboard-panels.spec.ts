@@ -1,6 +1,6 @@
 import { expect, test } from '../fixtures';
 import { withSettingsLock } from '../settings-lock';
-import { loadApp } from './keyboard-helpers';
+import { loadApp, openLogs } from './keyboard-helpers';
 import { openWorkstreamCard } from './workstream-helpers';
 
 /**
@@ -59,15 +59,13 @@ test('the logs pane takes focus, and gives it back when it closes', async ({
   page,
 }) => {
   await loadApp(page);
-  const logsButton = page.getByRole('button', { name: 'Logs' });
-  await logsButton.focus();
-  await page.keyboard.press('Enter');
-
-  const pane = page.getByRole('region', { name: 'Logs' });
+  const settings = page.getByRole('button', { name: 'Settings' });
+  await settings.focus();
+  const pane = await openLogs(page);
   await expect(pane).toBeFocused();
   await pane.getByRole('button', { name: 'Close logs pane' }).focus();
   await page.keyboard.press('Enter');
 
   await expect(pane).toHaveCount(0);
-  await expect(logsButton).toBeFocused();
+  await expect(settings).toBeFocused();
 });

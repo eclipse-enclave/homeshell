@@ -5,7 +5,7 @@ import {
 } from '@playwright/test';
 import { expect, test } from '../fixtures';
 import { createWorkstream } from '../api/workstream-helpers';
-import { loadApp } from './keyboard-helpers';
+import { loadApp, openLogs } from './keyboard-helpers';
 import {
   firstSessionPath,
   materializedWorkstream,
@@ -136,7 +136,7 @@ test('Delete asks on Cancel; Escape and Enter both keep the row', async ({
   await expect(row).toBeFocused();
 });
 
-test('Stop keeps focus as it turns into Start', async ({ page, request }) => {
+test('Stop keeps focus as it turns into Continue', async ({ page, request }) => {
   const { row, projectId, workstreamId } = await liveCard(page, request);
   await runSession(
     request,
@@ -148,7 +148,7 @@ test('Stop keeps focus as it turns into Start', async ({ page, request }) => {
   await page.keyboard.press('Enter');
 
   await expect(row.getByTestId('session-state')).toHaveText('Stopped');
-  await expect(row.getByRole('button', { name: 'Start' })).toBeFocused();
+  await expect(row.getByRole('button', { name: 'Continue' })).toBeFocused();
 });
 
 test('Tab comes back to the row that last had focus', async ({
@@ -215,7 +215,7 @@ test('Delete on an in-place card opens on Cancel; deleting moves on', async ({
   ).toBeFocused();
 });
 
-test('deleting the last workstream leaves focus on New workstream', async ({
+test('deleting the project folder workstream leaves focus on Work here', async ({
   page,
   request,
 }) => {
@@ -239,9 +239,7 @@ test('deleting the last workstream leaves focus on New workstream', async ({
   await page.keyboard.press('Enter');
 
   await expect(card).toHaveCount(0);
-  await expect(
-    page.getByRole('button', { name: 'New workstream' }).last(),
-  ).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Work here' })).toBeFocused();
 });
 
 // Enter must delete nothing.
@@ -287,9 +285,7 @@ test('Tab from a card walks its own controls and then leaves the list', async ({
 }) => {
   const { card, row } = await liveCard(page, request);
   // The logs pane comes after the list, so it is where Tab should go next.
-  await page.getByRole('button', { name: 'Logs' }).click();
-  const logs = page.getByRole('region', { name: 'Logs' });
-  await expect(logs).toBeVisible();
+  const logs = await openLogs(page);
   // Playwright has no role-based check for focus inside an element.
   const focusIn = (region: Locator) => region.locator(':focus');
 

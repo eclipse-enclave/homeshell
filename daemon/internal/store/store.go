@@ -10,11 +10,11 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/eclipsesource/homeshell/daemon/internal/domain"
 	"github.com/eclipsesource/homeshell/daemon/internal/git"
@@ -65,8 +65,10 @@ func isStartingPlaceholder(sess domain.Session) bool {
 	return strings.HasPrefix(sess.ID, StartingIDPrefix)
 }
 
-// nameTakenLocked reports the workstream in project that already answers to
-// name, ignoring exceptID — the workstream being inserted or renamed.
+// NameTaken reports the workstream among workstreams, a project's, that already
+// answers to name, ignoring exceptIDs — the workstream being inserted or renamed.
+// It is the store's name rule, for callers that check a project's workstreams
+// before handing them to the store.
 //
 // A creation placeholder counts only while its create is still running, and that
 // is what makes this check a **reservation** rather than a snapshot. Two
@@ -74,16 +76,16 @@ func isStartingPlaceholder(sess domain.Session) bool {
 // minutes later, after its directory had been materialized, on a clash the user
 // was never warned about. A placeholder left in error state is the opposite case
 // — the attempt it stood for is over, so holding its name hostage would refuse
-// the retry — and so is the caller's own earlier self, which exceptID covers.
+// the retry — and so is the caller's own earlier self, which exceptIDs cover.
 //
 // An empty name never collides: it is not a name yet, and the provider fills one
 // in during creation.
-func nameTakenLocked(project *domain.Project, name string, exceptIDs ...string) (domain.Workstream, bool) {
+func NameTaken(workstreams []domain.Workstream, name string, exceptIDs ...string) (domain.Workstream, bool) {
 	want := strings.TrimSpace(name)
 	if want == "" {
 		return domain.Workstream{}, false
 	}
-	for _, existing := range project.Workstreams {
+	for _, existing := range workstreams {
 		if slices.Contains(exceptIDs, existing.ID) {
 			continue
 		}
@@ -168,6 +170,12 @@ type Store struct {
 	// dropping it — and a session what it was started with, a workstream the name
 	// it holds; the swap after that decides.
 	unprojectedPromotions map[string]string
+	// now is the clock that stamps Session.EndedAt; tests replace it.
+	now func() time.Time
+	// unobserved are the IDs of sessions restored from disk that no projection has
+	// reported on yet. Their restored state is a placeholder (idle), so the first
+	// observation says nothing about when they ended (stampEndedAtLocked).
+	unobserved map[string]bool
 }
 
 // New creates a store with the given initial projects, persisting through saver.
@@ -184,6 +192,8 @@ func New(projects []domain.Project, saver persist.Saver, opts ...Option) *Store 
 		sessionTitles:         map[string]persist.CustomTitle{},
 		launchConfigs:         map[string]persist.LaunchConfig{},
 		unprojectedPromotions: map[string]string{},
+		now:                   time.Now,
+		unobserved:            map[string]bool{},
 	}
 	for _, o := range opts {
 		o(s)
@@ -208,6 +218,9 @@ func Restore(snapshot persist.Snapshot, saver persist.Saver, opts ...Option) *St
 	for i := range restored.projects {
 		for j := range restored.projects[i].Workstreams {
 			restored.applyTitlesLocked(restored.projects[i].Workstreams[j].Sessions)
+			for _, session := range restored.projects[i].Workstreams[j].Sessions {
+				restored.unobserved[session.ID] = true
+			}
 		}
 	}
 	return restored
@@ -397,8 +410,10 @@ func cloneWorkstream(workstream domain.Workstream) domain.Workstream {
 // ReplaceWorkstreams swaps a project's workstreams with the given set,
 // recomputes derived state, and persists and broadcasts only when the set
 // actually changed (a reconcile wave would otherwise overflow a slow SSE
-// subscriber). The store takes ownership of workstreams: callers must not reuse it.
-func (s *Store) ReplaceWorkstreams(projectID string, workstreams []domain.Workstream) error {
+// subscriber). read is the project's workstreams as the set was derived from
+// them: what changed in the store since then is kept (keepChangesSinceRead).
+// The store takes ownership of workstreams: callers must not reuse it.
+func (s *Store) ReplaceWorkstreams(projectID string, read, workstreams []domain.Workstream) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.projects {
@@ -408,6 +423,7 @@ func (s *Store) ReplaceWorkstreams(projectID string, workstreams []domain.Workst
 		if workstreams == nil {
 			workstreams = []domain.Workstream{}
 		}
+		workstreams = keepChangesSinceRead(read, s.projects[i].Workstreams, workstreams)
 		// Anything the daemon started tracking while this projection was being
 		// computed is missing from it, and must survive the swap.
 		workstreams = retainInFlightLocked(s.projects[i].Workstreams, workstreams, s.unprojectedPromotions)
@@ -419,7 +435,9 @@ func (s *Store) ReplaceWorkstreams(projectID string, workstreams []domain.Workst
 			s.applyTitlesLocked(workstreams[j].Sessions)
 		}
 		keepPlaceholderLinks(s.projects[i].Workstreams, workstreams)
+		s.stampEndedAtLocked(s.projects[i].Workstreams, workstreams)
 		listed := sessionIDsIn(workstreams)
+		s.forgetUnobservedLocked(s.projects[i].Workstreams, listed)
 		pruned := s.pruneTitlesLocked(projectID, listed)
 		pruned = s.pruneLaunchConfigsLocked(projectID, listed) || pruned
 		// Held for the change check below. Recompute normalizes derived fields, so
@@ -439,6 +457,67 @@ func (s *Store) ReplaceWorkstreams(projectID string, workstreams []domain.Workst
 		return nil
 	}
 	return fmt.Errorf("project %q not found", projectID)
+}
+
+// stampEndedAtLocked sets Session.EndedAt on the incoming sessions from what the
+// previous projection knew of them. A session that was live and is now terminal
+// ended just now; one that stays terminal keeps its recorded time; a live one has
+// none. A session not in the previous projection, or restored from disk and not
+// yet observed, was first seen in this state, so no end is claimed for it beyond
+// the persisted one.
+//
+// A restored session stays unobserved until a projection brings it changed: the
+// reconciler carries a session its provider did not report over as the stored
+// copy, which is still the restored idle placeholder and says nothing about it.
+func (s *Store) stampEndedAtLocked(previous, incoming []domain.Workstream) {
+	before := sessionsByID(previous)
+	now := s.now()
+	for _, workstream := range incoming {
+		for j := range workstream.Sessions {
+			session := &workstream.Sessions[j]
+			prev, known := before[session.ID]
+			first := s.unobserved[session.ID]
+			if first && known && sameReport(prev, *session) {
+				continue
+			}
+			delete(s.unobserved, session.ID)
+			var endedAt *time.Time
+			switch {
+			case !session.State.Terminal():
+			case !known:
+				// First seen already ended: a time the provider reports stands.
+				endedAt = session.EndedAt
+			case first || prev.EndedAt != nil:
+				// After a restart the persisted time (nil if none) stands: the first
+				// look cannot tell when the session ended, and now() would be a lie.
+				endedAt = prev.EndedAt
+			case !prev.State.Terminal():
+				stamp := now
+				endedAt = &stamp
+			}
+			session.EndedAt = endedAt
+		}
+	}
+}
+
+// forgetUnobservedLocked drops the restored sessions of previous that are no
+// longer listed from the unobserved set: one that comes back is first seen anew.
+func (s *Store) forgetUnobservedLocked(previous []domain.Workstream, listed map[string]bool) {
+	for _, workstream := range previous {
+		for _, session := range workstream.Sessions {
+			if !listed[session.ID] {
+				delete(s.unobserved, session.ID)
+			}
+		}
+	}
+}
+
+// sameReport reports whether incoming is the stored session carried over as is,
+// ignoring Restartable and Ended, which the projection and Recompute derive anew.
+func sameReport(stored, incoming domain.Session) bool {
+	stored.Restartable, incoming.Restartable = false, false
+	stored.Ended, incoming.Ended = false, false
+	return reflect.DeepEqual(stored, incoming)
 }
 
 // retainInFlightLocked re-attaches the daemon's own creation bookkeeping —
@@ -516,6 +595,119 @@ func retainInFlightLocked(live, next []domain.Workstream, unprojected map[string
 		}
 	}
 	return next
+}
+
+// keepChangesSinceRead carries onto a projection what changed in the live state
+// since the projection read it. A pass asks the providers between its read and
+// this write, so whatever changed meanwhile (a rename, a dismissed status, a
+// workstream added by Work here, a removal) is newer than the pass's copy:
+//
+//   - a workstream or session changed since the read is taken from the live
+//     state whole, so fields that belong together come from one writer; the
+//     next pass brings it up to date;
+//   - one removed since the read stays removed, and one added since stays;
+//   - a name the pass gave that another workstream now has is not taken.
+//
+// Placeholders are left to retainInFlightLocked, and a nil read (no read to
+// compare with) keeps the projection as it is.
+func keepChangesSinceRead(read, live, next []domain.Workstream) []domain.Workstream {
+	if read == nil {
+		return next
+	}
+	readWorkstreams, liveWorkstreams := workstreamsByID(read), workstreamsByID(live)
+	readSessions, liveSessions := sessionsByID(read), sessionsByID(live)
+	listed := sessionIDsIn(next)
+	kept := make([]domain.Workstream, 0, len(next))
+	for _, workstream := range next {
+		was, wasRead := readWorkstreams[workstream.ID]
+		if strings.HasPrefix(workstream.ID, PlaceholderIDPrefix) || !wasRead {
+			kept = append(kept, workstream)
+			continue
+		}
+		now, isLive := liveWorkstreams[workstream.ID]
+		if !isLive {
+			continue
+		}
+		if !sameApartFromSessions(was, now) {
+			sessions := workstream.Sessions
+			workstream = now
+			workstream.Sessions = sessions
+		}
+		workstream.Sessions = keepSessionChanges(workstream.Sessions, now.Sessions, readSessions, liveSessions, listed)
+		kept = append(kept, workstream)
+	}
+	projected := workstreamsByID(next)
+	for _, now := range live {
+		_, wasRead := readWorkstreams[now.ID]
+		_, isProjected := projected[now.ID]
+		if wasRead || isProjected || strings.HasPrefix(now.ID, PlaceholderIDPrefix) {
+			continue
+		}
+		kept = append(kept, now)
+	}
+	for i := range kept {
+		now, isLive := liveWorkstreams[kept[i].ID]
+		if isLive && kept[i].Name != now.Name {
+			if _, taken := NameTaken(kept, kept[i].Name, kept[i].ID); taken {
+				kept[i].Name, kept[i].CreatorData = now.Name, now.CreatorData
+			}
+		}
+	}
+	return kept
+}
+
+// keepSessionChanges is keepChangesSinceRead for the sessions of one
+// workstream: projected are the projection's, current the live state's. A
+// session added since the read is kept only where the projection lists it
+// nowhere (listed).
+func keepSessionChanges(projected, current []domain.Session, readSessions, liveSessions map[string]domain.Session, listed map[string]bool) []domain.Session {
+	sessions := make([]domain.Session, 0, len(projected))
+	for _, sess := range projected {
+		was, wasRead := readSessions[sess.ID]
+		now, isLive := liveSessions[sess.ID]
+		switch {
+		case isStartingPlaceholder(sess) || !wasRead:
+		case !isLive:
+			continue
+		case !reflect.DeepEqual(was, now):
+			sess = now
+		}
+		sessions = append(sessions, sess)
+	}
+	for _, now := range current {
+		if _, wasRead := readSessions[now.ID]; wasRead || listed[now.ID] || isStartingPlaceholder(now) {
+			continue
+		}
+		sessions = append(sessions, now)
+	}
+	return sessions
+}
+
+// sameApartFromSessions reports whether two copies of a workstream agree on
+// everything but their sessions.
+func sameApartFromSessions(a, b domain.Workstream) bool {
+	a.Sessions, b.Sessions = nil, nil
+	return reflect.DeepEqual(a, b)
+}
+
+// workstreamsByID indexes workstreams by ID.
+func workstreamsByID(workstreams []domain.Workstream) map[string]domain.Workstream {
+	byID := make(map[string]domain.Workstream, len(workstreams))
+	for _, workstream := range workstreams {
+		byID[workstream.ID] = workstream
+	}
+	return byID
+}
+
+// sessionsByID indexes the sessions workstreams list by ID.
+func sessionsByID(workstreams []domain.Workstream) map[string]domain.Session {
+	byID := map[string]domain.Session{}
+	for _, workstream := range workstreams {
+		for _, sess := range workstream.Sessions {
+			byID[sess.ID] = sess
+		}
+	}
+	return byID
 }
 
 // forgetPromotionsLocked drops a project's unprojected promotions, once a
@@ -750,7 +942,7 @@ func (s *Store) NameUser(projectID, name string, exceptIDs ...string) string {
 	defer s.mu.Unlock()
 	for i := range s.projects {
 		if s.projects[i].ID == projectID {
-			existing, _ := nameTakenLocked(&s.projects[i], name, exceptIDs...)
+			existing, _ := NameTaken(s.projects[i].Workstreams, name, exceptIDs...)
 			return existing.Name
 		}
 	}
@@ -758,7 +950,8 @@ func (s *Store) NameUser(projectID, name string, exceptIDs ...string) string {
 }
 
 // WorkingDirUser names the workstream in the project already working in dir, or
-// returns "" — the rule AddWorkstream and PromoteWorkstream enforce.
+// returns "" — the rule AddWorkstream and PromoteWorkstream enforce, and what
+// the creation form and an in-place create are checked against.
 func (s *Store) WorkingDirUser(projectID, dir string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -772,17 +965,16 @@ func (s *Store) WorkingDirUser(projectID, dir string) string {
 }
 
 // workingDirTakenLocked reports the workstream in project already working in
-// dir, ignoring exceptIDs. An empty dir — a placeholder's — never collides.
+// dir, ignoring exceptIDs. An empty dir — a placeholder's — never collides. The
+// project folder is taken by any workstream shown in it (InProjectFolder), so a
+// pending or failed in-place create, which has no folder yet, holds it too.
 func workingDirTakenLocked(project *domain.Project, dir string, exceptIDs ...string) (domain.Workstream, bool) {
-	if dir == "" {
-		return domain.Workstream{}, false
-	}
-	want := filepath.Clean(dir)
+	projectFolder := domain.SameFolder(dir, project.Path)
 	for _, existing := range project.Workstreams {
-		if slices.Contains(exceptIDs, existing.ID) || existing.WorkingDir == "" {
+		if slices.Contains(exceptIDs, existing.ID) {
 			continue
 		}
-		if filepath.Clean(existing.WorkingDir) == want {
+		if domain.SameFolder(existing.WorkingDir, dir) || projectFolder && existing.InProjectFolder {
 			return existing, true
 		}
 	}
@@ -836,7 +1028,7 @@ func uniqueLocked(project *domain.Project, workstream domain.Workstream, exceptI
 	if existing, taken := workingDirTakenLocked(project, workstream.WorkingDir, exceptIDs...); taken {
 		return fmt.Errorf("%w: %q already works in %s", ErrDuplicateWorkingDir, existing.Name, workstream.WorkingDir)
 	}
-	if clash, taken := nameTakenLocked(project, workstream.Name, exceptIDs...); taken {
+	if clash, taken := NameTaken(project.Workstreams, workstream.Name, exceptIDs...); taken {
 		// Quote the *existing* workstream's name rather than the requested one:
 		// they may differ only in case or padding, and seeing which name is
 		// already there is what tells the user that.
@@ -957,7 +1149,7 @@ func (s *Store) UpdateWorkstream(projectID string, workstream domain.Workstream)
 					strings.TrimSpace(workstream.Name),
 				)
 				if renamed {
-					if clash, taken := nameTakenLocked(&s.projects[i], workstream.Name, workstream.ID); taken {
+					if clash, taken := NameTaken(s.projects[i].Workstreams, workstream.Name, workstream.ID); taken {
 						// Quote the *existing* workstream's name rather than the requested one:
 						// they may differ only in case or padding, and seeing which name is
 						// already there is what tells the user that.

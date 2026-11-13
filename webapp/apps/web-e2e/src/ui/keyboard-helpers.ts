@@ -23,8 +23,25 @@ export async function searchCommands(page: Page, query: string) {
   return page.getByRole('dialog', { name: 'Command palette' });
 }
 
+/** Opens the log pane by its palette command, and returns the pane. */
+export async function openLogs(page: Page) {
+  await runCommand(page, 'Toggle logs');
+  const pane = page.getByRole('region', { name: 'Logs' });
+  await expect(pane).toBeVisible();
+  return pane;
+}
+
 /** Runs the palette's first command for `query`. */
 export async function runCommand(page: Page, query: string) {
   await searchCommands(page, query);
   await page.keyboard.press('Enter');
+}
+
+/** What the page reads off the clipboard (the context needs clipboard-read). */
+export function readClipboard(page: Page): Promise<string> {
+  return page.evaluate(() =>
+    (
+      navigator as unknown as { clipboard: { readText(): Promise<string> } }
+    ).clipboard.readText(),
+  );
 }

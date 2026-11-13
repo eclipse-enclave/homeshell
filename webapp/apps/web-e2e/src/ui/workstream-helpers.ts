@@ -1,11 +1,17 @@
 import { basename } from 'node:path';
-import { type APIRequestContext, type Page } from '@playwright/test';
+import {
+  type APIRequestContext,
+  type Locator,
+  type Page,
+} from '@playwright/test';
 import { expect, tempProjectDir } from '../fixtures';
 import {
   createProject,
+  createSession,
   createWorkstream,
   sessionsOf,
 } from '../api/workstream-helpers';
+import { addEmptyProject, addProjectWithDefault } from '../projects';
 import { settingsSaved, withSettingsLock } from '../settings-lock';
 import { loadApp } from './keyboard-helpers';
 
@@ -24,24 +30,40 @@ export async function selectProject(page: Page, name: string) {
     .click();
 }
 
-/** Adds a fresh, empty project, loads the app and selects it; returns its name. */
+/**
+ * Adds a fresh project without its default workstream, loads the app and
+ * selects it; returns its name.
+ */
 export async function selectEmptyProject(
   page: Page,
   request: APIRequestContext,
   prefix: string,
 ) {
   const dir = await tempProjectDir(prefix);
-  expect(
-    (await request.post('/api/projects', { data: { path: dir } })).status(),
-  ).toBe(201);
+  await addEmptyProject(request, dir);
   await loadApp(page);
   await selectProject(page, basename(dir));
   return basename(dir);
 }
 
+/**
+ * Adds a project over `dir` with its default workstream, loads the app and
+ * selects it; returns the project's ID and that workstream.
+ */
+export async function selectProjectWithDefault(
+  page: Page,
+  request: APIRequestContext,
+  dir: string,
+) {
+  const added = await addProjectWithDefault(request, dir);
+  await loadApp(page);
+  await selectProject(page, basename(dir));
+  return added;
+}
+
 /** Opens the selected project's new-workstream form; returns it, on the name. */
 export async function openNewWorkstreamForm(page: Page) {
-  await page.getByRole('button', { name: 'New workstream' }).first().click();
+  await page.getByRole('button', { name: 'New workstream' }).click();
   const form = page.getByRole('form', { name: 'New workstream' });
   await expect(form.getByLabel('Name')).toBeFocused({ timeout: 20_000 });
   return form;
@@ -76,10 +98,11 @@ export interface MaterializedWorkstream {
 }
 
 /**
- * A workstream whose files really are on the daemon host: an in-place core one,
- * so its working directory is the project directory itself. The fake provider
- * records a working directory it never creates, which is not enough for the
- * actions that need real files.
+ * A workstream whose files really are on the daemon host: the default one a
+ * project comes with, in place, so its working directory is the project
+ * directory itself, renamed to a name of its own. The fake provider records a
+ * working directory it never creates, which is not enough for the actions that
+ * need real files.
  */
 export async function materializedWorkstream(
   request: APIRequestContext,
@@ -87,41 +110,19 @@ export async function materializedWorkstream(
   namePrefix: string,
 ): Promise<MaterializedWorkstream> {
   const dir = await tempProjectDir(prefix);
-  const project = await request.post('/api/projects', { data: { path: dir } });
-  expect(project.status()).toBe(201);
-  const projectId = (await project.json()).id as string;
-
+  const { projectId, workstream } = await addProjectWithDefault(request, dir);
   const workstreamName = unique(namePrefix);
-  const created = await request.post(`/api/projects/${projectId}/workstreams`, {
-    data: {
-      providerId: 'core',
-      name: workstreamName,
-      config: { strategy: 'in-place' },
-    },
-  });
-  expect(created.status()).toBe(201);
-
-  // Creation is asynchronous: wait for the placeholder to be replaced.
-  const deadline = Date.now() + 8000;
-  while (Date.now() < deadline) {
-    const state = await (await request.get('/api/projects')).json();
-    const ws = state.projects
-      ?.find((p: { id: string }) => p.id === projectId)
-      ?.workstreams?.find(
-        (w: { id: string; name: string }) =>
-          w.name === workstreamName && !w.id.startsWith('creating-'),
-      );
-    if (ws) {
-      return {
-        dirName: basename(dir),
-        workstreamName,
-        projectId,
-        workstreamId: ws.id as string,
-      };
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`timed out waiting for workstream ${workstreamName}`);
+  const renamed = await request.patch(
+    `/api/projects/${projectId}/workstreams/${workstream.id}`,
+    { data: { name: workstreamName } },
+  );
+  expect(renamed.status()).toBe(204);
+  return {
+    dirName: basename(dir),
+    workstreamName,
+    projectId,
+    workstreamId: workstream.id,
+  };
 }
 
 /**
@@ -160,6 +161,49 @@ export async function workstreamWithSessions(
 }
 
 /**
+ * A `workstreamWithSessions` workstream with real sessions in it: `ended`
+ * stopped ones, then `running` running ones; returns their API paths in that
+ * order. Made one at a time: the fake runs at most three sessions at once, and
+ * an ended one does not count.
+ */
+export async function workstreamWithEndedSessions(
+  request: APIRequestContext,
+  prefix: string,
+  namePrefix: string,
+  { ended, running }: { ended: number; running: number },
+) {
+  const created = await workstreamWithSessions(request, prefix, namePrefix, 0);
+  const base = `/api/projects/${created.projectId}/workstreams/${created.workstreamId}/sessions`;
+  const paths: string[] = [];
+  for (let i = 0; i < ended + running; i++) {
+    const session = await createSession(
+      request,
+      created.projectId,
+      created.workstreamId,
+    );
+    const path = `${base}/${session.id}`;
+    paths.push(path);
+    if (i < ended) {
+      expect((await request.post(`${path}/stop`)).status()).toBe(204);
+    } else {
+      await runSession(request, path);
+    }
+  }
+  return { ...created, paths };
+}
+
+/**
+ * Waits until `card` is the real workstream's, not the placeholder that stands
+ * for it while it is created (that one is `aria-busy`).
+ */
+export async function waitForRealCard(card: Locator) {
+  await expect(card).toBeVisible({ timeout: 20_000 });
+  await expect(card).not.toHaveAttribute('aria-busy', 'true', {
+    timeout: 20_000,
+  });
+}
+
+/**
  * Loads the app on a fresh `workstreamWithSessions` workstream's card, once its
  * sessions are the real ones rather than their placeholders.
  */
@@ -187,7 +231,28 @@ export async function openWorkstreamCard(
       { timeout: 15_000 },
     );
   }
-  return { ...created, card, row: card.getByRole('listitem').first() };
+  return { ...created, card, row: sessionRows(card).first() };
+}
+
+/**
+ * A card's session rows: its list items with actions of their own, not the
+ * "Ended" divider or the fold.
+ */
+export function sessionRows(card: Locator) {
+  return card.getByRole('listitem').filter({
+    has: card.page().getByRole('button', { name: 'More actions' }),
+  });
+}
+
+/** Opens the More actions menu of the session `row`. */
+export async function openMoreActions(row: Locator) {
+  await row.getByRole('button', { name: 'More actions' }).click();
+}
+
+/** Picks Delete in the More actions menu of the session `row`. */
+export async function deleteSession(row: Locator) {
+  await openMoreActions(row);
+  await row.page().getByRole('menuitem', { name: 'Delete' }).click();
 }
 
 /** The API path of the workstream's first session. */

@@ -1,34 +1,26 @@
-import { EFFECTIVE_STATES, effectiveStateLabel, SESSION_STATES } from '@homeshell/model';
 import { render, screen } from '@testing-library/react';
 
 import { StatusDot } from './status-dot';
 
 describe('StatusDot', () => {
-  it.each(SESSION_STATES)('exposes an accessible label for session state "%s"', (state) => {
-    render(<StatusDot state={state} />);
-    expect(screen.getByRole('img', { name: effectiveStateLabel(state) })).toBeTruthy();
-  });
-
-  it.each(EFFECTIVE_STATES)('exposes an accessible label for effective state "%s"', (state) => {
-    render(<StatusDot state={state} />);
-    expect(screen.getByRole('img', { name: effectiveStateLabel(state) })).toBeTruthy();
-  });
-
-  it('renders the label text only when requested', () => {
+  it('names its state, and shows the words only when asked', () => {
     const { rerender } = render(<StatusDot state="waiting" />);
+    expect(screen.getByRole('img', { name: 'Waiting for input' })).toBeTruthy();
     expect(screen.queryByText('Waiting for input')).toBeNull();
 
-    rerender(<StatusDot state="waiting" showLabel />);
-    expect(screen.getByText('Waiting for input')).toBeTruthy();
+    rerender(<StatusDot state="ended" showLabel />);
+    expect(screen.getByRole('img', { name: 'Ended' })).toBeTruthy();
+    expect(screen.getByText('Ended')).toBeTruthy();
   });
 
-  it('renders runtime state labels when requested', () => {
-    render(<StatusDot state="stopped" showLabel />);
-    expect(screen.getByText('Stopped')).toBeTruthy();
-  });
-
-  it('renders error state label', () => {
-    render(<StatusDot state="error" showLabel />);
-    expect(screen.getByText('Error')).toBeTruthy();
+  it('tells states apart by shape, not colour alone', () => {
+    const states = ['running', 'waiting', 'error', 'ended', 'unknown'] as const;
+    const shapes = states.map((state) => {
+      const { unmount } = render(<StatusDot state={state} />);
+      const shape = screen.getByRole('img').getAttribute('data-shape');
+      unmount();
+      return shape;
+    });
+    expect(new Set(shapes).size).toBe(states.length);
   });
 });

@@ -73,6 +73,8 @@ last time":
 | `workstreams.location` | `""` | Where worktree and copy directories are created |
 | `workstreams.confirmRemove` | `true` | Ask before removing a workstream |
 
+- `defaultStrategy`: where the create form doesn't offer it (`in-place` once the project folder is
+  taken, `worktree` outside git), the form preselects its own default.
 - `nameTemplate`: `{project}` expands to the project name. Empty leaves the name to the
   provider. Only the web UI applies it.
 - `location`: an absolute path, a `~/…` path, or a path relative to each project's directory
@@ -93,7 +95,7 @@ The agents themselves are configured in the [agent catalog](API.md#agent-catalog
 
 | Key | Default | Effect |
 |---|---|---|
-| `providers.refreshIntervalSec` | `0.5` | How often each session's state is re-checked, in seconds (0.1–86400) |
+| `providers.refreshIntervalSec` | `0.5` | Seconds between checks of session states and branches (0.1–86400) |
 
 ### Open with
 

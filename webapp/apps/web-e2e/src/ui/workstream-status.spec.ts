@@ -5,6 +5,8 @@ import { promisify } from 'node:util';
 import { type APIRequestContext, type Page } from '@playwright/test';
 import { expect, tempProjectDir, test } from '../fixtures';
 import { selectProject } from './workstream-helpers';
+import { addEmptyProject } from '../projects';
+import { createWorkstream } from '../api/workstream-helpers';
 
 const execFileAsync = promisify(execFile);
 
@@ -18,25 +20,10 @@ async function projectWithWorkstream(
   request: APIRequestContext,
 ): Promise<{ dirName: string; projectId: string; workstreamId: string }> {
   const dir = await tempProjectDir('hs-ui-status-');
-  const created = await request.post('/api/projects', { data: { path: dir } });
-  expect(created.status()).toBe(201);
-  const projectId = (await created.json()).id as string;
+  const projectId = await addEmptyProject(request, dir);
 
-  const res = await request.post(`/api/projects/${projectId}/workstreams`, {
-    data: { providerId: 'fake', name: 'ui-status', config: { branch: 'main' } },
-  });
-  expect(res.status()).toBe(201);
-
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
-    const state = await (await request.get('/api/projects')).json();
-    const ws = state.projects
-      ?.find((p: { id: string }) => p.id === projectId)
-      ?.workstreams?.find((w: { id: string }) => !w.id.startsWith('creating-'));
-    if (ws) return { dirName: basename(dir), projectId, workstreamId: ws.id };
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error('timed out waiting for the workstream');
+  const workstreamId = await createWorkstream(request, projectId, 'ui-status');
+  return { dirName: basename(dir), projectId, workstreamId };
 }
 
 async function openCard(page: Page, dirName: string) {
@@ -93,9 +80,7 @@ async function failedWorkstream(
   await execFileAsync('git', ['add', '.'], { cwd: dir, env });
   await execFileAsync('git', ['commit', '-qm', 'initial'], { cwd: dir, env });
 
-  const created = await request.post('/api/projects', { data: { path: dir } });
-  expect(created.status()).toBe(201);
-  const projectId = (await created.json()).id as string;
+  const projectId = await addEmptyProject(request, dir);
 
   const res = await request.post(`/api/projects/${projectId}/workstreams`, {
     data: {
@@ -135,5 +120,7 @@ test('a failed workstream shows its error with no way to dismiss it', async ({
 
   // The card is still disposable — that is the way out of a failed creation,
   // and all it offers: there is nothing to open, rename or start a session in.
-  await expect(card.getByRole('button')).toHaveText(['Delete']);
+  await expect(card.getByRole('button')).toHaveAccessibleName(
+    'Delete workstream ui-dup-branch',
+  );
 });

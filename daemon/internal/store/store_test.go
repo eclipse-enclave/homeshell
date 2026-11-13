@@ -551,6 +551,30 @@ func TestWorkingDirUser(t *testing.T) {
 	}
 }
 
+// The project folder is taken by whatever is shown in it: a pending or failed
+// in-place create too, though it has no folder yet.
+func TestTheProjectFolderIsTakenByWhatIsShownInIt(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		s := NewTestStore(t, []domain.Project{{ID: "p1", Name: "p", Path: "/work/p"}})
+		placeholder := domain.Workstream{ID: "creating-1", Name: "here", StrategyID: "in-place",
+			CreateFailed: failed, Sessions: []domain.Session{}}
+		if err := s.AddWorkstream("p1", placeholder); err != nil {
+			t.Fatalf("add placeholder: %v", err)
+		}
+		if got := s.WorkingDirUser("p1", "/work/p/"); got != "here" {
+			t.Errorf("failed=%v: WorkingDirUser(project folder) = %q, want %q", failed, got, "here")
+		}
+		inPlace := domain.Workstream{ID: "ws-a", Name: "a", WorkingDir: "/work/p", Sessions: []domain.Session{}}
+		if err := s.AddWorkstream("p1", inPlace); !errors.Is(err, ErrDuplicateWorkingDir) {
+			t.Errorf("failed=%v: add in the project folder err = %v, want ErrDuplicateWorkingDir", failed, err)
+		}
+		elsewhere := domain.Workstream{ID: "ws-b", Name: "b", WorkingDir: "/work/b", Sessions: []domain.Session{}}
+		if err := s.AddWorkstream("p1", elsewhere); err != nil {
+			t.Errorf("failed=%v: add elsewhere: %v", failed, err)
+		}
+	}
+}
+
 func TestRemoveWorkstream(t *testing.T) {
 	s := NewTestStore(t, Seed())
 	eventCh, cancel := s.Subscribe()
@@ -682,7 +706,7 @@ func TestReplaceWorkstreamsPreservesSessionProviderData(t *testing.T) {
 
 	// Replace workstreams with the same set — simulates a refresh cycle.
 	replacement := seed[0].Workstreams
-	if err := store.ReplaceWorkstreams("p1", replacement); err != nil {
+	if err := store.ReplaceWorkstreams("p1", nil, replacement); err != nil {
 		t.Fatal(err)
 	}
 
@@ -736,11 +760,11 @@ func TestSnapshotHoldsRealWorkstreamsAndNoPlaceholders(t *testing.T) {
 	same := func() []domain.Workstream {
 		return []domain.Workstream{cloneWorkstream(real), {ID: "ws-2", Name: "other", Provider: "core", StrategyID: "in-place", WorkingDir: "/p1/other"}}
 	}
-	if err := s.ReplaceWorkstreams("p1", same()); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, same()); err != nil {
 		t.Fatalf("ReplaceWorkstreams: %v", err)
 	}
 	saves := saver.Saves
-	if err := s.ReplaceWorkstreams("p1", same()); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, same()); err != nil {
 		t.Fatalf("ReplaceWorkstreams(again): %v", err)
 	}
 	if saver.Saves != saves {
@@ -757,7 +781,7 @@ func TestSnapshotHoldsRealWorkstreamsAndNoPlaceholders(t *testing.T) {
 	}
 	withoutSession := same()
 	withoutSession[0].Sessions = nil
-	if err := s.ReplaceWorkstreams("p1", withoutSession); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, withoutSession); err != nil {
 		t.Fatalf("ReplaceWorkstreams(without session): %v", err)
 	}
 	if _, ok := saver.Last.SessionTitles["sess-1"]; ok {
@@ -844,7 +868,7 @@ func TestRestoreRoundTrips(t *testing.T) {
 	if err := s.AddProject(&project); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{{ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/alpha",
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/alpha",
 		Sessions: []domain.Session{{ID: "sess-1", Title: "t", Agent: "claude", Provider: "enclave", State: domain.SessionRunning}}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -867,5 +891,283 @@ func TestRestoreRoundTrips(t *testing.T) {
 	}
 	if again.Saves != 1 || again.Last.Projects[0].Name != "beta" {
 		t.Errorf("the restored store did not persist through its saver: %d saves, %+v", again.Saves, again.Last.Projects)
+	}
+}
+
+// endedAtWorkstream is a workstream holding the one session s1 in state, for the
+// EndedAt tests.
+func endedAtWorkstream(state domain.SessionState) domain.Workstream {
+	return domain.Workstream{ID: "ws1", Name: "main", Provider: "test", StrategyID: "in-place",
+		Sessions: []domain.Session{{ID: "s1", Title: "session", Agent: "agent", Provider: "test", State: state}}}
+}
+
+// observeEndedAt reports state for s1 and returns the EndedAt the store keeps.
+func observeEndedAt(t *testing.T, s *Store, state domain.SessionState) *time.Time {
+	t.Helper()
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{endedAtWorkstream(state)}); err != nil {
+		t.Fatal(err)
+	}
+	return s.Projects()[0].Workstreams[0].Sessions[0].EndedAt
+}
+
+func sameTime(got, want *time.Time) bool {
+	return (got == nil) == (want == nil) && (got == nil || got.Equal(*want))
+}
+
+var (
+	persistedEnd = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	stampClock   = time.Date(2026, 6, 7, 8, 9, 10, 0, time.UTC)
+)
+
+func TestReplaceWorkstreamsStampsEndedAt(t *testing.T) {
+	tests := []struct {
+		name      string
+		before    domain.SessionState // "": the session is new to this projection
+		beforeEnd *time.Time
+		after     domain.SessionState
+		reported  *time.Time // the end the provider reports
+		want      *time.Time
+	}{
+		{"running to stopped", domain.SessionRunning, nil, domain.SessionStopped, nil, &stampClock},
+		{"idle to error", domain.SessionIdle, nil, domain.SessionError, nil, &stampClock},
+		{"stopped stays stopped", domain.SessionStopped, &persistedEnd, domain.SessionStopped, nil, &persistedEnd},
+		{"stopped to running", domain.SessionStopped, &persistedEnd, domain.SessionRunning, nil, nil},
+		{"first seen done", "", nil, domain.SessionDone, nil, nil},
+		{"first seen done keeps its reported end", "", nil, domain.SessionDone, &persistedEnd, &persistedEnd},
+		{"done with an unknown end stays unknown", domain.SessionDone, nil, domain.SessionDone, nil, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project := domain.Project{ID: "p1", Name: "test", Path: "/tmp/test", Workstreams: []domain.Workstream{
+				{ID: "ws1", Name: "main", Provider: "test", StrategyID: "in-place"},
+			}}
+			if tt.before != "" {
+				project.Workstreams[0] = endedAtWorkstream(tt.before)
+				project.Workstreams[0].Sessions[0].EndedAt = tt.beforeEnd
+			}
+			s := NewTestStore(t, []domain.Project{project})
+			s.now = func() time.Time { return stampClock }
+			workstream := endedAtWorkstream(tt.after)
+			workstream.Sessions[0].EndedAt = tt.reported
+			if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{workstream}); err != nil {
+				t.Fatal(err)
+			}
+			if got := s.Projects()[0].Workstreams[0].Sessions[0].EndedAt; !sameTime(got, tt.want) {
+				t.Errorf("EndedAt = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEndedAtStampDoesNotMove(t *testing.T) {
+	s := NewTestStore(t, []domain.Project{{ID: "p1", Name: "test", Path: "/tmp/test",
+		Workstreams: []domain.Workstream{endedAtWorkstream(domain.SessionRunning)}}})
+	s.now = func() time.Time { return stampClock }
+	observeEndedAt(t, s, domain.SessionStopped)
+
+	s.now = func() time.Time { return stampClock.Add(time.Hour) }
+	events, cancel := s.Subscribe()
+	defer cancel()
+	if got := observeEndedAt(t, s, domain.SessionStopped); !sameTime(got, &stampClock) {
+		t.Errorf("EndedAt after a later identical report = %v, want %v", got, stampClock)
+	}
+	select {
+	case event := <-events:
+		t.Errorf("an identical ReplaceWorkstreams broadcast %q", event.Type)
+	default:
+	}
+}
+
+// A restored session is an idle placeholder until a provider reports on it, so its
+// first report says nothing about when it ended: the persisted time stands.
+func TestRestoredSessionKeepsItsPersistedEnd(t *testing.T) {
+	restore := func(t *testing.T, endedAt *time.Time) *Store {
+		t.Helper()
+		workstream := endedAtWorkstream(domain.SessionIdle)
+		record := persist.RecordWorkstream(workstream)
+		session := persist.RecordSession(workstream.Sessions[0])
+		session.EndedAt = endedAt
+		record.Sessions = []persist.SessionRecord{session}
+		s := Restore(persist.Snapshot{Projects: []persist.ProjectRecord{{
+			ID: "p1", Name: "test", Path: "/tmp/test", Workstreams: []persist.WorkstreamRecord{record},
+		}}}, &persist.MemorySaver{})
+		s.now = func() time.Time { return stampClock }
+		return s
+	}
+
+	t.Run("persisted end kept on the first terminal report", func(t *testing.T) {
+		if got := observeEndedAt(t, restore(t, &persistedEnd), domain.SessionStopped); !sameTime(got, &persistedEnd) {
+			t.Errorf("EndedAt = %v, want %v", got, persistedEnd)
+		}
+	})
+	t.Run("no end claimed without a persisted one", func(t *testing.T) {
+		if got := observeEndedAt(t, restore(t, nil), domain.SessionStopped); got != nil {
+			t.Errorf("EndedAt = %v, want none", got)
+		}
+	})
+	t.Run("stamped once a report has shown it live", func(t *testing.T) {
+		s := restore(t, &persistedEnd)
+		observeEndedAt(t, s, domain.SessionRunning)
+		if got := observeEndedAt(t, s, domain.SessionStopped); !sameTime(got, &stampClock) {
+			t.Errorf("EndedAt = %v, want %v", got, stampClock)
+		}
+	})
+	t.Run("a carried-over placeholder is not a report", func(t *testing.T) {
+		s := restore(t, &persistedEnd)
+		// What the reconciler sends for a session whose provider did not report: the
+		// stored session as is, with the projection's derived fields filled in.
+		carried := s.Projects()[0].Workstreams
+		carried[0].Sessions[0].Restartable = true
+		if err := s.ReplaceWorkstreams("p1", nil, carried); err != nil {
+			t.Fatal(err)
+		}
+		if got := observeEndedAt(t, s, domain.SessionStopped); !sameTime(got, &persistedEnd) {
+			t.Errorf("EndedAt = %v, want %v", got, persistedEnd)
+		}
+	})
+	t.Run("a stamp survives a restart", func(t *testing.T) {
+		saver := &persist.MemorySaver{}
+		s := New([]domain.Project{{ID: "p1", Name: "test", Path: "/tmp/test",
+			Workstreams: []domain.Workstream{endedAtWorkstream(domain.SessionRunning)}}}, saver)
+		s.now = func() time.Time { return stampClock }
+		observeEndedAt(t, s, domain.SessionStopped)
+		restored := Restore(saver.Last, &persist.MemorySaver{})
+		if got := restored.Projects()[0].Workstreams[0].Sessions[0].EndedAt; !sameTime(got, &stampClock) {
+			t.Errorf("restored EndedAt = %v, want %v", got, stampClock)
+		}
+	})
+}
+
+// A projection is derived from a read of the store. What changed in the store
+// since that read is newer than the projection and is kept; what nobody changed
+// is the projection's to settle.
+func TestReplaceWorkstreamsKeepsChangesSinceTheRead(t *testing.T) {
+	seed := func() []domain.Project {
+		return []domain.Project{{ID: "p1", Path: "/p1", Workstreams: []domain.Workstream{{
+			ID: "ws1", Name: "feature", Branch: "feature", WorkingDir: "/p1", StatusMessage: "Restarting failed",
+			Sessions: []domain.Session{
+				{ID: "s1", Provider: "prov", State: domain.SessionRunning},
+				{ID: "s2", Provider: "prov", State: domain.SessionRunning},
+			},
+		}}}}
+	}
+	ws1 := func(t *testing.T, s *Store) domain.Workstream {
+		t.Helper()
+		ws, err := s.Workstream("p1", "ws1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ws
+	}
+	tests := []struct {
+		name   string
+		change func(t *testing.T, s *Store)
+		check  func(t *testing.T, s *Store)
+	}{
+		{
+			name:   "nothing changed: the projection settles",
+			change: func(*testing.T, *Store) {},
+			check: func(t *testing.T, s *Store) {
+				if ws := ws1(t, s); ws.Name != "main" || ws.Branch != "main" || len(ws.Sessions) != 2 {
+					t.Errorf("workstream = %q on %q with %d sessions, want main on main with 2", ws.Name, ws.Branch, len(ws.Sessions))
+				}
+			},
+		},
+		{
+			name: "a rename is kept",
+			change: func(t *testing.T, s *Store) {
+				ws := ws1(t, s)
+				ws.Name = "my work"
+				if err := s.UpdateWorkstream("p1", ws); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, s *Store) {
+				if ws := ws1(t, s); ws.Name != "my work" {
+					t.Errorf("name = %q, want my work", ws.Name)
+				}
+			},
+		},
+		{
+			name: "a dismissed status message stays dismissed",
+			change: func(t *testing.T, s *Store) {
+				if err := s.SetStatusMessage("p1", "ws1", ""); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, s *Store) {
+				if ws := ws1(t, s); ws.StatusMessage != "" {
+					t.Errorf("status = %q, want it dismissed", ws.StatusMessage)
+				}
+			},
+		},
+		{
+			name: "an added workstream stays, and its name is not given",
+			change: func(t *testing.T, s *Store) {
+				if err := s.AddWorkstream("p1", domain.Workstream{ID: "ws2", Name: "main", WorkingDir: "/p1/other"}); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, s *Store) {
+				if _, err := s.Workstream("p1", "ws2"); err != nil {
+					t.Errorf("Workstream(ws2) err = %v, want the added workstream kept", err)
+				}
+				if ws := ws1(t, s); ws.Name != "feature" || ws.Branch != "main" {
+					t.Errorf("workstream = %q on %q, want feature on main", ws.Name, ws.Branch)
+				}
+			},
+		},
+		{
+			name: "a removed workstream stays removed",
+			change: func(t *testing.T, s *Store) {
+				if err := s.RemoveWorkstream("p1", "ws1"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, s *Store) {
+				if ws, err := s.Workstream("p1", "ws1"); err == nil {
+					t.Errorf("workstream = %+v, want it to stay removed", ws)
+				}
+			},
+		},
+		{
+			name: "a removed session stays removed",
+			change: func(t *testing.T, s *Store) {
+				if err := s.RemoveSession("p1", "ws1", "s2"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, s *Store) {
+				if ws := ws1(t, s); len(ws.Sessions) != 1 || ws.Sessions[0].ID != "s1" {
+					t.Errorf("sessions = %+v, want s1 only", ws.Sessions)
+				}
+			},
+		},
+		{
+			name: "a session's state set meanwhile is kept",
+			change: func(t *testing.T, s *Store) {
+				if err := s.SetSessionState("p1", "ws1", "s1", domain.SessionStopped); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, s *Store) {
+				if ws := ws1(t, s); ws.Sessions[0].State != domain.SessionStopped {
+					t.Errorf("s1 state = %q, want stopped", ws.Sessions[0].State)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewTestStore(t, seed())
+			read := s.Projects()[0].Workstreams
+			projected := s.Projects()[0].Workstreams
+			projected[0].Name, projected[0].Branch = "main", "main"
+			tt.change(t, s)
+			if err := s.ReplaceWorkstreams("p1", read, projected); err != nil {
+				t.Fatalf("ReplaceWorkstreams: %v", err)
+			}
+			tt.check(t, s)
+		})
 	}
 }

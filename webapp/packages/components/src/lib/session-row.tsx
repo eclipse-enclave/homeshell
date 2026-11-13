@@ -1,5 +1,7 @@
 import type { Session, SessionState } from '@homeshell/model';
 import {
+  dotStateLabel,
+  endedAgo,
   isSessionActive,
   isSessionTerminal,
   stateLabel,
@@ -10,26 +12,71 @@ import type {
   MouseEvent as ReactMouseEvent,
   Ref,
 } from 'react';
-import { useEffect, useImperativeHandle, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react';
 import { Button } from './button';
 import { ConfirmDialog } from './confirm-dialog';
 import { useReturnFocus } from './focus-return';
+import { PlayIcon, SquareIcon, TerminalIcon } from './icons';
 import { type ItemAction, runAction, useActionsMenu } from './item-actions';
 import { isDeleteKey, isModified } from './keys';
 import { controlTabIndexFor, listItemKeyShortcuts } from './list-navigation';
-import { MNEMONICS, mnemonicScope } from './mnemonic';
-import { Pill } from './pill';
+import {
+  MNEMONICS,
+  mnemonicProps,
+  mnemonicScope,
+  useMnemonicHandler,
+} from './mnemonic';
 import { renameInputClass, useRenamableTitle } from './renamable-title';
+import controls from './controls.module.css';
+import { cx } from './cx';
+import a11y from './a11y.module.css';
 import styles from './session-row.module.css';
 import { StatusDot } from './status-dot';
 import { titleWhenTruncated } from './truncated-title';
 import { useKeyboardFocus } from './use-keyboard-focus';
+import { useNow } from './use-now';
 
 /** Whether a handler's return value is something to wait on. */
 function isThenable(
   value: void | Promise<string | null | void>,
 ): value is Promise<string | null | void> {
   return typeof (value as Promise<unknown> | undefined)?.then === 'function';
+}
+
+/**
+ * Runs `run` on a click, skipping a double-click's second: it must not toggle
+ * back. Its first cannot be told from a single click
+ * without delaying every one, so it acts at once. (`detail` is the click
+ * count; `fireEvent.click` leaves it 0.)
+ */
+const onSingleClick =
+  (run: () => void) => (event: ReactMouseEvent<HTMLElement>) => {
+    if (event.detail <= 1) run();
+  };
+
+/**
+ * " · 12 min ago" after an ended session's state, exact on hover. Its own
+ * component, so only it renders as the clock moves on. Every one shares that
+ * clock, started whenever the first of them was, so it ticks often enough for
+ * "just now" to turn "1 min ago" on time.
+ */
+function EndedAgo({ endedAt }: { endedAt: string }) {
+  const ago = endedAgo(endedAt, useNow(10_000));
+  if (!ago) return null;
+  return (
+    <>
+      {' · '}
+      <time dateTime={endedAt} title={new Date(endedAt).toLocaleString()}>
+        {ago}
+      </time>
+    </>
+  );
 }
 
 export interface SessionRowProps {
@@ -51,7 +98,10 @@ export interface SessionRowProps {
   onRestartWithSettings?: () => void;
   /** Stops a running/waiting session. Shown (for an active session) only when set. */
   onStop?: () => void;
-  /** (Re)starts a stopped session. Shown (for a stopped session) only when set. */
+  /**
+   * Continues an ended session (stopped, or done by the daemon). Shown, as
+   * Continue, only when set.
+   */
   onStart?: () => void;
   /**
    * Removes the session. Offered in every state — the provider tears down the
@@ -133,7 +183,8 @@ export interface SessionRowProps {
   /**
    * Makes the row itself a keyboard-navigable item of its list, which owns the
    * roving tab stop and passes 0 to the one row Tab lands on, -1 to the rest.
-   * With the row focused, Enter opens the session, F2 renames it, Delete (or
+   * With the row focused, Enter opens the session (or shows an ended one's
+   * details), F2 renames it, Delete (or
    * Cmd+Backspace on a Mac) removes it and Right/Left expand and collapse its
    * details. Unset, the row is not focusable.
    */
@@ -151,10 +202,12 @@ export interface SessionRowHandle {
 /**
  * One agent conversation inside a workstream, or the placeholder standing for
  * one the daemon is still bringing up. Open hands off to the session (the local
- * provider launches a terminal); Stop/Start are gated by the provider's
- * capability and the session state. Delete is offered in every state and
- * confirms first, except on a failed row. A failed one also carries the
- * provider's reason on the row itself — that is all the row is for.
+ * provider launches a terminal); Stop/Continue are gated by the provider's
+ * capability and the session state. An ended session looks recessed and says
+ * when it ended, exactly on hover. Delete, in the More actions menu, is
+ * offered in every state and confirms first, except on a failed row. A failed
+ * one also carries the provider's reason on the row itself — that is all the
+ * row is for.
  */
 export function SessionRow({
   session,
@@ -207,6 +260,18 @@ export function SessionRow({
   const [draft, setDraft] = useState('');
   const shown = displayState ?? session.state;
   const active = isSessionActive(session.state);
+  // Stopped, or done by the daemon: what is left is to continue it. Not the
+  // UI's own Done (idle, unseen), which is live, nor an error, which needs a
+  // look first.
+  const ended = session.ended ?? false;
+  const stateWord = ended
+    ? session.state === 'stopped'
+      ? stateLabel('stopped')
+      : dotStateLabel('ended')
+    : stateLabel(shown);
+  // Running and Idle say no more than the dot does, so only screen readers get
+  // the word.
+  const quietState = !ended && (shown === 'running' || shown === 'idle');
   // Every action here is a daemon call, so one flag gates them all. They stay
   // *visible* and go disabled rather than disappearing: a row that loses its
   // buttons reads as a broken row, and the user should still see what they will
@@ -216,7 +281,7 @@ export function SessionRow({
   // state the click is a no-op, so don't render the button affordance.
   const seenable = onSeen && shown === 'done';
   const stoppable = active && onStop;
-  const startable = session.state === 'stopped' && onStart;
+  const startable = ended && onStart;
   // Removal is offered in every state, the two placeholder ones included: the
   // daemon recognizes its own bookkeeping rows and never routes them to a
   // provider that has not heard of them. Removing a starting row is how a build
@@ -237,8 +302,7 @@ export function SessionRow({
   // Open depends on a live terminal, not on whether detection could classify
   // what the agent is doing. `unknown` is therefore openable; only a starting
   // placeholder or a terminal state has nothing to attach to.
-  const openable =
-    onOpen && !starting && !isSessionTerminal(session.state);
+  const openable = onOpen && !starting && !isSessionTerminal(session.state);
   const preview = session.preview ?? '';
   // The tail teaser is only its last line; the full capture lives in the panel.
   const allPreviewLines = preview.split('\n');
@@ -397,7 +461,7 @@ export function SessionRow({
   };
 
   // Its tooltip also reads a truncated title in full.
-  const renamableTitle = useRenamableTitle({
+  const renamableTitle = useRenamableTitle<HTMLSpanElement>({
     name: session.title,
     onRename: startRenaming,
     disabledReason,
@@ -409,33 +473,49 @@ export function SessionRow({
     ? {
         ...renamableTitle,
         // Puts back the panel its first click toggled (see toggleDetails).
-        onDoubleClick: renameOnDoubleClick
-          ? () => {
-              const before = expandedBeforeClick.current;
-              expandedBeforeClick.current = null;
-              if (before !== null) setExpanded(before);
-              renameOnDoubleClick();
-            }
-          : undefined,
+        onDoubleClick:
+          renameOnDoubleClick &&
+          (() => {
+            const before = expandedBeforeClick.current;
+            expandedBeforeClick.current = null;
+            if (before !== null) setExpanded(before);
+            renameOnDoubleClick();
+          }),
       }
     : { className: styles.title, title: session.title };
 
-  // The top row keeps its original single-line shape (dot · title · pill ·
-  // badge · actions); the tail teaser and expanded panel sit on their own full
-  // width rows below, so the badge and buttons never drift out of alignment.
+  // The dot sits in a slot of fixed width, so the larger "!" of an error does
+  // not push its title out of line with the rows around it.
+  const dot = (
+    <span className={styles.dotSlot}>
+      <StatusDot state={ended ? 'ended' : shown} />
+    </span>
+  );
+  const status = (
+    <span className={styles.status}>
+      <span
+        className={cx(
+          !ended && styles[shown],
+          quietState && a11y.visuallyHidden,
+        )}
+        data-testid="session-state"
+      >
+        {stateWord}
+      </span>
+      {ended && session.endedAt && <EndedAgo endedAt={session.endedAt} />}
+    </span>
+  );
+  // The top row keeps its single-line shape (dot · title · agent · state ·
+  // actions); the tail teaser and expanded panel sit on their own full width
+  // rows below, so the state and buttons never drift out of alignment.
   const info = (
     <>
-      <StatusDot state={shown} />
+      {dot}
       <span {...titleProps} data-testid="session-title">
         {session.title}
       </span>
-      <Pill>{session.agent}</Pill>
-      <span
-        className={`${styles.stateBadge} ${styles[shown]}`}
-        data-testid="session-state"
-      >
-        {stateLabel(shown)}
-      </span>
+      <span className={styles.agent}>{session.agent}</span>
+      {status}
     </>
   );
   const detailsId = `session-details-${session.id}`;
@@ -443,21 +523,24 @@ export function SessionRow({
   // aria-label, so the name is not announced twice now that it is on screen.
   const outputLabelId = `session-output-label-${session.id}`;
   // Clicking the row header toggles the details panel (the whole title area acts
-  // as the disclosure). For a done session it also clears the attention overlay
-  // — looking at the session counts as seeing it.
-  //
-  // A double-click's second click is skipped. Its first cannot be told from a
-  // single click without delaying every expand, so it toggles at once and
-  // remembers what the panel was, for a rename to put back. (`detail` is the
-  // click count; `fireEvent.click` leaves it 0.)
+  // as the disclosure). For a done session it also clears the attention
+  // overlay — looking at the session counts as seeing it.
   const toggleExpanded = () => {
     if (seenable) onSeen?.();
     setExpanded((open) => !open);
   };
-  const toggleDetails = (event: ReactMouseEvent<HTMLElement>) => {
-    if (event.detail > 1) return;
+  // Remembers what the panel was, for a double-click's rename to put back.
+  const toggleDetails = () => {
     expandedBeforeClick.current = expanded;
     toggleExpanded();
+  };
+  const infoProps = {
+    onClick: onSingleClick(toggleDetails),
+    'aria-expanded': expanded,
+    'aria-controls': detailsId,
+    title: seenable
+      ? 'Mark this session as seen and toggle details'
+      : 'Toggle session details',
   };
 
   const requestRemove = () =>
@@ -475,7 +558,7 @@ export function SessionRow({
     startable || stoppable
       ? {
           id: 'startStop',
-          label: startable ? 'Start' : 'Stop',
+          label: startable ? 'Continue' : 'Stop',
           run: () => (startable ? onStart : onStop)?.(),
           disabled: blocked,
         }
@@ -522,6 +605,22 @@ export function SessionRow({
     actions,
   );
 
+  // Delete has no button of its own, so its letter sits on the row's line,
+  // which takes the key as a Delete rather than as a click.
+  const deleteByLetter = remove && !remove.disabled ? remove.run : undefined;
+  const takeDeleteLetter = useMnemonicHandler<HTMLDivElement>(deleteByLetter);
+  const setLine = useCallback(
+    (element: HTMLDivElement | null) => {
+      lineRef.current = element;
+      const release = takeDeleteLetter(element);
+      return () => {
+        lineRef.current = null;
+        release?.();
+      };
+    },
+    [takeDeleteLetter],
+  );
+
   // F2 renames the row. Double-click is a mouse-only gesture, and it is the only
   // pointer route in — without this there would be no keyboard way to rename at
   // all. F2 is what file managers, IDEs and spreadsheets use.
@@ -544,7 +643,10 @@ export function SessionRow({
       return;
     }
     if (!onRow) return;
-    if (event.key === 'Enter' && !event.repeat) {
+    if (event.key === 'Enter' && !event.repeat && ended) {
+      event.preventDefault();
+      toggleExpanded();
+    } else if (event.key === 'Enter' && !event.repeat) {
       runAction(event, actions, 'open');
     } else if (isDeleteKey(event) && !event.repeat) {
       runAction(event, actions, 'delete');
@@ -562,6 +664,7 @@ export function SessionRow({
       className={styles.item}
       tabIndex={tabIndex}
       data-nav-id={session.id}
+      data-ended={ended || undefined}
       {...mnemonicScope('item')}
       onContextMenu={(event) =>
         actionsMenu.openOnContextMenu(event, lineRef.current)
@@ -573,15 +676,19 @@ export function SessionRow({
       onKeyDown={handleRowKeyDown}
       {...focusHandlers}
     >
-      <div ref={lineRef} className={styles.row}>
+      <div
+        ref={setLine}
+        className={styles.row}
+        {...mnemonicProps(deleteByLetter && MNEMONICS.delete)}
+      >
         {renaming ? (
           // A plain container while editing: the info area is otherwise a button,
           // and a text field inside a button cannot be typed into. The status dot
-          // and state badge stay either side of the box — the row keeps its shape,
+          // and state word stay either side of the box — the row keeps its shape,
           // and a session being renamed does not stop saying what it is doing. The
-          // agent pill gives up its space to the box.
+          // agent gives up its space to the box.
           <div className={styles.info}>
-            <StatusDot state={shown} />
+            {dot}
             <input
               ref={nameRef}
               type="text"
@@ -598,54 +705,51 @@ export function SessionRow({
               disabled={blocked}
               title={disabledReason}
             />
-            <span
-              className={`${styles.stateBadge} ${styles[shown]}`}
-              data-testid="session-state"
-            >
-              {stateLabel(shown)}
-            </span>
+            {status}
           </div>
         ) : (
           <button
             type="button"
             className={styles.info}
             tabIndex={controlTabIndex}
-            onClick={toggleDetails}
-            aria-expanded={expanded}
-            aria-controls={detailsId}
             aria-keyshortcuts={canRename ? 'F2' : undefined}
-            title={
-              seenable
-                ? 'Mark this session as seen and toggle details'
-                : 'Toggle session details'
-            }
+            {...infoProps}
           >
             {info}
           </button>
         )}
         <span className={styles.actions}>
-          <Button
-            onClick={open.run}
-            disabled={open.disabled}
-            tabIndex={controlTabIndex}
-            mnemonic={MNEMONICS.open}
-            shortcuts={tabIndex === undefined ? undefined : ['enter']}
-            title={
-              disabledReason ??
-              (!onOpen
-                ? 'Not yet implemented'
-                : openable
-                  ? 'Open a terminal attached to this session'
-                  : 'Session is not running')
-            }
-          >
-            Open
-          </Button>
+          {/* An ended session has nothing to open; Continue stands in its place. */}
+          {!ended && (
+            <Button
+              className={controls.compact}
+              icon={<TerminalIcon size={13} />}
+              onClick={open.run}
+              disabled={open.disabled}
+              tabIndex={controlTabIndex}
+              mnemonic={MNEMONICS.open}
+              shortcuts={tabIndex === undefined ? undefined : ['enter']}
+              title={
+                disabledReason ??
+                (!onOpen
+                  ? 'Not yet implemented'
+                  : openable
+                    ? 'Open a terminal attached to this session'
+                    : 'Session is not running')
+              }
+            >
+              Open
+            </Button>
+          )}
           {/* One button, so that the one pressed keeps focus as the session
               flips between running and stopped — and so a held Enter must not
               press it again once it has flipped. */}
           {startStop && (
             <Button
+              className={cx(controls.compact, startable && styles.continue)}
+              icon={
+                startable ? <PlayIcon size={13} /> : <SquareIcon size={13} />
+              }
               onClick={startStop.run}
               tabIndex={controlTabIndex}
               mnemonic={MNEMONICS.startStop}
@@ -655,50 +759,29 @@ export function SessionRow({
                 }
               }}
               aria-disabled={startStop.disabled}
+              aria-label={startStop.label}
               title={
                 disabledReason ??
-                (startable ? 'Resume this session' : 'Stop this session')
+                (startable ? 'Continue this session' : 'Stop this session')
               }
-            >
-              {startStop.label}
-            </Button>
+            />
           )}
-          {remove && (
-            <Button
-              onClick={remove.run}
-              disabled={remove.disabled}
-              tabIndex={controlTabIndex}
-              mnemonic={MNEMONICS.delete}
-              shortcuts={tabIndex === undefined ? undefined : ['delete']}
-              aria-label={
-                failed
-                  ? `Delete failed session ${session.title}`
-                  : `Delete session ${session.title}`
-              }
-              title={
-                disabledReason ??
-                (failed
-                  ? 'Dismiss this failed session'
-                  : starting
-                    ? 'Cancel this session and delete the row'
-                    : 'Delete this session')
-              }
-            >
-              Delete
-            </Button>
-          )}
+          {actionsMenu.moreActionsButton({
+            tabIndex: controlTabIndex,
+            compact: true,
+          })}
           <button
             type="button"
-            className={styles.toggle}
+            className={cx(controls.bareButton, controls.compact)}
             tabIndex={controlTabIndex}
-            onClick={toggleDetails}
+            onClick={onSingleClick(toggleDetails)}
             aria-expanded={expanded}
             aria-controls={detailsId}
             aria-label="Toggle session details"
             title="Toggle session details"
           >
             <span
-              className={`${styles.caret} ${expanded ? styles.caretOpen : ''}`}
+              className={cx(styles.caret, expanded && styles.caretOpen)}
               aria-hidden="true"
             >
               ›
@@ -768,7 +851,8 @@ export function SessionRow({
           {onRestartWithSettings && ' Restart it with settings to apply them.'}
         </p>
       ) : null}
-      {preview && !expanded && (
+      {/* An ended session's last words are history, kept for its details. */}
+      {preview && !expanded && !ended && (
         <div
           className={styles.preview}
           {...titleWhenTruncated(lastPreviewLine)}

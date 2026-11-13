@@ -23,28 +23,41 @@
   padding: 0.65rem 0.75rem;
 }
 
-/* The name and its pills take what the actions leave, and never push them out:
-   short of room for a readable name, the actions wrap to a line of their own. */
+/* The name and what it says about the workstream take what the actions
+   leave, and never push them out: short of room for a readable name, the
+   actions wrap to a line of their own. */
 .identity {
   flex: 1 1 16rem;
   min-width: 0;
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.2rem;
 }
 
-/* No wider than its text, so a short name keeps the actions on its line. The
-   rename box instead grows into all the room there is. */
-.identity:not(:has(input)) {
-  max-width: max-content;
+.titleLine {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
 }
 
 .controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
   margin-left: auto;
+}
+
+/* The counts, or the workstream's state, keep a little distance from the
+   actions they sit beside; with neither, the box takes no room. */
+.status {
+  display: inline-flex;
+  margin-right: 0.35rem;
+}
+
+.status:empty {
+  display: none;
 }
 
 .name {
@@ -52,7 +65,7 @@
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--hs-text, #dbe4ee);
-  /* From a few characters' basis, growing to its text: the pills are cut only
+  /* From a few characters' basis, growing to its text: the branch is cut only
      once the name is down to that. */
   flex: 1 0 5rem;
   max-width: max-content;
@@ -62,10 +75,41 @@
   white-space: nowrap;
 }
 
-.pills {
-  display: flex;
-  gap: 0.5rem;
+.branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
   min-width: 0;
+  color: var(--hs-branch, #c4b5fd);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+}
+
+.branch svg,
+.meta svg {
+  flex: none;
+}
+
+.branchName,
+.path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  font-size: 0.78rem;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
 }
 
 /* Filled with the page's background (renameInputClass's default), not
@@ -89,12 +133,6 @@
 .state {
   display: inline-flex;
   align-items: center;
-}
-
-.sessions {
-  margin: 0;
-  padding: 0;
-  list-style: none;
 }
 
 .statusMessage {

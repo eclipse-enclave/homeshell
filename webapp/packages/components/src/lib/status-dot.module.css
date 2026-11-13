@@ -1,3 +1,8 @@
+/*
+ * Order-independent: a state class sets only custom properties (its colour and
+ * pulse speed), the shape (keyed off data-shape) owns the whole look, and
+ * .pulse is added only to a dot that pulses. No rule overrides another.
+ */
 .wrapper {
   display: inline-flex;
   align-items: center;
@@ -8,6 +13,7 @@
 .dot {
   width: 0.5rem;
   height: 0.5rem;
+  box-sizing: border-box;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -19,49 +25,86 @@
   white-space: nowrap;
 }
 
+/* State colours and pulse speeds. */
 .idle {
-  background: var(--hs-state-idle, #64748b);
+  --dot-color: var(--hs-state-idle, #64748b);
 }
 
 .running {
-  background: var(--hs-state-running, #34d399);
-  animation: pulse 2s ease-in-out infinite;
+  --dot-color: var(--hs-state-running, #34d399);
+  --dot-pulse: 2s;
 }
 
 .waiting {
-  background: var(--hs-state-waiting, #fbbf24);
-  animation: pulse 1.2s ease-in-out infinite;
+  --dot-color: var(--hs-state-waiting, #fbbf24);
+  --dot-pulse: 1.2s;
 }
 
 .done {
-  background: var(--hs-state-done, #60a5fa);
+  --dot-color: var(--hs-state-done, #60a5fa);
 }
 
-.stopped {
-  background: var(--hs-state-stopped, #94a3b8);
+.stopped,
+.ended {
+  --dot-color: var(--hs-state-ended, var(--hs-state-stopped, #94a3b8));
 }
 
 .stopping {
-  background: var(--hs-state-stopping, #94a3b8);
-  animation: pulse 1.5s ease-in-out infinite;
+  --dot-color: var(--hs-state-stopping, #94a3b8);
 }
 
 .starting {
-  background: var(--hs-state-starting, #34d399);
-  animation: pulse 1.5s ease-in-out infinite;
+  --dot-color: var(--hs-state-starting, #34d399);
 }
 
 .creating {
-  background: var(--hs-state-creating, #a78bfa);
-  animation: pulse 1.5s ease-in-out infinite;
+  --dot-color: var(--hs-state-creating, #a78bfa);
 }
 
 .error {
-  background: var(--hs-state-error, #f87171);
+  --dot-color: var(--hs-state-error, #f87171);
 }
 
 .unknown {
-  background: var(--hs-state-unknown, #64748b);
+  --dot-color: var(--hs-state-unknown, #64748b);
+}
+
+/* Shapes: what tells states apart besides colour. */
+.dot[data-shape='filled'] {
+  background: var(--dot-color);
+}
+
+.dot[data-shape='ringed'] {
+  background: var(--dot-color);
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--dot-color) 35%, transparent);
+}
+
+.dot[data-shape='bang'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.7rem;
+  height: 0.7rem;
+  background: var(--dot-color);
+  color: #fff;
+  font-size: 0.5rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.dot[data-shape='hollow'] {
+  border: 1.5px solid var(--dot-color);
+}
+
+.dot[data-shape='dashed'] {
+  border: 1.5px dashed var(--dot-color);
+}
+
+/* Only where motion is welcome; a reduced-motion user sees a still dot. */
+@media (prefers-reduced-motion: no-preference) {
+  .pulse {
+    animation: pulse var(--dot-pulse, 1.5s) ease-in-out infinite;
+  }
 }
 
 @keyframes pulse {

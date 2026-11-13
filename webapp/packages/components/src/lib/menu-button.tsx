@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from './button';
@@ -24,6 +25,8 @@ export interface MenuButtonItem {
 
 export interface MenuButtonProps {
   label: string;
+  /** Drawn before the label. */
+  icon?: ReactNode;
   items: MenuButtonItem[];
   onSelect: (id: string) => void;
   /**
@@ -246,6 +249,7 @@ export function Menu({
  */
 export function MenuButton({
   label,
+  icon,
   items,
   onSelect,
   onPrimary,
@@ -271,10 +275,18 @@ export function MenuButton({
 
   if (items.length === 0) return null;
 
+  const content = (
+    <>
+      {icon}
+      <MnemonicLabel label={label} letter={mnemonic} />
+    </>
+  );
+
   if (!onPrimary && items.length === 1) {
     const only = items[0];
     return (
       <Button
+        className={styles.trigger}
         onClick={() => onSelect(only.id)}
         aria-label={ariaLabel ?? label}
         title={title}
@@ -282,7 +294,7 @@ export function MenuButton({
         tabIndex={tabIndex}
         mnemonic={mnemonic}
       >
-        {label}
+        {content}
       </Button>
     );
   }
@@ -319,7 +331,7 @@ export function MenuButton({
     return (
       <div className={styles.wrapper}>
         <Button
-          className={styles.splitPrimary}
+          className={`${styles.trigger} ${styles.splitPrimary}`}
           onClick={() => onPrimary()}
           aria-label={ariaLabel ?? label}
           title={title}
@@ -327,7 +339,7 @@ export function MenuButton({
           tabIndex={tabIndex}
           mnemonic={mnemonic}
         >
-          {label}
+          {content}
         </Button>
         <Button
           ref={setTrigger}
@@ -366,7 +378,7 @@ export function MenuButton({
         tabIndex={tabIndex}
         mnemonic={mnemonic}
       >
-        <MnemonicLabel label={label} letter={mnemonic} />
+        {content}
         <span className={styles.caret} aria-hidden="true">
           ▾
         </span>

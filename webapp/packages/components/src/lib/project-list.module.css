@@ -8,11 +8,14 @@
 }
 
 .item {
+  composes: selectionMark from './nav-mark.module.css';
   display: flex;
   align-items: center;
   gap: 0.55rem;
   width: 100%;
-  padding: 0.45rem 0.6rem;
+  /* The left puts the dot where a session row's sits (centred in its wider
+     slot), so the selection bar clears it alike. */
+  padding: 0.45rem 0.6rem 0.45rem 0.85rem;
   border: none;
   border-radius: 0.45rem;
   background: transparent;
@@ -24,13 +27,6 @@
 
 .item:hover {
   background: var(--hs-panel-raised, #1b242f);
-}
-
-/* The left bar a selected session row has. */
-.selected,
-.selected:hover {
-  background: var(--hs-panel-raised, #1b242f);
-  box-shadow: inset 3px 0 0 var(--hs-accent, #2dd4bf);
 }
 
 /* Apart from the selection: Tab moves focus here without selecting. */

@@ -53,7 +53,7 @@ test('the name is filled in and selected, so typing replaces it', async ({
   await page.keyboard.type('Fix Login');
   await expect(name).toHaveValue('Fix Login');
 
-  await form.getByRole('radio', { name: 'worktree' }).click();
+  await form.getByRole('radio', { name: 'Worktree' }).click();
   await expect(form.getByLabel(/^Branch/)).toHaveValue('fix-login');
   await expect(form.getByLabel(/^Destination path/)).toHaveValue(
     /\/hs-ui-wsform-[^/]*-fix-login$/,
@@ -77,7 +77,7 @@ test('a branch typed over stays, and the path follows the name', async ({
   request,
 }) => {
   const { form, name } = await openForm(page, request);
-  await form.getByRole('radio', { name: 'worktree' }).click();
+  await form.getByRole('radio', { name: 'Worktree' }).click();
   const branch = form.getByLabel(/^Branch/);
   await branch.fill('topic');
 
@@ -94,7 +94,7 @@ test('a branch cleared shows the derived one again, and typing replaces it', asy
 }) => {
   const { form } = await openForm(page, request);
   await page.keyboard.type('Fix Login');
-  await form.getByRole('radio', { name: 'worktree' }).click();
+  await form.getByRole('radio', { name: 'Worktree' }).click();
   const branch = form.getByLabel(/^Branch/);
   await branch.fill('topic');
 
@@ -124,7 +124,7 @@ test("Alt marks the form's letters from its text field, and Alt+C cancels", asyn
     ).toHaveAttribute('data-mnemonic-shown', '');
   }
   await expect(
-    page.getByRole('button', { name: 'New workstream' }).first(),
+    page.getByRole('button', { name: 'New workstream' }),
   ).not.toHaveAttribute('data-mnemonic-shown');
   await page.keyboard.press('c');
   await page.keyboard.up('Alt');

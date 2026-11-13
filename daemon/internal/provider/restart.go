@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"sync"
 
 	"github.com/eclipsesource/homeshell/daemon/internal/domain"
@@ -162,14 +161,12 @@ func (s *Service) continueRefusal(ctx context.Context, sessionProvider SessionPr
 		}
 		return sessionOptionsOf(ctx, sessionProvider, WorkstreamRef{ProjectID: ref.ProjectID, WorkstreamID: ref.WorkstreamID})
 	})
-	shared := workstream.WorkingDir != ""
-	dir := filepath.Clean(workstream.WorkingDir)
 	seen := map[string]bool{ref.SessionID: true}
 	var neighbourOptionIDs []string
 	for _, project := range s.store.Projects() {
 		for _, other := range project.Workstreams {
 			own := project.ID == ref.ProjectID && other.ID == ref.WorkstreamID
-			if !own && (!shared || other.WorkingDir == "" || filepath.Clean(other.WorkingDir) != dir) {
+			if !own && !domain.SameFolder(other.WorkingDir, workstream.WorkingDir) {
 				continue
 			}
 			for _, session := range other.Sessions {

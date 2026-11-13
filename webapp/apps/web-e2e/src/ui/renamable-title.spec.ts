@@ -150,12 +150,11 @@ test('keys typed straight after Alt+R all reach the rename box', async ({
   request,
 }) => {
   const { card, row } = await titles(page, request);
-  const header = page.getByRole('main').locator('header').first();
   const selection = page.locator('[data-mnemonic-scope][aria-current="true"]');
   for (const [focus, input] of [
     // Nothing selected: Alt+R is the page's, which renames the project.
     [
-      header.getByRole('button', { name: 'New workstream' }),
+      page.getByRole('button', { name: 'New workstream' }),
       page.getByRole('textbox', { name: 'Project name' }),
     ],
     [card, card.getByRole('textbox', { name: 'Workstream name' })],

@@ -8,12 +8,8 @@ test('Alt+R renames the project, and Enter and Escape give focus back', async ({
   request,
 }) => {
   const name = await selectEmptyProject(page, request, 'hs-ui-header-');
-  // The header's, where focus goes back to; an empty project has a second.
-  const start = page
-    .getByRole('main')
-    .locator('header')
-    .first()
-    .getByRole('button', { name: 'New workstream' });
+  // Where focus goes back to: the name it started from takes none.
+  const start = page.getByRole('button', { name: 'New workstream' });
   const box = page.getByRole('textbox', { name: 'Project name' });
 
   // No workstream is selected, so the page's letters are in reach.
@@ -43,10 +39,7 @@ test('double-clicking the project name renames it', async ({
   ).toBeFocused();
 });
 
-test('the header offers New workstream, then Delete, and no Rename button', async ({
-  page,
-  request,
-}) => {
+test('the header offers only Delete, as an icon', async ({ page, request }) => {
   const name = await selectEmptyProject(page, request, 'hs-ui-header-');
   const header = page.getByRole('main').locator('header').first();
   const labels = await header
@@ -58,7 +51,6 @@ test('the header offers New workstream, then Delete, and no Rename button', asyn
       ),
     );
   expect(labels.filter((label) => !label.startsWith('Copy'))).toEqual([
-    'New workstream',
     `Delete project ${name}`,
   ]);
 });

@@ -118,6 +118,9 @@ export const EFFECTIVE_STATES: readonly EffectiveState[] = [
   'unknown',
 ];
 
+/** What a status dot can show: an effective state, or a session that ended. */
+export type DotState = EffectiveState | 'ended';
+
 /** A single agent conversation running inside a workstream. */
 export interface Session {
   id: string;
@@ -155,6 +158,13 @@ export interface Session {
    * started, and a restart applies the change.
    */
   outdatedSettings?: string[];
+  /**
+   * Whether the session has ended (stopped or done, not a failed start), as the
+   * daemon decides: it is listed under Ended and counted as ended.
+   */
+  ended?: boolean;
+  /** When the session ended (RFC 3339); omitted when the daemon does not know. */
+  endedAt?: string;
 }
 
 /**
@@ -187,6 +197,9 @@ export interface OpenMode {
    */
   default?: boolean;
 }
+
+/** The ID of the daemon's workstream action that opens its note. */
+export const NOTE_ACTION_ID = 'note';
 
 /**
  * One thing that can be done to a workstream as a whole, beside opening it. Same
@@ -242,6 +255,10 @@ export interface Workstream {
    * depend on its filesystem, which a client cannot see.
    */
   actions?: WorkstreamAction[];
+  /** The folder the workstream works in, when the daemon knows it. */
+  workingDir?: string;
+  /** Set when that folder is the project's own; the daemon decides, by its taken-folder rule. */
+  inProjectFolder?: boolean;
   sessions: Session[];
   /** ID of the creation placeholder this workstream replaced, if it replaced one. */
   placeholderId?: string;

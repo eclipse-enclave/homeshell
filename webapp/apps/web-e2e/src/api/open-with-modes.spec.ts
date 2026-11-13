@@ -2,6 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, type APIRequestContext } from '@playwright/test';
+import { addEmptyProject, addProjectWithDefault } from '../projects';
 import { withSettingsLock } from '../settings-lock';
 
 /**
@@ -55,30 +56,16 @@ async function removeEntry(request: APIRequestContext, id: string) {
   expect((await request.put('/api/settings', { data: doc })).status()).toBe(200);
 }
 
-/** A workstream whose files really are on this host: an in-place core one. */
+/**
+ * A workstream whose files really are on this host: the in-place one a project
+ * comes with.
+ */
 async function materializedWorkstream(request: APIRequestContext): Promise<{
   projectId: string;
   workstreamId: string;
 }> {
   const dir = await mkdtemp(join(tmpdir(), 'hs-openwith-modes-e2e-'));
-  const project = await request.post('/api/projects', { data: { path: dir } });
-  expect(project.status()).toBe(201);
-  const projectId = (await project.json()).id as string;
-
-  const created = await request.post(`/api/projects/${projectId}/workstreams`, {
-    data: {
-      providerId: 'core',
-      name: unique('openwith'),
-      config: { strategy: 'in-place' },
-    },
-  });
-  expect(created.status()).toBe(201);
-
-  const workstream = await awaitWorkstream(
-    request,
-    projectId,
-    (ws) => !ws.id.startsWith('creating-'),
-  );
+  const { projectId, workstream } = await addProjectWithDefault(request, dir);
   return { projectId, workstreamId: workstream.id };
 }
 
@@ -214,9 +201,7 @@ test('entries are not offered for a workstream whose files are elsewhere', async
 }) => {
   await withSettingsLock(async () => {
   const dir = await mkdtemp(join(tmpdir(), 'hs-openwith-nofiles-e2e-'));
-  const project = await request.post('/api/projects', { data: { path: dir } });
-  expect(project.status()).toBe(201);
-  const projectId = (await project.json()).id as string;
+  const projectId = await addEmptyProject(request, dir);
   // The fake provider records a working directory and never creates it.
   const created = await request.post(`/api/projects/${projectId}/workstreams`, {
     data: { providerId: 'fake', name: 'nofiles', config: { branch: 'main' } },

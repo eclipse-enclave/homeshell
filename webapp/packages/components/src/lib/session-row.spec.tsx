@@ -1,5 +1,6 @@
 import type { Session } from '@homeshell/model';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -12,11 +13,13 @@ import { createRef } from 'react';
 import { useMnemonics } from './mnemonic';
 import { SessionRow, type SessionRowHandle } from './session-row';
 
+/** A session in `state`, marked ended where the daemon would mark it. */
 const session = (state: Session['state']): Session => ({
   id: 'sess-1',
   title: 'Implement self-update',
   agent: 'Claude Code',
   state,
+  ended: state === 'stopped' || state === 'done',
 });
 
 const renderRow = (props: Parameters<typeof SessionRow>[0]) =>
@@ -26,8 +29,11 @@ const renderRow = (props: Parameters<typeof SessionRow>[0]) =>
     </ul>,
   );
 
+const openMenu = () =>
+  fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+
 describe('SessionRow', () => {
-  it('shows title, agent and a colored state badge', () => {
+  it('shows title, agent and the state word', () => {
     renderRow({ session: session('waiting') });
     expect(screen.getByText('Implement self-update')).toBeTruthy();
     expect(screen.getByText('Claude Code')).toBeTruthy();
@@ -36,15 +42,27 @@ describe('SessionRow', () => {
     );
   });
 
-  it('renders the display-state override (idle → done) instead of the raw state', () => {
-    renderRow({ session: session('idle'), displayState: 'done' });
+  // The UI's own Done (idle, unseen) is a live session, not an ended one.
+  it('shows an idle, unseen session as Done, still openable, with no Continue', () => {
+    renderRow({
+      session: session('idle'),
+      displayState: 'done',
+      onOpen: vi.fn(),
+      onStart: vi.fn(),
+    });
     expect(screen.getByTestId('session-state').textContent).toBe('Done');
+    expect(
+      (screen.getByRole('button', { name: 'Open' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
   });
 
-  it('offers Stop only for an active session with a handler', () => {
+  it('offers Stop as an icon button for an active session with a handler', () => {
     const onStop = vi.fn();
     renderRow({ session: session('running'), onStop });
     const stop = screen.getByRole('button', { name: 'Stop' });
+    expect(stop.textContent).toBe('');
     fireEvent.click(stop);
     expect(onStop).toHaveBeenCalled();
   });
@@ -54,18 +72,8 @@ describe('SessionRow', () => {
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
   });
 
-  it('offers Start only for a stopped session with a handler', () => {
-    const onStart = vi.fn();
-    renderRow({ session: session('stopped'), onStart });
-    fireEvent.click(screen.getByRole('button', { name: 'Start' }));
-    expect(onStart).toHaveBeenCalled();
-    // A running session offers no Start.
-    renderRow({ session: session('running'), onStart });
-    expect(screen.queryAllByRole('button', { name: 'Start' }).length).toBe(1);
-  });
-
-  // Stop swaps for Start in place, so pressing it leaves focus on the button.
-  it('keeps focus on Stop as it becomes Start', () => {
+  // Stop swaps for Continue in place, so pressing it leaves focus on the button.
+  it('keeps focus on Stop as it becomes Continue', () => {
     const props = { onStop: vi.fn(), onStart: vi.fn() };
     const { rerender } = renderRow({ session: session('running'), ...props });
     const stop = screen.getByRole('button', { name: 'Stop' });
@@ -76,39 +84,26 @@ describe('SessionRow', () => {
       </ul>,
     );
     expect(document.activeElement).toBe(stop);
-    expect(stop.textContent).toBe('Start');
+    expect(stop.getAttribute('aria-label')).toBe('Continue');
+    expect(stop.textContent).toBe('');
     fireEvent.click(stop);
     expect(props.onStart).toHaveBeenCalled();
   });
 
-  it('ignores a held Enter on Stop, which would press Start next', () => {
+  it('ignores a held Enter on Stop, which would press Continue next', () => {
     renderRow({ session: session('running'), onStop: vi.fn() });
     const stop = screen.getByRole('button', { name: 'Stop' });
     expect(fireEvent.keyDown(stop, { key: 'Enter' })).toBe(true);
     expect(fireEvent.keyDown(stop, { key: 'Enter', repeat: true })).toBe(false);
   });
 
-  it('removes a non-busy session in one click', () => {
-    const onRemove = vi.fn();
-    renderRow({ session: session('stopped'), onRemove });
-    // Click the Remove button to open the confirmation dialog.
-    fireEvent.click(screen.getByRole('button', { name: /Delete session/ }));
-    // Confirm in the dialog.
-    fireEvent.click(
-      within(screen.getByRole('dialog')).getByRole('button', {
-        name: 'Delete',
-      }),
-    );
-    expect(onRemove).toHaveBeenCalled();
-  });
-
-  it('requires a confirm dialog to remove a running session', () => {
+  it('deletes from the More actions menu, after a confirmation', () => {
     const onRemove = vi.fn();
     renderRow({ session: session('running'), onRemove });
-    // First click opens the confirmation dialog; it must not remove yet.
-    fireEvent.click(screen.getByRole('button', { name: /Delete session/ }));
+    expect(screen.queryByRole('button', { name: /Delete/ })).toBeNull();
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
     expect(onRemove).not.toHaveBeenCalled();
-    // Clicking Remove inside the dialog confirms the removal.
     fireEvent.click(
       within(screen.getByRole('dialog')).getByRole('button', {
         name: 'Delete',
@@ -117,9 +112,10 @@ describe('SessionRow', () => {
     expect(onRemove).toHaveBeenCalled();
   });
 
-  it('does not offer Remove without a handler', () => {
+  it('does not offer Delete without a handler', () => {
     renderRow({ session: session('running') });
-    expect(screen.queryByRole('button', { name: /Delete session/ })).toBeNull();
+    openMenu();
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull();
   });
 
   it('marks a done session seen when its title is clicked', () => {
@@ -165,18 +161,6 @@ describe('SessionRow', () => {
     expect((open as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(open);
     expect(onOpen).toHaveBeenCalled();
-  });
-
-  it('keeps Open disabled for a done session even when onOpen is provided', () => {
-    render(
-      <ul>
-        <SessionRow session={session('done')} onOpen={vi.fn()} />
-      </ul>,
-    );
-    expect(
-      (screen.getByRole('button', { name: 'Open' }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
   });
 
   it('renders the last preview line inline', () => {
@@ -435,37 +419,6 @@ describe('SessionRow while starting', () => {
     expect(screen.getByText('Starting…')).toBeTruthy();
   });
 
-  // There is no runtime behind the row, so anything that would be routed to a
-  // provider is withheld — but Remove is not one of those: the daemon handles a
-  // starting row itself, and removing it is how the build is cancelled.
-  it('offers no Stop or Start, but can be removed to cancel the build', () => {
-    renderRow({
-      session: startingSession(),
-      onStop: vi.fn(),
-      onStart: vi.fn(),
-      onRemove: vi.fn(),
-    });
-    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Start' })).toBeNull();
-    expect(screen.getByRole('button', { name: /Delete session/ })).toBeTruthy();
-  });
-
-  // Cancelling throws away a build that may have run for minutes, so it asks
-  // first — unlike a failed row, which has nothing left to lose.
-  it('confirms before cancelling a build in flight', () => {
-    const onRemove = vi.fn();
-    renderRow({ session: startingSession(), onRemove });
-
-    fireEvent.click(screen.getByRole('button', { name: /Delete session/ }));
-    expect(onRemove).not.toHaveBeenCalled();
-    fireEvent.click(
-      within(screen.getByRole('dialog')).getByRole('button', {
-        name: 'Delete',
-      }),
-    );
-    expect(onRemove).toHaveBeenCalledTimes(1);
-  });
-
   it('cannot be opened — there is nothing to attach to yet', () => {
     renderRow({ session: startingSession(), onOpen: vi.fn() });
     expect(
@@ -540,19 +493,6 @@ describe('SessionRow that failed to start', () => {
     expect(screen.queryByTestId('session-error')).toBeNull();
   });
 
-  // No runtime stands behind the row, so there is nothing a confirmation would
-  // protect — and the \u00d7 is the only disposal a failed row has.
-  it('removes on one click, with no confirmation', () => {
-    const onRemove = vi.fn();
-    renderRow({ session: failedSession('boom'), onRemove });
-
-    fireEvent.click(
-      screen.getByRole('button', { name: /Delete failed session/ }),
-    );
-    expect(onRemove).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('dialog')).toBeNull();
-  });
-
   it('cannot be opened, stopped or driven', () => {
     renderRow({
       session: failedSession('boom'),
@@ -565,6 +505,128 @@ describe('SessionRow that failed to start', () => {
     ).not.toBeNull();
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
     expect(screen.queryByLabelText('Send text to session')).toBeNull();
+  });
+});
+
+// A starting or failed placeholder has no runtime to stop or continue, and the
+// daemon deletes it itself. Deleting a starting one cancels a build that may
+// have run for minutes, so it asks first; a failed one has nothing to lose.
+it.each([
+  ['starting', true],
+  ['error', false],
+] as const)(
+  'offers a %s placeholder no Stop or Continue; its Delete confirms: %s',
+  (state, confirms) => {
+    const onRemove = vi.fn();
+    renderRow({
+      session: { ...session(state), id: 'starting-abc' },
+      onStop: vi.fn(),
+      onStart: vi.fn(),
+      onRemove,
+    });
+    expect(
+      screen.queryByRole('button', { name: /^(Stop|Continue)$/ }),
+    ).toBeNull();
+
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    const dialog = screen.queryByRole('dialog');
+    expect(dialog !== null).toBe(confirms);
+    if (dialog) {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    }
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  },
+);
+
+// Ended (stopped, or done by the daemon): recessed, and continued from Continue.
+describe('SessionRow of an ended session', () => {
+  const NOW = new Date('2026-11-10T12:00:00Z');
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const ended = (state: 'stopped' | 'done', endedAt?: string): Session => ({
+    ...session(state),
+    preview: 'the last thing it said',
+    endedAt,
+  });
+
+  it.each([
+    ['stopped', '2026-11-10T11:00:00Z', 'Stopped', ' · 1 h ago'],
+    ['done', '2026-11-10T11:48:00Z', 'Ended', ' · 12 min ago'],
+    ['done', undefined, 'Ended', ''],
+  ] as const)(
+    'a %s one ended at %s reads "%s%s" by a hollow dot, without teaser or Open',
+    (state, endedAt, word, ago) => {
+      renderRow({ session: ended(state, endedAt), onOpen: vi.fn() });
+      const row = screen.getByRole('listitem');
+      expect(screen.getByTestId('session-state').textContent).toBe(word);
+      expect(row.textContent).toContain(`${word}${ago}`);
+      expect(row.textContent?.includes('ago')).toBe(ago !== '');
+      expect(screen.getByRole('img', { name: 'Ended' })).toBeTruthy();
+      expect(screen.queryByTestId('session-preview')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Open' })).toBeNull();
+    },
+  );
+
+  it.each(['stopped', 'done'] as const)(
+    'continues a %s one from Continue only; a click on the row toggles details',
+    (state) => {
+      const onStart = vi.fn();
+      renderRow({ session: ended(state), onStart });
+      fireEvent.click(screen.getByTestId('session-title'));
+      expect(onStart).not.toHaveBeenCalled();
+      expect(screen.getByTestId('session-preview-full')).toBeTruthy();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+      expect(onStart).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  // On an ended row Enter shows its details, so Continue does not claim it.
+  it('names only Alt+S on Continue in a navigable list', () => {
+    renderRow({ session: ended('stopped'), onStart: vi.fn(), tabIndex: 0 });
+    expect(
+      screen.getByRole('button', { name: 'Continue' }).getAttribute('title'),
+    ).toMatch(/^Continue this session \((Alt\+|⌥)S\)$/);
+  });
+
+  it('names the exact end time on the relative one', () => {
+    const endedAt = '2026-11-10T11:48:00Z';
+    renderRow({ session: ended('done', endedAt) });
+    expect(screen.getByText('12 min ago').title).toBe(
+      new Date(endedAt).toLocaleString(),
+    );
+  });
+
+  it('moves on from "just now" soon after a minute, whenever it ended', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    // Another ended row starts the clock well before this session ends.
+    render(
+      <ul>
+        <SessionRow
+          session={{ ...ended('done', '2026-11-10T10:00:00Z'), id: 'old' }}
+        />
+      </ul>,
+    );
+    act(() => vi.advanceTimersByTime(50_000));
+    renderRow({ session: ended('done', new Date().toISOString()) });
+    expect(screen.getByText('just now')).toBeTruthy();
+
+    act(() => vi.advanceTimersByTime(65_000));
+    expect(screen.getByText('1 min ago')).toBeTruthy();
+  });
+
+  it('offers Continue in its menu as well', () => {
+    renderRow({ session: ended('done'), onStart: vi.fn() });
+    openMenu();
+    expect(screen.getByRole('menuitem', { name: 'Continue' })).toBeTruthy();
   });
 });
 
@@ -834,16 +896,19 @@ describe('SessionRow when the daemon is unreachable', () => {
 
   it('disables every daemon-backed action but keeps it on screen', () => {
     renderBlocked();
-    for (const name of [/^Open$/, /^Delete session/]) {
-      const button = screen.getByRole('button', { name }) as HTMLButtonElement;
-      expect(button.disabled).toBe(true);
-    }
+    expect(
+      (screen.getByRole('button', { name: 'Open' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
     // Stop only goes inert: it is the button that keeps focus across a flip.
     expect(
       screen
         .getByRole('button', { name: 'Stop' })
         .getAttribute('aria-disabled'),
     ).toBe('true');
+    // The menu leaves out what cannot run.
+    openMenu();
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull();
   });
 
   // Rename has no button to disable, so what has to hold is that the gesture does
@@ -878,20 +943,21 @@ describe('SessionRow when the daemon is unreachable', () => {
 
   it('explains why on every disabled action', () => {
     renderBlocked();
-    for (const name of [/^Open$/, /^Stop$/, /^Delete session/]) {
+    for (const name of [/^Open$/, /^Stop$/]) {
       expect(screen.getByRole('button', { name }).getAttribute('title')).toBe(
         REASON,
       );
     }
   });
 
-  it('offers Start on a stopped session, disabled', () => {
+  it('offers Continue on a stopped session, disabled', () => {
+    const onStart = vi.fn();
     renderRow({
       session: session('stopped'),
-      onStart: vi.fn(),
+      onStart,
       disabledReason: REASON,
     });
-    const start = screen.getByRole('button', { name: 'Start' });
+    const start = screen.getByRole('button', { name: 'Continue' });
     expect(start.getAttribute('aria-disabled')).toBe('true');
     expect(start.getAttribute('title')).toBe(REASON);
   });
@@ -1226,6 +1292,19 @@ describe('SessionRow as a keyboard list item', () => {
     expect(onOpen).toHaveBeenCalledTimes(opens ? 1 : 0);
   });
 
+  it("shows an ended session's details on Enter, without continuing it", () => {
+    const onStart = vi.fn();
+    fireEvent.keyDown(focusedRow({ session: session('stopped'), onStart }), {
+      key: 'Enter',
+    });
+    expect(onStart).not.toHaveBeenCalled();
+    expect(
+      screen
+        .getByRole('button', { name: 'Toggle session details' })
+        .getAttribute('aria-expanded'),
+    ).toBe('true');
+  });
+
   it.each([
     ['Delete', {}, 'Linux'],
     ['Cmd+Backspace', { key: 'Backspace', metaKey: true }, 'Macintosh'],
@@ -1426,8 +1505,10 @@ describe('SessionRow restart with settings', () => {
   it('offers it on a stopped session and on one whose restart failed', () => {
     for (const state of ['stopped', 'error'] as const) {
       expect(
-        actionsOf({ session: session(state), onRestartWithSettings: vi.fn() })
-          .map((action) => action.id),
+        actionsOf({
+          session: session(state),
+          onRestartWithSettings: vi.fn(),
+        }).map((action) => action.id),
       ).toContain('restartWithSettings');
     }
   });
@@ -1460,7 +1541,10 @@ describe('SessionRow restart with settings', () => {
 });
 
 describe('SessionRow outdated settings', () => {
-  const outdated = { ...session('running'), outdatedSettings: ['allow_domains', 'features'] };
+  const outdated = {
+    ...session('running'),
+    outdatedSettings: ['allow_domains', 'features'],
+  };
 
   it('names the settings that changed, and how to apply them', () => {
     renderRow({ session: outdated, onRestartWithSettings: vi.fn() });

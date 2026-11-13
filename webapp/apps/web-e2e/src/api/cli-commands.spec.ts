@@ -96,6 +96,7 @@ async function freshProject(name: string): Promise<string> {
  */
 async function awaitWorkstream(
   projectId: string,
+  name: string,
   timeoutMs = 20000,
 ): Promise<WorkstreamJSON> {
   const deadline = Date.now() + timeoutMs;
@@ -107,13 +108,15 @@ async function awaitWorkstream(
       projectId,
       homeDirArg,
     );
+    // By name: the project's default workstream is listed too.
     const real = listed.find(
-      (workstream) => !workstream.id.startsWith('creating-'),
+      (workstream) =>
+        workstream.name === name && !workstream.id.startsWith('creating-'),
     );
     if (real) return real;
     await new Promise((done) => setTimeout(done, 50));
   }
-  throw new Error(`timed out waiting for a workstream in ${projectId}`);
+  throw new Error(`timed out waiting for workstream ${name} in ${projectId}`);
 }
 
 async function awaitSession(
@@ -238,7 +241,7 @@ test.describe('homeshell data verbs', () => {
       homeDirArg,
     );
     expect(creating.stdout).toContain('creating workstream cli-lifecycle');
-    const workstream = await awaitWorkstream(projectId);
+    const workstream = await awaitWorkstream(projectId, 'cli-lifecycle');
 
     await cliOk(
       'session',
@@ -326,15 +329,18 @@ test.describe('homeshell data verbs', () => {
 
     // A running session is exactly what the removal guard protects, so force here.
     await cliOk('workstream', 'remove', workstream.id, '--force', homeDirArg);
+    // The project's default workstream is all that is left.
     expect(
-      await cliJSON<WorkstreamJSON[]>(
-        'workstream',
-        'list',
-        '-project',
-        projectId,
-        homeDirArg,
-      ),
-    ).toHaveLength(0);
+      (
+        await cliJSON<WorkstreamJSON[]>(
+          'workstream',
+          'list',
+          '-project',
+          projectId,
+          homeDirArg,
+        )
+      ).map((listed) => listed.id),
+    ).not.toContain(workstream.id);
 
     await cliOk('project', 'remove', projectId, homeDirArg);
   });
@@ -357,7 +363,7 @@ test.describe('homeshell data verbs', () => {
       '{"branch":"main"}',
       homeDirArg,
     );
-    const workstream = await awaitWorkstream(projectId);
+    const workstream = await awaitWorkstream(projectId, 'cli-open-mode');
     // The fake's web-IDE link is declared by a live session, so start one.
     await cliOk(
       'session',
@@ -376,7 +382,8 @@ test.describe('homeshell data verbs', () => {
         const listed = await cliJSON<
           (WorkstreamJSON & { openModes?: { id: string }[] })[]
         >('workstream', 'list', '-project', projectId, homeDirArg);
-        return (listed[0]?.openModes ?? []).map((mode) => mode.id);
+        const listedHere = listed.find((entry) => entry.id === workstream.id);
+        return (listedHere?.openModes ?? []).map((mode) => mode.id);
       })
       .toContain('link:web-ide');
 
@@ -422,7 +429,7 @@ test.describe('homeshell data verbs', () => {
       '{"branch":"main"}',
       homeDirArg,
     );
-    const workstream = await awaitWorkstream(projectId);
+    const workstream = await awaitWorkstream(projectId, 'cli-guard');
     await cliOk(
       'session',
       'new',
@@ -514,7 +521,7 @@ test.describe('homeshell data verbs', () => {
         '{"branch":"main"}',
         homeDirArg,
       );
-      await awaitWorkstream(projectId);
+      await awaitWorkstream(projectId, 'cli-ambiguous');
     }
 
     const refused = await cli(
@@ -595,7 +602,7 @@ test.describe('homeshell data verbs', () => {
       '{"branch":"main"}',
       homeDirArg,
     );
-    const workstream = await awaitWorkstream(projectId);
+    const workstream = await awaitWorkstream(projectId, 'cli-discovery');
 
     const agents = await cliJSON<
       { providerId: string; options: { id: string }[] }[]
@@ -655,7 +662,7 @@ test.describe('homeshell data verbs', () => {
       '{"branch":"main"}',
       homeDirArg,
     );
-    const workstream = await awaitWorkstream(projectId);
+    const workstream = await awaitWorkstream(projectId, 'cli-session-ops');
     await cliOk(
       'session',
       'new',

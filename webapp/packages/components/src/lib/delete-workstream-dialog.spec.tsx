@@ -44,4 +44,18 @@ describe('DeleteWorkstreamDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Keep files' }));
     expect(onConfirm).toHaveBeenCalledWith({ keepFiles: true });
   });
+
+  it.each<[string, Partial<Workstream>]>([
+    ['still being made', { effectiveState: 'creating' }],
+    ['that failed', { createFailed: true }],
+  ])('offers no files to keep for a create %s', (_, state) => {
+    render(
+      <DeleteWorkstreamDialog
+        workstream={{ ...workstream('worktree'), ...state }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Keep files' })).toBeNull();
+  });
 });

@@ -147,7 +147,7 @@ func TestPromoteWorkstreamStillRefusesAnotherWorkstreamsName(t *testing.T) {
 	// directory, which arrives through the projection rather than the user-facing
 	// door and so is not bound by the name rule (the placeholder rides along,
 	// carried over as an in-flight create).
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{{
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
 		ID: "ws-other", Name: "feature", Provider: "core", WorkingDir: "/work/other",
 		Sessions: []domain.Session{},
 	}}); err != nil {
@@ -270,7 +270,7 @@ func TestAPlaceholderMayTakeItsErrorStateUnderATakenName(t *testing.T) {
 	// Stage the state the race produces: the placeholder was admitted, then the
 	// winner landed under the same name, and the placeholder's create has just
 	// failed.
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{
 		{ID: "ws-winner", Name: "feature", Provider: "core", WorkingDir: "/work/a", Sessions: []domain.Session{}},
 		{ID: placeholderID, Name: "feature", Provider: "core", RuntimeState: domain.RuntimeCreating, Sessions: []domain.Session{}},
 	}); err != nil {

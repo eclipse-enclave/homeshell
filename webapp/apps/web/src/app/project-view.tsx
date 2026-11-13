@@ -5,19 +5,22 @@ import {
   CopyablePath,
   type DeleteWorkstreamOptions,
   describeListKeys,
-  EmptyState,
   focusNavItem,
+  FolderOpenIcon,
+  FolderTreeIcon,
   MNEMONICS,
   mnemonicScope,
   type NewSessionData,
   type NewWorkstreamData,
   NewWorkstreamForm,
   Pill,
+  PlusIcon,
   type Refusal,
   renameInputClass,
   RestartSessionDialog,
   type RestartSessionData,
   tabStopItem,
+  TrashIcon,
   useCreateForm,
   useListTabStop,
   useRenamableTitle,
@@ -25,17 +28,20 @@ import {
   WorkstreamCard,
   type WorkstreamCardHandle,
 } from '@homeshell/components';
-import type {
-  BusySession,
-  Capabilities,
-  Project,
-  Provider,
+import {
+  NOTE_ACTION_ID,
+  type BusySession,
+  type Capabilities,
+  type Project,
+  type Provider,
+  type Workstream,
 } from '@homeshell/model';
 import {
   type KeyboardEvent,
   type Ref,
   useCallback,
   useEffect,
+  useId,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
@@ -43,6 +49,7 @@ import {
 } from 'react';
 import { usePendingFocus } from './keyboard/use-pending-focus';
 import {
+  addDefaultWorkstream,
   createSession,
   createWorkstream,
   deleteWorkstream,
@@ -179,11 +186,24 @@ export function ProjectView({
   const newWorkstreamRef = useRef<HTMLButtonElement>(null);
   const create = useCreateForm(() => newWorkstreamRef.current);
   const closeCreate = create.close;
-  const firstWorkstreamRef = useRef<HTMLButtonElement>(null);
   const cards = useRef(new Map<string, WorkstreamCardHandle>());
-  const list = useListTabStop(project.workstreams, {
+  // The project folder's workstream(s) first, then the separate folders: the
+  // order the page shows them in, which the tab stop follows.
+  const inPlace = project.workstreams.filter((ws) => ws.inProjectFolder);
+  const separate = project.workstreams.filter((ws) => !ws.inProjectFolder);
+  const workHereRef = useRef<HTMLButtonElement>(null);
+  // The project whose cards, last time it had any, were all in the project
+  // folder: once the last of them goes, focus stays in that section.
+  const emptiedFolder = useRef<string | null>(null);
+  const list = useListTabStop([...inPlace, ...separate], {
     resetKey: project.id,
-    emptyFocus: () => firstWorkstreamRef.current,
+    emptyFocus: () =>
+      (emptiedFolder.current === project.id && workHereRef.current) ||
+      newWorkstreamRef.current,
+  });
+  useLayoutEffect(() => {
+    if (project.workstreams.length > 0)
+      emptiedFolder.current = separate.length === 0 ? project.id : null;
   });
 
   // A card or row just created, to focus once it is listed: the placeholder the
@@ -253,8 +273,8 @@ export function ProjectView({
     [project.id],
   );
 
-  // The title that started it is not focusable, so focus falls back to the
-  // header's first control.
+  // The title that started it is not focusable, so focus falls back to New
+  // workstream rather than to the header's Delete.
   const setReturnRenameFocus = useReturnFocus(
     editing,
     () => newWorkstreamRef.current,
@@ -283,6 +303,19 @@ export function ProjectView({
       },
     }));
     return null;
+  };
+
+  // One create at a time: a second would only be refused, the folder taken.
+  const [workingHere, setWorkingHere] = useState(false);
+  const handleWorkHere = async () => {
+    setWorkingHere(true);
+    try {
+      const result = await addDefaultWorkstream(project.id);
+      if (typeof result === 'string') setError(result);
+      else focusWhenListed(result.id);
+    } finally {
+      setWorkingHere(false);
+    }
   };
 
   const handleCreateSession = async (
@@ -358,7 +391,7 @@ export function ProjectView({
     workstreamId: string,
     actionId: string,
   ) => {
-    if (actionId !== 'note') return;
+    if (actionId !== NOTE_ACTION_ID) return;
     const result = await openWorkstreamNote(project.id, workstreamId);
     if (result) setError(result);
   };
@@ -513,12 +546,84 @@ export function ProjectView({
 
   // The project has no F2: with nothing selected, there is nothing for it to
   // be pressed on.
-  const nameProps = useRenamableTitle({
+  const inPlaceHeadingId = useId();
+  const separateHeadingId = useId();
+  const nameProps = useRenamableTitle<HTMLHeadingElement>({
     name: project.name,
     onRename: startRename,
     disabledReason,
     className: styles.name,
   });
+
+  const renderCard = (workstream: Workstream) => (
+    <WorkstreamCard
+      key={workstream.id}
+      ref={(handle) => {
+        if (handle) cards.current.set(workstream.id, handle);
+        else cards.current.delete(workstream.id);
+      }}
+      workstream={workstream}
+      projectPath={project.path}
+      previewLines={settings.sessions.previewLines}
+      displayStateFor={attention.displayState}
+      onSeenSession={attention.markSeen}
+      onOpenSession={(sessionId) => handleOpenSession(workstream.id, sessionId)}
+      // Gated on the session's own provider: a workstream's provider
+      // can be "core", which is absent from GET /api/providers.
+      canSessionStartStop={(session) =>
+        Boolean(caps[session.provider ?? '']?.sessionStartStop)
+      }
+      onRestartSession={(sessionId) =>
+        handleRestartSession(workstream.id, sessionId)
+      }
+      canPromptSession={(session) =>
+        Boolean(caps[session.provider ?? '']?.oneOffPrompt)
+      }
+      onStopSession={(sessionId) =>
+        runSessionAction(
+          sessionAction(project.id, workstream.id, sessionId, '/stop', 'POST'),
+        )
+      }
+      onStartSession={(sessionId) =>
+        runSessionAction(
+          sessionAction(project.id, workstream.id, sessionId, '/start', 'POST'),
+        )
+      }
+      onRemoveSession={(sessionId) =>
+        runSessionAction(
+          sessionAction(project.id, workstream.id, sessionId, '', 'DELETE'),
+        )
+      }
+      // Returned, not routed through runSessionAction: a refused
+      // rename is about one row and one box, so the row shows it
+      // beside itself instead of the view's page-level error line.
+      onRenameSession={(sessionId, title) =>
+        renameSession(project.id, workstream.id, sessionId, title)
+      }
+      onPromptSession={(sessionId, text) =>
+        runSessionAction(
+          promptSession(project.id, workstream.id, sessionId, text),
+        )
+      }
+      onSendKeySession={(sessionId, key) =>
+        runSessionAction(
+          sendSessionKey(project.id, workstream.id, sessionId, key),
+        )
+      }
+      loadSessionOptions={() => fetchSessionSchemas(project.id, workstream.id)}
+      onCreateSession={(data) => handleCreateSession(workstream.id, data)}
+      onDelete={(opts) => handleDeleteWorkstream(workstream.id, opts)}
+      onRename={(name) => handleRenameWorkstream(workstream.id, name)}
+      onOpen={() => handleOpenWorkstream(workstream.id)}
+      onOpenWith={(mode) => handleOpenWorkstream(workstream.id, mode)}
+      onAction={(actionId) => handleWorkstreamAction(workstream.id, actionId)}
+      onDismissStatus={() => handleDismissStatus(workstream.id)}
+      skipConfirmation={!settings.workstreams.confirmRemove}
+      disabledReason={disabledReason}
+      tabStopId={list.tabStopId}
+      selectedId={list.selectedId}
+    />
+  );
 
   return (
     <div className={`${styles.view} ${loadingRestart ? styles.loading : ''}`}>
@@ -563,171 +668,100 @@ export function ProjectView({
             {loadingRestart && 'Loading settings…'}
           </p>
         </div>
-        <div className={styles.headerActions}>
-          <Button
-            ref={newWorkstreamRef}
-            variant="primary"
-            onClick={create.show}
-            disabled={blocked}
-            mnemonic={MNEMONICS.newWorkstream}
-            title={disabledReason ?? 'Create a workstream in this project'}
-          >
-            New workstream
-          </Button>
-          {/* No letter: D is an item's Delete, and once the last item is
-              gone it would delete the project instead. */}
-          <Button
-            onClick={handleRemove}
-            disabled={blocked}
-            title={disabledReason ?? 'Stop tracking this project'}
-            aria-label={`Delete project ${project.name}`}
-          >
-            Delete
-          </Button>
-        </div>
-      </header>
-      {create.open && creatable !== null && (
-        <NewWorkstreamForm
-          ref={create.formRef}
-          providers={creatable}
-          onSubmit={handleCreate}
-          onCancel={create.cancel}
-          defaultProviderId={
-            resolveDefault(settings.workstreams.defaultProvider) || undefined
-          }
-          defaultConfig={workstreamConfigDefaults(settings.workstreams)}
-          defaultName={expandNameTemplate(
-            settings.workstreams.nameTemplate,
-            project,
-          )}
-          resolveDraft={resolveDraft}
-          disabledReason={disabledReason}
+        {/* No letter: D is an item's Delete, and once the last item is
+            gone it would delete the project instead. */}
+        <Button
+          icon={<TrashIcon size={16} />}
+          onClick={handleRemove}
+          disabled={blocked}
+          title={disabledReason ?? 'Stop tracking this project'}
+          aria-label={`Delete project ${project.name}`}
         />
-      )}
-      {project.workstreams.length > 0 ? (
-        <div
-          className={styles.workstreams}
-          role="group"
-          aria-label="Workstreams"
-          aria-describedby={list.describedBy}
-          {...list.listProps}
-        >
-          <span id={list.describedBy} hidden>
-            {LIST_KEYS_HINT}
-          </span>
-          {project.workstreams.map((workstream) => {
-            return (
-              <WorkstreamCard
-                key={workstream.id}
-                ref={(handle) => {
-                  if (handle) cards.current.set(workstream.id, handle);
-                  else cards.current.delete(workstream.id);
-                }}
-                workstream={workstream}
-                previewLines={settings.sessions.previewLines}
-                displayStateFor={attention.displayState}
-                onSeenSession={attention.markSeen}
-                onOpenSession={(sessionId) =>
-                  handleOpenSession(workstream.id, sessionId)
+      </header>
+      <div
+        className={styles.workstreams}
+        role="group"
+        aria-label="Workstreams"
+        aria-describedby={list.describedBy}
+        {...list.listProps}
+      >
+        <span id={list.describedBy} hidden>
+          {LIST_KEYS_HINT}
+        </span>
+        <section className={styles.section} aria-labelledby={inPlaceHeadingId}>
+          <h2 id={inPlaceHeadingId} className={styles.sectionTitle}>
+            <FolderOpenIcon size={14} />
+            In the project folder
+          </h2>
+          {inPlace.length > 0 ? (
+            inPlace.map(renderCard)
+          ) : (
+            <div className={styles.emptySection}>
+              <p className={styles.emptyText}>
+                No workstream in the project folder.
+              </p>
+              <Button
+                ref={workHereRef}
+                onClick={handleWorkHere}
+                disabled={blocked}
+                // Not disabled: that would drop focus to the page meanwhile.
+                aria-disabled={workingHere || undefined}
+                aria-busy={workingHere || undefined}
+                title={
+                  disabledReason ?? 'Create a workstream in the project folder'
                 }
-                // Gated on the session's own provider: a workstream's provider
-                // can be "core", which is absent from GET /api/providers.
-                canSessionStartStop={(session) =>
-                  Boolean(caps[session.provider ?? '']?.sessionStartStop)
-                }
-                onRestartSession={(sessionId) =>
-                  handleRestartSession(workstream.id, sessionId)
-                }
-                canPromptSession={(session) =>
-                  Boolean(caps[session.provider ?? '']?.oneOffPrompt)
-                }
-                onStopSession={(sessionId) =>
-                  runSessionAction(
-                    sessionAction(
-                      project.id,
-                      workstream.id,
-                      sessionId,
-                      '/stop',
-                      'POST',
-                    ),
-                  )
-                }
-                onStartSession={(sessionId) =>
-                  runSessionAction(
-                    sessionAction(
-                      project.id,
-                      workstream.id,
-                      sessionId,
-                      '/start',
-                      'POST',
-                    ),
-                  )
-                }
-                onRemoveSession={(sessionId) =>
-                  runSessionAction(
-                    sessionAction(
-                      project.id,
-                      workstream.id,
-                      sessionId,
-                      '',
-                      'DELETE',
-                    ),
-                  )
-                }
-                // Returned, not routed through runSessionAction: a refused
-                // rename is about one row and one box, so the row shows it
-                // beside itself instead of the view's page-level error line.
-                onRenameSession={(sessionId, title) =>
-                  renameSession(project.id, workstream.id, sessionId, title)
-                }
-                onPromptSession={(sessionId, text) =>
-                  runSessionAction(
-                    promptSession(project.id, workstream.id, sessionId, text),
-                  )
-                }
-                onSendKeySession={(sessionId, key) =>
-                  runSessionAction(
-                    sendSessionKey(project.id, workstream.id, sessionId, key),
-                  )
-                }
-                loadSessionOptions={() =>
-                  fetchSessionSchemas(project.id, workstream.id)
-                }
-                onCreateSession={(data) =>
-                  handleCreateSession(workstream.id, data)
-                }
-                onDelete={(opts) => handleDeleteWorkstream(workstream.id, opts)}
-                onRename={(name) => handleRenameWorkstream(workstream.id, name)}
-                onOpen={() => handleOpenWorkstream(workstream.id)}
-                onOpenWith={(mode) => handleOpenWorkstream(workstream.id, mode)}
-                onAction={(actionId) =>
-                  handleWorkstreamAction(workstream.id, actionId)
-                }
-                onDismissStatus={() => handleDismissStatus(workstream.id)}
-                skipConfirmation={!settings.workstreams.confirmRemove}
-                disabledReason={disabledReason}
-                tabStopId={list.tabStopId}
-                selectedId={list.selectedId}
-              />
-            );
-          })}
-        </div>
-      ) : (
-        <EmptyState
-          title="No workstreams yet"
-          hint="Create a workstream to start an agent session on this project."
-          action={
+              >
+                Work here
+              </Button>
+            </div>
+          )}
+        </section>
+        <section className={styles.section} aria-labelledby={separateHeadingId}>
+          <div className={styles.sectionHeader} {...mnemonicScope('page')}>
+            <h2 id={separateHeadingId} className={styles.sectionTitle}>
+              <FolderTreeIcon size={14} />
+              Separate folders{' '}
+              {separate.length > 0 && (
+                <span className={styles.count}>· {separate.length}</span>
+              )}
+            </h2>
+            {separate.length === 0 && (
+              <p className={styles.emptyText}>No separate folders yet.</p>
+            )}
             <Button
-              ref={firstWorkstreamRef}
+              ref={newWorkstreamRef}
+              className={styles.newWorkstream}
+              icon={<PlusIcon size={14} />}
               onClick={create.show}
               disabled={blocked}
-              title={disabledReason}
+              mnemonic={MNEMONICS.newWorkstream}
+              title={disabledReason ?? 'Create a workstream in this project'}
             >
               New workstream
             </Button>
-          }
-        />
-      )}
+          </div>
+          {create.open && creatable !== null && (
+            <NewWorkstreamForm
+              ref={create.formRef}
+              providers={creatable}
+              onSubmit={handleCreate}
+              onCancel={create.cancel}
+              defaultProviderId={
+                resolveDefault(settings.workstreams.defaultProvider) ||
+                undefined
+              }
+              defaultConfig={workstreamConfigDefaults(settings.workstreams)}
+              defaultName={expandNameTemplate(
+                settings.workstreams.nameTemplate,
+                project,
+              )}
+              resolveDraft={resolveDraft}
+              disabledReason={disabledReason}
+            />
+          )}
+          {separate.map(renderCard)}
+        </section>
+      </div>
       {newSessionPicker}
       {confirming && (
         <ConfirmDialog

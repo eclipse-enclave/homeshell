@@ -35,11 +35,12 @@ const SORT_OPTIONS: SelectOption[] = [
   { value: 'name', label: 'Name (A–Z)' },
 ];
 
+// The names the create form shows, from daemon/internal/provider/core.go.
 const STRATEGY_OPTIONS: SelectOption[] = [
   { value: '', label: 'Provider default' },
   { value: 'in-place', label: 'In place' },
-  { value: 'worktree', label: 'Git worktree' },
-  { value: 'copy', label: 'Copy' },
+  { value: 'worktree', label: 'Worktree' },
+  { value: 'copy', label: 'Folder: a copy of the project' },
 ];
 
 const AGENT_OPTIONS: SelectOption[] = [

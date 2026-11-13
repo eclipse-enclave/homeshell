@@ -8,9 +8,10 @@ import {
   selectProject,
   unique,
 } from './workstream-helpers';
+import { addEmptyProject } from '../projects';
 
 /**
- * The workstream card on one line: name, pills and its sessions counted by
+ * The workstream card's header: name and branch, its sessions counted by
  * state, then its actions — with no footer below the sessions.
  */
 
@@ -38,14 +39,12 @@ test('the sessions are counted by state beside the name, with no footer', async 
   await expect(card.getByText(/^\d+ sessions?$/)).toHaveCount(0);
 });
 
-test('a branch named like its workstream is not repeated as a pill', async ({
+test('a branch named like its workstream is not repeated', async ({
   page,
   request,
 }) => {
   const dir = await tempProjectDir('hs-ui-layout-branch-');
-  const projectId = (
-    await (await request.post('/api/projects', { data: { path: dir } })).json()
-  ).id;
+  const projectId = await addEmptyProject(request, dir);
   const same = unique('same');
   await request.post(`/api/projects/${projectId}/workstreams`, {
     data: { providerId: 'fake', name: same, config: { branch: same } },
@@ -113,7 +112,7 @@ test('the Open menu reads "Open", with its caret by the word', async ({
   await expect(trigger).toHaveAttribute('aria-haspopup', 'menu');
   const [word, caret, plain] = await Promise.all([
     trigger.getByText('Open', { exact: true }).boundingBox(),
-    trigger.locator('[aria-hidden="true"]').boundingBox(),
+    trigger.getByText('▾').boundingBox(),
     // The same word on a plain button: the width "Open" takes.
     row
       .getByRole('button', { name: 'Open', exact: true })
@@ -175,4 +174,22 @@ test('a hovered or focused half of the split Open shows its whole border', async
   await page.keyboard.press('Tab');
   await expect(caret).toBeFocused();
   expect(await onTop(caret)).toBe(true);
+});
+
+test('header session counts never pulse, while the session rows do', async ({
+  page,
+}) => {
+  await loadApp(page);
+  await selectProject(page, 'homeshell');
+  const card = page.getByRole('region', {
+    name: 'Workstream feature/self-update',
+  });
+  const countDots = card.getByTestId('workstream-sessions').getByRole('img');
+  await expect(countDots.first()).toBeVisible();
+  for (const dot of await countDots.all()) {
+    await expect(dot).toHaveCSS('animation-name', 'none');
+  }
+  // The row dots come after the header in the document.
+  const rowDot = card.getByRole('img', { name: 'Running', exact: true }).last();
+  await expect(rowDot).not.toHaveCSS('animation-name', 'none');
 });

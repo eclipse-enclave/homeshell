@@ -53,11 +53,12 @@ settings and environment variables are in
 
 ## First use
 
-1. **Add a project:** pick a directory with your code.
-2. **Create a workstream** in it: work in place, or in a new git worktree or copy.
-3. **Start a session:** pick an agent. Its state (running, waiting, idle) and a preview of its
-   terminal update live.
-4. **Answer it:** type into the session's input, or open it in a terminal.
+1. **Add a project:** pick a directory with your code. It comes with a workstream that works in
+   that folder, on the branch checked out there.
+2. **Start a session** in it: pick an agent. Its state (running, waiting, idle) and a preview of
+   its terminal update live.
+3. **Answer it:** type into the session's input, or open it in a terminal.
+4. **Work in parallel:** create more workstreams, each in a new git worktree or copy.
 
 The words used here are defined in [CONTEXT.md](CONTEXT.md).
 

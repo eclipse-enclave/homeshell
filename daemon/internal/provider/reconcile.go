@@ -28,9 +28,12 @@ type Reconciler struct {
 	store    *store.Store
 	registry *Registry
 	poll     time.Duration
-	trigger  chan struct{}
-	dirtyMu  sync.Mutex
-	dirty    dirtySet
+	// refreshEvery is how often a Refresher's workstreams are checked when it
+	// names no interval of its own.
+	refreshEvery time.Duration
+	trigger      chan struct{}
+	dirtyMu      sync.Mutex
+	dirty        dirtySet
 	// annotate fills the derived per-projection fields of a project's workstreams
 	// and sessions (open modes, materialization, restartability). The owning
 	// Service supplies it; nil leaves them empty.
@@ -63,10 +66,11 @@ func (r *Reconciler) projectLock(projectID string) *sync.Mutex {
 // (the reconciler then refreshes only on explicit calls and Sink.Changed).
 func NewReconciler(st *store.Store, reg *Registry, poll time.Duration) *Reconciler {
 	return &Reconciler{
-		store:    st,
-		registry: reg,
-		poll:     poll,
-		trigger:  make(chan struct{}, 1),
+		store:        st,
+		registry:     reg,
+		poll:         poll,
+		refreshEvery: 2 * time.Second,
+		trigger:      make(chan struct{}, 1),
 	}
 }
 
@@ -208,6 +212,8 @@ func (r *Reconciler) reconcileProjectOnly(ctx context.Context, project domain.Pr
 	// Discovery can be slow and workstreams land concurrently, so re-read the
 	// store: ReplaceWorkstreams below writes the whole list, and deriving it
 	// from the pre-discovery snapshot would erase anything added in between.
+	// ReplaceWorkstreams is handed this read, so it keeps what changes after it
+	// while the pass refreshes and annotates (store.keepChangesSinceRead).
 	workstreams := project.Workstreams
 	for _, current := range r.store.Projects() {
 		if current.ID == project.ID {
@@ -277,14 +283,61 @@ func (r *Reconciler) reconcileProjectOnly(ctx context.Context, project domain.Pr
 		result = append(result, adoptedWorkstream(dir, sessions))
 	}
 
+	r.refresh(ctx, ref, result)
+
 	// Derived last, so it sees each workstream's final session set.
 	if r.annotate != nil {
 		r.annotate(project.ID, result)
 	}
 
-	if err := r.store.ReplaceWorkstreams(project.ID, result); err != nil {
+	if err := r.store.ReplaceWorkstreams(project.ID, workstreams, result); err != nil {
 		slog.Warn("projecting workstreams failed", "project", project.ID, "error", err)
 	}
+}
+
+// refresh has each workstream's provider bring it up to date (Refresher). A
+// name a refresh gives that another workstream in the project already answers
+// to, by the store's rule (store.NameTaken), is not taken: the workstream keeps
+// the name it had.
+func (r *Reconciler) refresh(ctx context.Context, project ProjectRef, workstreams []domain.Workstream) {
+	for i, workstream := range workstreams {
+		if isPlaceholder(workstream) {
+			continue
+		}
+		workstreamProvider, ok := r.registry.WorkstreamProvider(workstream.Provider)
+		if !ok {
+			continue
+		}
+		refresher, ok := workstreamProvider.(Refresher)
+		if !ok {
+			continue
+		}
+		refreshed := refresher.Refresh(ctx, project, workstream)
+		if refreshed.Name != workstream.Name {
+			if _, taken := store.NameTaken(workstreams, refreshed.Name, workstream.ID); taken {
+				refreshed.Name, refreshed.CreatorData = workstream.Name, workstream.CreatorData
+			}
+		}
+		workstreams[i] = refreshed
+	}
+}
+
+// branchMoved reports whether a refresh would move any of providerID's
+// workstreams to another branch. The branch is what moves a name too, so it is
+// all that is compared.
+func (r *Reconciler) branchMoved(ctx context.Context, providerID string, refresher Refresher) bool {
+	for _, project := range r.store.Projects() {
+		ref := ProjectRef{ID: project.ID, Path: project.Path, GitBacked: project.GitBacked}
+		for _, workstream := range project.Workstreams {
+			if workstream.Provider != providerID || isPlaceholder(workstream) {
+				continue
+			}
+			if refresher.Refresh(ctx, ref, workstream).Branch != workstream.Branch {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // adoptedWorkstream builds a workstream record for sessions discovered in a
@@ -325,6 +378,14 @@ func (r *Reconciler) Run(ctx context.Context) {
 	for _, p := range r.registry.SessionProviders() {
 		if w, ok := p.(Watcher); ok {
 			go w.Watch(ctx, watcherSink{reconciler: r, providerID: p.ID()})
+		}
+	}
+	for _, workstreamProvider := range r.registry.WorkstreamProviders() {
+		if refresher, ok := workstreamProvider.(Refresher); ok {
+			sink := watcherSink{reconciler: r, providerID: workstreamProvider.ID()}
+			go WatchLoop(ctx, sink, refresher.RefreshInterval, r.refreshEvery, func(ctx context.Context) bool {
+				return r.branchMoved(ctx, workstreamProvider.ID(), refresher)
+			})
 		}
 	}
 	r.Reconcile(ctx)

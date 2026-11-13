@@ -26,7 +26,7 @@ export function ProjectList({ projects, selectedId, onSelect }: ProjectListProps
           <li key={project.id}>
             <button
               type="button"
-              className={selected ? `${styles.item} ${styles.selected}` : styles.item}
+              className={styles.item}
               aria-current={selected ? 'true' : undefined}
               onClick={() => onSelect(project.id)}
             >

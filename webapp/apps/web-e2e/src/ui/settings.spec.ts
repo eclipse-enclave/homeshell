@@ -204,7 +204,7 @@ test('a configured name template prefills the new-workstream form', async ({
 
       const nav = page.getByRole('navigation', { name: 'Projects' });
       await nav.getByRole('button', { name: new RegExp(dirName) }).click();
-      await page.getByRole('button', { name: 'New workstream' }).first().click();
+      await page.getByRole('button', { name: 'New workstream' }).click();
 
       // Pick the fake provider for a deterministic schema: Enclave, where it is
       // installed, adds a "Session name" field that collides with "Name".

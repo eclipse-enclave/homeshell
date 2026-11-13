@@ -139,6 +139,34 @@ func TestRecompute(t *testing.T) {
 	}
 }
 
+// A session has ended when it is done or stopped; a failed start has not, and
+// one that runs again is live once more.
+func TestRecomputeMarksEndedSessions(t *testing.T) {
+	tests := []struct {
+		state SessionState
+		want  bool
+	}{
+		{SessionDone, true},
+		{SessionStopped, true},
+		{SessionError, false},
+		{SessionRunning, false},
+		{SessionWaiting, false},
+		{SessionIdle, false},
+		{SessionStarting, false},
+		{SessionUnknown, false},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			// Ended starts out wrong both ways, so Recompute is what sets it.
+			project := Project{Workstreams: []Workstream{{Sessions: []Session{{State: tt.state, Ended: !tt.want}}}}}
+			project.Recompute()
+			if got := project.Workstreams[0].Sessions[0].Ended; got != tt.want {
+				t.Errorf("Ended = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRecomputeWithRuntimeStates(t *testing.T) {
 	project := Project{
 		Workstreams: []Workstream{
@@ -224,6 +252,30 @@ func TestRecomputeEffectiveDefaultsToSessionState(t *testing.T) {
 	}
 	if got := project.Effective; got != "waiting" {
 		t.Errorf("project.Effective = %q, want %q", got, "waiting")
+	}
+}
+
+func TestRecomputeInProjectFolder(t *testing.T) {
+	tests := []struct {
+		name       string
+		strategyID string
+		workingDir string
+		want       bool
+	}{
+		{"the project folder", "", "/work/app", true},
+		{"the project folder, spelt differently", "", "/work/app/", true},
+		{"a separate folder", "worktree", "/work/app-feature", false},
+		{"an in-place create still being made", "in-place", "", true},
+		{"another create still being made", "worktree", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project := Project{Path: "/work/app", Workstreams: []Workstream{{StrategyID: tt.strategyID, WorkingDir: tt.workingDir}}}
+			project.Recompute()
+			if got := project.Workstreams[0].InProjectFolder; got != tt.want {
+				t.Errorf("InProjectFolder = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

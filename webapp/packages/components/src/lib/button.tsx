@@ -1,5 +1,6 @@
-import type { ComponentPropsWithRef } from 'react';
+import type { ComponentPropsWithRef, ReactNode } from 'react';
 import styles from './controls.module.css';
+import { cx } from './cx';
 import { MnemonicLabel, mnemonicProps, withShortcuts } from './mnemonic';
 
 // ComponentPropsWithRef, not ButtonHTMLAttributes: `ref` is a plain prop on
@@ -14,6 +15,11 @@ export interface ButtonProps extends ComponentPropsWithRef<'button'> {
   mnemonic?: string;
   /** Other keys that do what it does, named in the tooltip (Stroke notation). */
   shortcuts?: readonly string[];
+  /**
+   * An icon before the label; without a label, the button is the icon alone,
+   * named by its aria-label.
+   */
+  icon?: ReactNode;
 }
 
 /**
@@ -28,14 +34,10 @@ export function Button({
   mnemonic,
   shortcuts,
   title,
+  icon,
   children,
   ...rest
 }: ButtonProps) {
-  const base = {
-    ghost: styles.button,
-    primary: styles.primary,
-    danger: styles.danger,
-  }[variant];
   const inert =
     rest['aria-disabled'] === true || rest['aria-disabled'] === 'true';
   // A disabled button's keys do nothing (useMnemonics skips it), so its
@@ -45,7 +47,15 @@ export function Button({
   return (
     <button
       type="button"
-      className={className ? `${base} ${className}` : base}
+      className={cx(
+        {
+          ghost: styles.button,
+          primary: styles.primary,
+          danger: styles.danger,
+        }[variant],
+        icon ? (children == null ? styles.iconButton : styles.labelled) : null,
+        className,
+      )}
       onClick={inert ? (event) => event.preventDefault() : onClick}
       title={
         keyed
@@ -60,6 +70,7 @@ export function Button({
       {...mnemonicProps(mnemonic, shortcuts)}
       {...rest}
     >
+      {icon}
       {typeof children === 'string' ? (
         <MnemonicLabel label={children} letter={mnemonic} />
       ) : (

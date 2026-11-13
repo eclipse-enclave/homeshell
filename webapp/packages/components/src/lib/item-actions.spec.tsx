@@ -95,6 +95,7 @@ describe('the actions menu', () => {
   it("shows F2 beside a card's Rename", () => {
     render(
       <WorkstreamCard
+        projectPath="/p"
         workstream={{
           id: 'w1',
           name: 'feature/x',
@@ -195,6 +196,7 @@ describe('the actions menu', () => {
     const handle = createRef<WorkstreamCardHandle>();
     render(
       <WorkstreamCard
+        projectPath="/p"
         ref={handle}
         workstream={{
           id: 'w1',

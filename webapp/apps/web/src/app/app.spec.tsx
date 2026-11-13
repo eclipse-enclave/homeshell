@@ -163,7 +163,6 @@ describe('App', () => {
     expect(
       screen.getByRole('heading', { level: 1, name: 'beta' }),
     ).toBeTruthy();
-    expect(screen.getByText('No workstreams yet')).toBeTruthy();
   });
 
   it('applies live state events from the stream', async () => {
@@ -184,12 +183,14 @@ describe('App', () => {
                 title: 'Implement',
                 agent: 'Claude Code',
                 state: 'done',
+                ended: true,
               },
               {
                 id: 's3',
                 title: 'Fresh session',
                 agent: 'Demo',
                 state: 'done',
+                ended: true,
               },
             ],
           },
@@ -203,10 +204,8 @@ describe('App', () => {
       });
     });
     expect(screen.getByText('Fresh session')).toBeTruthy();
-    // The card's session badges say what its sessions are doing now.
-    expect(
-      screen.getByTestId('workstream-sessions').getAttribute('title'),
-    ).toBe('2 done');
+    // The card's session counts say what its sessions are doing now.
+    expect(screen.getByRole('img', { name: 'Sessions: 2 ended' })).toBeTruthy();
   });
 
   it('shows a toast when the daemon pushes a notification', async () => {
@@ -309,19 +308,6 @@ describe('App', () => {
     const cancel = await screen.findByRole('button', { name: 'Cancel' });
     fireEvent.click(cancel);
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
-  });
-
-  it('shows rename and delete for the selected project, New workstream first', async () => {
-    await renderApp();
-    const title = screen.getByRole('heading', { level: 1, name: 'alpha' });
-    // The name itself renames the project; there is no button for it.
-    expect(title.getAttribute('data-mnemonic')).toBe('r');
-    expect(screen.queryByRole('button', { name: /^Rename/ })).toBeNull();
-    const header = title.closest('header') as HTMLElement;
-    const names = within(header)
-      .getAllByRole('button')
-      .map((button) => button.getAttribute('aria-label') ?? button.textContent);
-    expect(names.slice(-2)).toEqual(['New workstream', 'Delete project alpha']);
   });
 
   it('asks the daemon for the default open with a bare Open click', async () => {
@@ -491,9 +477,9 @@ describe('App', () => {
 
   it('preserves the log buffer across closing and reopening the pane', async () => {
     await renderApp();
-    const logsButton = screen.getByRole('button', { name: 'Logs' });
 
-    fireEvent.click(logsButton); // open
+    runCommand('Toggle logs'); // open
+    expect(screen.getByRole('region', { name: 'Logs' })).toBeTruthy();
     act(() => {
       eventSourceForUrl('/api/logs').emit('log', {
         seq: 1,
@@ -504,10 +490,10 @@ describe('App', () => {
     });
     expect(screen.getByText('persisted-log')).toBeTruthy();
 
-    fireEvent.click(logsButton); // close — pane hidden
+    runCommand('Toggle logs'); // close — pane hidden
     expect(screen.queryByText('persisted-log')).toBeNull();
 
-    fireEvent.click(logsButton); // reopen — the buffer survived
+    runCommand('Toggle logs'); // reopen — the buffer survived
     expect(screen.getByText('persisted-log')).toBeTruthy();
   });
 
@@ -575,14 +561,6 @@ describe('App', () => {
       expect(
         screen.queryByRole('dialog', { name: 'Keyboard shortcuts' }),
       ).toBeNull();
-    });
-
-    it('toggles the logs pane from the palette', async () => {
-      await renderApp();
-      runCommand('Toggle logs');
-      expect(screen.getByRole('region', { name: 'Logs' })).toBeTruthy();
-      runCommand('Toggle logs');
-      expect(screen.queryByRole('region', { name: 'Logs' })).toBeNull();
     });
 
     it('toggles the theme from the palette', async () => {
@@ -911,7 +889,12 @@ describe('App while the daemon is unreachable', () => {
     // Both halves of the Open split button: the default open and the modes menu.
     expect(button(/^Open workstream [^ ]+$/).disabled).toBe(true);
     expect(button(/^Open workstream .+ with…$/).disabled).toBe(true);
-    expect(button(/^Delete session Implement$/).disabled).toBe(true);
+    // A session's menu keeps only what needs no daemon.
+    const row = screen.getByText('Implement').closest('li') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'More actions' }));
+    expect(
+      screen.getAllByRole('menuitem').map((item) => item.textContent),
+    ).toEqual(['Show details']);
   });
 
   it('keeps the state it already had on screen', async () => {
@@ -920,10 +903,9 @@ describe('App while the daemon is unreachable', () => {
     expect(screen.getByText('Implement')).toBeTruthy();
   });
 
-  // Choosing a project, toggling the theme and opening the logs are all local.
+  // Choosing a project and opening the settings are local.
   it('leaves the local controls usable', async () => {
     await renderOffline();
-    expect(button('Logs').disabled).toBe(false);
     expect(button('Settings').disabled).toBe(false);
     fireEvent.click(
       within(screen.getByRole('navigation', { name: 'Projects' })).getByText(

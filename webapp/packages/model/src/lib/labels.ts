@@ -1,4 +1,4 @@
-import type { EffectiveState, SessionState } from './types';
+import type { DotState, SessionState } from './types';
 
 const SESSION_STATE_LABELS: Record<SessionState, string> = {
   idle: 'Idle',
@@ -16,7 +16,7 @@ export function stateLabel(state: SessionState): string {
   return SESSION_STATE_LABELS[state];
 }
 
-const EFFECTIVE_STATE_LABELS: Record<EffectiveState, string> = {
+const DOT_STATE_LABELS: Record<DotState, string> = {
   idle: 'Idle',
   running: 'Running',
   waiting: 'Waiting for input',
@@ -27,9 +27,10 @@ const EFFECTIVE_STATE_LABELS: Record<EffectiveState, string> = {
   creating: 'Creating',
   error: 'Error',
   unknown: 'Unknown',
+  ended: 'Ended',
 };
 
-/** Human-readable label for an effective state (runtime + session combined). */
-export function effectiveStateLabel(state: EffectiveState): string {
-  return EFFECTIVE_STATE_LABELS[state] ?? state;
+/** Human-readable label for a status dot: an effective state, or a session that ended. */
+export function dotStateLabel(state: DotState): string {
+  return DOT_STATE_LABELS[state] ?? state;
 }
