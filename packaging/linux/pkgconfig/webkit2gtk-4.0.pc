@@ -16,8 +16,12 @@
 # builds (debian/rules, the RPM spec); it is a build input only and is never
 # installed.
 #
+# HomeShell's own zoom shim (desktop/cmd/homeshell-desktop/zoom_linux.go) asks
+# for webkit2gtk-4.0 too, to link the same library as webview_go.
+#
 # TODO: delete this file, and the PKG_CONFIG_PATH it needs, once webview_go
-# releases a version whose cgo directive names webkit2gtk-4.1.
+# releases a version whose cgo directive names webkit2gtk-4.1. Switch the
+# directive in zoom_linux.go to webkit2gtk-4.1 in the same change.
 
 Name: WebKitGTK 4.0 to 4.1 shim
 Description: Satisfies webview_go's webkit2gtk-4.0 request from webkit2gtk-4.1

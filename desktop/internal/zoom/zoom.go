@@ -55,7 +55,9 @@ const BindingName = "homeshellZoom"
 //     Ctrl+- still reaches a terminal on macOS, as in Safari.
 //   - Ctrl + wheel zooms one step per notch (40px in WebKitGTK); smaller
 //     trackpad deltas add up to that first, restarting when direction flips.
-//   - Pinch (WebKit gesture events, macOS) zooms one step per 10% of scale.
+//   - Pinch (WebKit gesture events, macOS) zooms while the fingers move, one
+//     step per factor of 1.1 in scale. Why a factor: scale is multiplicative,
+//     so pinching out to 3x and in to 1/3x step the same amount.
 //
 // Listeners capture on window, so they run before the page's own key handlers.
 func Script(goos string) string {
@@ -86,12 +88,19 @@ func Script(goos string) string {
     zoom(wheelDelta < 0 ? 1 : -1);
     wheelDelta = 0;
   }, { capture: true, passive: false });
-  addEventListener('gesturestart', (event) => event.preventDefault(), true);
-  addEventListener('gestureend', (event) => {
+  let pinchSteps = 0;
+  const pinch = (event) => {
     event.preventDefault();
-    const steps = Math.round(Math.abs(event.scale - 1) * 10);
-    for (let i = 0; i < steps; i++) zoom(event.scale > 1 ? 1 : -1);
+    const target = Math.round(Math.log(event.scale) / Math.log(1.1));
+    for (; pinchSteps < target; pinchSteps++) zoom(1);
+    for (; pinchSteps > target; pinchSteps--) zoom(-1);
+  };
+  addEventListener('gesturestart', (event) => {
+    event.preventDefault();
+    pinchSteps = 0;
   }, true);
+  addEventListener('gesturechange', pinch, true);
+  addEventListener('gestureend', pinch, true);
 })();`
 }
 
@@ -100,14 +109,16 @@ type Store struct {
 	Path string
 }
 
-// DefaultStore keeps the level in the user's config directory. Why not the
-// daemon's settings: zoom belongs to this window, not to every client.
+// DefaultStore keeps the level in a homeshell-desktop directory under the
+// user's config directory. Why not the daemon's settings: zoom belongs to this
+// window, not to every client. Why not homeshell/: on macOS that is the
+// daemon's data directory.
 func DefaultStore() (Store, error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return Store{}, err
 	}
-	return Store{Path: filepath.Join(configDir, "homeshell", "desktop.json")}, nil
+	return Store{Path: filepath.Join(configDir, "homeshell-desktop", "desktop.json")}, nil
 }
 
 type state struct {

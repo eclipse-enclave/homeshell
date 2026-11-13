@@ -179,8 +179,9 @@ The desktop app zooms like a browser, from 50% to 300% in 10% steps:
 | Zoom out | Ctrl + `-` or `_`, Ctrl + wheel down | Cmd + `-` or `_`, Ctrl + wheel down, pinch in |
 | Reset to 100% | Ctrl + `0` | Cmd + `0` |
 
-- The level is kept between launches in `homeshell/desktop.json` under the user config directory
-  (`~/.config` on Linux, `~/Library/Application Support` on macOS).
+- The level is kept between launches in `homeshell-desktop/desktop.json` under the user config
+  directory: `$XDG_CONFIG_HOME` or `~/.config` on Linux, `~/Library/Application Support` on macOS.
+  Why not `homeshell/`: on macOS that is the daemon's [data directory](#data-directory).
 - It belongs to the desktop app only, not to the daemon or its other clients.
 - On macOS, Ctrl + these keys still reach the page (e.g. a terminal), as in Safari. Zoom needs
   macOS 11 or later.

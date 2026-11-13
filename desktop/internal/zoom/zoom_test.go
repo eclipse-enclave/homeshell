@@ -42,6 +42,19 @@ func TestNextDoesNotDrift(t *testing.T) {
 	}
 }
 
+// On macOS the user config directory's homeshell/ is the daemon's data
+// directory, so the desktop app keeps its file in a directory of its own.
+func TestDefaultStoreHasItsOwnDirectory(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	store, err := DefaultStore()
+	if err != nil {
+		t.Fatalf("DefaultStore: %v", err)
+	}
+	if got := filepath.Base(filepath.Dir(store.Path)); got != "homeshell-desktop" {
+		t.Errorf("DefaultStore().Path = %s, want it in a homeshell-desktop directory", store.Path)
+	}
+}
+
 func TestStoreRoundTrip(t *testing.T) {
 	store := Store{Path: filepath.Join(t.TempDir(), "nested", "desktop.json")}
 	if got := store.Load(); got != Default {
@@ -147,10 +160,17 @@ func TestScript(t *testing.T) {
 			wantSteps: `[]`, wantSwallowed: `[false]`,
 		},
 		{
-			name:      "a pinch steps once per 10% of scale",
+			name:      "a pinch zooms while the fingers move, one step per factor of 1.1",
 			goos:      "darwin",
-			events:    `[["gestureend",{"scale":1.3}],["gestureend",{"scale":0.8}],["gestureend",{"scale":1.02}]]`,
-			wantSteps: `[1,1,1,-1,-1]`, wantSwallowed: `[true,true,true]`,
+			events:    `[["gesturestart",{"scale":1}],["gesturechange",{"scale":1.1}],["gesturechange",{"scale":1.3}],["gesturechange",{"scale":1.2}],["gestureend",{"scale":1.2}]]`,
+			wantSteps: `[1,1,1,-1]`, wantSwallowed: `[true,true,true,true,true]`,
+		},
+		{
+			name:          "pinching out and in by the same factor steps the same amount",
+			goos:          "darwin",
+			events:        `[["gesturestart",{"scale":1}],["gestureend",{"scale":3}],["gesturestart",{"scale":1}],["gestureend",{"scale":0.3333333333333333}]]`,
+			wantSteps:     "[" + strings.Repeat("1,", 12) + strings.TrimSuffix(strings.Repeat("-1,", 12), ",") + "]",
+			wantSwallowed: `[true,true,true,true]`,
 		},
 	}
 	for _, tt := range tests {
