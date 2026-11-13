@@ -486,3 +486,103 @@ func assertFolderTaken(t *testing.T, svc *Service, projectID string) {
 		t.Errorf("AddDefaultWorkstream err = %v, want ErrDuplicateWorkingDir", err)
 	}
 }
+
+// pausingRefresher is a Refresher that follows a branch, holding each refresh
+// until release so a test can change the store while a pass is in flight.
+type pausingRefresher struct {
+	stubWorkstreamProvider
+	branch  string
+	paused  chan struct{}
+	release chan struct{}
+}
+
+func (p *pausingRefresher) RefreshInterval() time.Duration { return 0 }
+
+func (p *pausingRefresher) Refresh(_ context.Context, _ ProjectRef, ws domain.Workstream) domain.Workstream {
+	p.paused <- struct{}{}
+	<-p.release
+	ws.Branch = p.branch
+	return ws
+}
+
+// A change the user makes while a projection pass is in flight outlives the
+// pass: it is newer than what the pass read.
+func TestReconcileKeepsChangesMadeDuringThePass(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(t *testing.T, st *store.Store)
+		check  func(t *testing.T, st *store.Store)
+	}{
+		{
+			name: "a rename",
+			change: func(t *testing.T, st *store.Store) {
+				ws, err := st.Workstream("p1", "ws1")
+				if err != nil {
+					t.Fatal(err)
+				}
+				ws.Name = "my work"
+				if err := st.UpdateWorkstream("p1", ws); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, st *store.Store) {
+				ws, err := st.Workstream("p1", "ws1")
+				if err != nil || ws.Name != "my work" || ws.Branch != "main" {
+					t.Errorf("workstream = %q on %q, %v; want my work on main", ws.Name, ws.Branch, err)
+				}
+			},
+		},
+		{
+			name: "a dismissed status message",
+			change: func(t *testing.T, st *store.Store) {
+				if err := st.SetStatusMessage("p1", "ws1", ""); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, st *store.Store) {
+				if ws, err := st.Workstream("p1", "ws1"); err != nil || ws.StatusMessage != "" {
+					t.Errorf("status = %q, %v; want it dismissed", ws.StatusMessage, err)
+				}
+			},
+		},
+		{
+			name: "a removed workstream",
+			change: func(t *testing.T, st *store.Store) {
+				if err := st.RemoveWorkstream("p1", "ws1"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, st *store.Store) {
+				if ws, err := st.Workstream("p1", "ws1"); err == nil {
+					t.Errorf("workstream = %+v, want it to stay removed", ws)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := store.NewTestStore(t, []domain.Project{{ID: "p1", Path: "/p1", Workstreams: []domain.Workstream{
+				{ID: "ws1", Name: "feature", Branch: "feature", Provider: "pausing", WorkingDir: "/p1",
+					StatusMessage: "Restarting failed", Sessions: []domain.Session{}},
+			}}})
+			reg := NewRegistry()
+			refresher := &pausingRefresher{stubWorkstreamProvider: stubWorkstreamProvider{id: "pausing"},
+				branch: "main", paused: make(chan struct{}), release: make(chan struct{})}
+			if err := reg.RegisterWorkstreamProvider(refresher); err != nil {
+				t.Fatal(err)
+			}
+			reconciler := NewReconciler(st, reg, 0)
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				reconciler.Reconcile(context.Background())
+			}()
+			<-refresher.paused
+			tt.change(t, st)
+			close(refresher.release)
+			<-done
+			tt.check(t, st)
+		})
+	}
+}

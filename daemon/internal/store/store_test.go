@@ -706,7 +706,7 @@ func TestReplaceWorkstreamsPreservesSessionProviderData(t *testing.T) {
 
 	// Replace workstreams with the same set — simulates a refresh cycle.
 	replacement := seed[0].Workstreams
-	if err := store.ReplaceWorkstreams("p1", replacement); err != nil {
+	if err := store.ReplaceWorkstreams("p1", nil, replacement); err != nil {
 		t.Fatal(err)
 	}
 
@@ -760,11 +760,11 @@ func TestSnapshotHoldsRealWorkstreamsAndNoPlaceholders(t *testing.T) {
 	same := func() []domain.Workstream {
 		return []domain.Workstream{cloneWorkstream(real), {ID: "ws-2", Name: "other", Provider: "core", StrategyID: "in-place", WorkingDir: "/p1/other"}}
 	}
-	if err := s.ReplaceWorkstreams("p1", same()); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, same()); err != nil {
 		t.Fatalf("ReplaceWorkstreams: %v", err)
 	}
 	saves := saver.Saves
-	if err := s.ReplaceWorkstreams("p1", same()); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, same()); err != nil {
 		t.Fatalf("ReplaceWorkstreams(again): %v", err)
 	}
 	if saver.Saves != saves {
@@ -781,7 +781,7 @@ func TestSnapshotHoldsRealWorkstreamsAndNoPlaceholders(t *testing.T) {
 	}
 	withoutSession := same()
 	withoutSession[0].Sessions = nil
-	if err := s.ReplaceWorkstreams("p1", withoutSession); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, withoutSession); err != nil {
 		t.Fatalf("ReplaceWorkstreams(without session): %v", err)
 	}
 	if _, ok := saver.Last.SessionTitles["sess-1"]; ok {
@@ -868,7 +868,7 @@ func TestRestoreRoundTrips(t *testing.T) {
 	if err := s.AddProject(&project); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{{ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/alpha",
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/alpha",
 		Sessions: []domain.Session{{ID: "sess-1", Title: "t", Agent: "claude", Provider: "enclave", State: domain.SessionRunning}}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -904,7 +904,7 @@ func endedAtWorkstream(state domain.SessionState) domain.Workstream {
 // observeEndedAt reports state for s1 and returns the EndedAt the store keeps.
 func observeEndedAt(t *testing.T, s *Store, state domain.SessionState) *time.Time {
 	t.Helper()
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{endedAtWorkstream(state)}); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{endedAtWorkstream(state)}); err != nil {
 		t.Fatal(err)
 	}
 	return s.Projects()[0].Workstreams[0].Sessions[0].EndedAt
@@ -949,7 +949,7 @@ func TestReplaceWorkstreamsStampsEndedAt(t *testing.T) {
 			s.now = func() time.Time { return stampClock }
 			workstream := endedAtWorkstream(tt.after)
 			workstream.Sessions[0].EndedAt = tt.reported
-			if err := s.ReplaceWorkstreams("p1", []domain.Workstream{workstream}); err != nil {
+			if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{workstream}); err != nil {
 				t.Fatal(err)
 			}
 			if got := s.Projects()[0].Workstreams[0].Sessions[0].EndedAt; !sameTime(got, tt.want) {
@@ -1018,7 +1018,7 @@ func TestRestoredSessionKeepsItsPersistedEnd(t *testing.T) {
 		// stored session as is, with the projection's derived fields filled in.
 		carried := s.Projects()[0].Workstreams
 		carried[0].Sessions[0].Restartable = true
-		if err := s.ReplaceWorkstreams("p1", carried); err != nil {
+		if err := s.ReplaceWorkstreams("p1", nil, carried); err != nil {
 			t.Fatal(err)
 		}
 		if got := observeEndedAt(t, s, domain.SessionStopped); !sameTime(got, &persistedEnd) {
@@ -1036,4 +1036,92 @@ func TestRestoredSessionKeepsItsPersistedEnd(t *testing.T) {
 			t.Errorf("restored EndedAt = %v, want %v", got, stampClock)
 		}
 	})
+}
+
+// A projection is derived from a read of the store. What changed in the store
+// since that read is newer than the projection and is kept; what nobody changed
+// is the projection's to settle.
+func TestReplaceWorkstreamsKeepsChangesSinceTheRead(t *testing.T) {
+	seed := func() []domain.Project {
+		return []domain.Project{{ID: "p1", Path: "/p1", Workstreams: []domain.Workstream{{
+			ID: "ws1", Name: "feature", Branch: "feature", WorkingDir: "/p1",
+			Sessions: []domain.Session{
+				{ID: "s1", Provider: "prov", State: domain.SessionRunning},
+				{ID: "s2", Provider: "prov", State: domain.SessionRunning},
+			},
+		}}}}
+	}
+	tests := []struct {
+		name   string
+		change func(t *testing.T, s *Store)
+		check  func(t *testing.T, ws domain.Workstream)
+	}{
+		{
+			name:   "nothing changed: the projection settles",
+			change: func(*testing.T, *Store) {},
+			check: func(t *testing.T, ws domain.Workstream) {
+				if ws.Name != "main" || ws.Branch != "main" || len(ws.Sessions) != 2 {
+					t.Errorf("workstream = %q on %q with %d sessions, want main on main with 2", ws.Name, ws.Branch, len(ws.Sessions))
+				}
+			},
+		},
+		{
+			name: "a rename is kept, the branch still moves",
+			change: func(t *testing.T, s *Store) {
+				ws, _ := s.Workstream("p1", "ws1")
+				ws.Name = "my work"
+				if err := s.UpdateWorkstream("p1", ws); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, ws domain.Workstream) {
+				if ws.Name != "my work" || ws.Branch != "main" {
+					t.Errorf("workstream = %q on %q, want my work on main", ws.Name, ws.Branch)
+				}
+			},
+		},
+		{
+			name: "a removed session stays removed",
+			change: func(t *testing.T, s *Store) {
+				if err := s.RemoveSession("p1", "ws1", "s2"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, ws domain.Workstream) {
+				if len(ws.Sessions) != 1 || ws.Sessions[0].ID != "s1" {
+					t.Errorf("sessions = %+v, want s1 only", ws.Sessions)
+				}
+			},
+		},
+		{
+			name: "a session's state set meanwhile is kept",
+			change: func(t *testing.T, s *Store) {
+				if err := s.SetSessionState("p1", "ws1", "s1", domain.SessionStopped); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, ws domain.Workstream) {
+				if ws.Sessions[0].State != domain.SessionStopped {
+					t.Errorf("s1 state = %q, want stopped", ws.Sessions[0].State)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewTestStore(t, seed())
+			read := s.Projects()[0].Workstreams
+			projected := s.Projects()[0].Workstreams
+			projected[0].Name, projected[0].Branch = "main", "main"
+			tt.change(t, s)
+			if err := s.ReplaceWorkstreams("p1", read, projected); err != nil {
+				t.Fatalf("ReplaceWorkstreams: %v", err)
+			}
+			ws, err := s.Workstream("p1", "ws1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.check(t, ws)
+		})
+	}
 }

@@ -116,7 +116,7 @@ func TestRenameSurvivesReprojection(t *testing.T) {
 			State: domain.SessionRunning,
 		}},
 	}}
-	if err := s.ReplaceWorkstreams("p1", reprojected); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, reprojected); err != nil {
 		t.Fatalf("ReplaceWorkstreams: %v", err)
 	}
 
@@ -156,7 +156,7 @@ func TestResetSessionTitle(t *testing.T) {
 	}
 	// The provider's title returns with the next cycle — that is when the provider
 	// next says what it is.
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{{
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/tmp/p1",
 		Sessions: []domain.Session{{ID: "sess-1", Title: "claude session", Agent: "claude", Provider: "enclave"}},
 	}}); err != nil {
@@ -189,7 +189,7 @@ func TestReprojectionForgetsTitlesOfVanishedSessions(t *testing.T) {
 		t.Fatalf("RenameSession: %v", err)
 	}
 	// The container is torn down: the provider reports nothing for this directory.
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{{
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/tmp/p1",
 		Sessions: []domain.Session{},
 	}}); err != nil {
@@ -202,7 +202,7 @@ func TestReprojectionForgetsTitlesOfVanishedSessions(t *testing.T) {
 	// A session that later reappears under the same ID (a provider that had simply
 	// gone quiet is a different case — the reconciler retains those) is a new
 	// session as far as naming goes.
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{{
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/tmp/p1",
 		Sessions: []domain.Session{{ID: "sess-1", Title: "claude session", Agent: "claude", Provider: "enclave"}},
 	}}); err != nil {
@@ -235,7 +235,7 @@ func TestReprojectionKeepsOtherProjectsTitles(t *testing.T) {
 		t.Fatalf("RenameSession: %v", err)
 	}
 	// p1 re-projects with no sessions at all; p2's name must be untouched.
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{}); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{}); err != nil {
 		t.Fatalf("ReplaceWorkstreams: %v", err)
 	}
 	if got := sessionTitle(t, s, "sess-2"); got != "the other project" {

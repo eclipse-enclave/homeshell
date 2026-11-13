@@ -410,8 +410,10 @@ func cloneWorkstream(workstream domain.Workstream) domain.Workstream {
 // ReplaceWorkstreams swaps a project's workstreams with the given set,
 // recomputes derived state, and persists and broadcasts only when the set
 // actually changed (a reconcile wave would otherwise overflow a slow SSE
-// subscriber). The store takes ownership of workstreams: callers must not reuse it.
-func (s *Store) ReplaceWorkstreams(projectID string, workstreams []domain.Workstream) error {
+// subscriber). read is the project's workstreams as the set was derived from
+// them: what changed in the store since then is kept (keepChangesSinceRead).
+// The store takes ownership of workstreams: callers must not reuse it.
+func (s *Store) ReplaceWorkstreams(projectID string, read, workstreams []domain.Workstream) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.projects {
@@ -421,6 +423,7 @@ func (s *Store) ReplaceWorkstreams(projectID string, workstreams []domain.Workst
 		if workstreams == nil {
 			workstreams = []domain.Workstream{}
 		}
+		workstreams = keepChangesSinceRead(read, s.projects[i].Workstreams, workstreams)
 		// Anything the daemon started tracking while this projection was being
 		// computed is missing from it, and must survive the swap.
 		workstreams = retainInFlightLocked(s.projects[i].Workstreams, workstreams, s.unprojectedPromotions)
@@ -597,6 +600,82 @@ func retainInFlightLocked(live, next []domain.Workstream, unprojected map[string
 		}
 	}
 	return next
+}
+
+// keepChangesSinceRead carries onto a projection what changed in the live state
+// since the projection read it: a rename, a dismissed status message, a removed
+// workstream or session. Such a change was made while the pass was asking the
+// providers, so it is newer than anything the pass derived from its read, and
+// it wins; a field nobody changed meanwhile is the projection's to settle.
+// Placeholders are left to retainInFlightLocked, and a nil read (no read to
+// compare with) keeps the projection as it is.
+func keepChangesSinceRead(read, live, next []domain.Workstream) []domain.Workstream {
+	if read == nil {
+		return next
+	}
+	readWorkstreams, liveWorkstreams := workstreamsByID(read), workstreamsByID(live)
+	readSessions, liveSessions := sessionsByID(read), sessionsByID(live)
+	kept := next[:0]
+	for _, workstream := range next {
+		was, wasRead := readWorkstreams[workstream.ID]
+		now, isLive := liveWorkstreams[workstream.ID]
+		if strings.HasPrefix(workstream.ID, PlaceholderIDPrefix) || !wasRead {
+			kept = append(kept, workstream)
+			continue
+		}
+		if !isLive {
+			continue
+		}
+		keepChangedFields(was, now, &workstream, "Sessions")
+		workstream.Sessions = slices.DeleteFunc(workstream.Sessions, func(sess domain.Session) bool {
+			_, wasRead := readSessions[sess.ID]
+			_, isLive := liveSessions[sess.ID]
+			return wasRead && !isLive && !isStartingPlaceholder(sess)
+		})
+		for j := range workstream.Sessions {
+			was, wasRead := readSessions[workstream.Sessions[j].ID]
+			now, isLive := liveSessions[workstream.Sessions[j].ID]
+			if wasRead && isLive {
+				keepChangedFields(was, now, &workstream.Sessions[j])
+			}
+		}
+		kept = append(kept, workstream)
+	}
+	return kept
+}
+
+// keepChangedFields sets each field of next that differs between read and live,
+// skip aside, to live's value.
+func keepChangedFields[T any](read, live T, next *T, skip ...string) {
+	readValue, liveValue, nextValue := reflect.ValueOf(read), reflect.ValueOf(live), reflect.ValueOf(next).Elem()
+	for i := range readValue.NumField() {
+		if slices.Contains(skip, readValue.Type().Field(i).Name) {
+			continue
+		}
+		if !reflect.DeepEqual(readValue.Field(i).Interface(), liveValue.Field(i).Interface()) {
+			nextValue.Field(i).Set(liveValue.Field(i))
+		}
+	}
+}
+
+// workstreamsByID indexes workstreams by ID.
+func workstreamsByID(workstreams []domain.Workstream) map[string]domain.Workstream {
+	byID := make(map[string]domain.Workstream, len(workstreams))
+	for _, workstream := range workstreams {
+		byID[workstream.ID] = workstream
+	}
+	return byID
+}
+
+// sessionsByID indexes the sessions workstreams list by ID.
+func sessionsByID(workstreams []domain.Workstream) map[string]domain.Session {
+	byID := map[string]domain.Session{}
+	for _, workstream := range workstreams {
+		for _, sess := range workstream.Sessions {
+			byID[sess.ID] = sess
+		}
+	}
+	return byID
 }
 
 // forgetPromotionsLocked drops a project's unprojected promotions, once a

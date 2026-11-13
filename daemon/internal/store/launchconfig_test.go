@@ -18,7 +18,7 @@ func TestLaunchConfigRoundTripsAndSurvivesReprojection(t *testing.T) {
 		t.Fatalf("SetLaunchConfig: %v", err)
 	}
 	// The session is re-reported by its provider, as every reconcile cycle does.
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{{
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/tmp/p1",
 		Sessions: []domain.Session{{ID: "sess-1", Title: "claude session", Agent: "claude", Provider: "enclave"}},
 	}}); err != nil {
@@ -45,7 +45,7 @@ func TestReprojectionForgetsLaunchConfigsOfVanishedSessions(t *testing.T) {
 	if err := s.SetLaunchConfig("p1", "sess-1", domain.LaunchConfig{ProviderID: "enclave", OptionID: "claude"}); err != nil {
 		t.Fatalf("SetLaunchConfig: %v", err)
 	}
-	if err := s.ReplaceWorkstreams("p1", []domain.Workstream{{
+	if err := s.ReplaceWorkstreams("p1", nil, []domain.Workstream{{
 		ID: "ws-1", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/tmp/p1",
 	}}); err != nil {
 		t.Fatalf("ReplaceWorkstreams: %v", err)
@@ -98,7 +98,7 @@ func TestRemoveProjectMovesTheRecordsOfASessionAnotherProjectLists(t *testing.T)
 		{ID: "p2", Name: "p2", Path: "/tmp/shared"},
 	})
 	// Projected into the other project sharing its directory, as discovery does.
-	if err := s.ReplaceWorkstreams("p2", []domain.Workstream{{
+	if err := s.ReplaceWorkstreams("p2", nil, []domain.Workstream{{
 		ID: "ws-2", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/tmp/shared",
 		Sessions: []domain.Session{shared},
 	}}); err != nil {
@@ -128,7 +128,7 @@ func TestRemoveProjectMovesTheRecordsOfASessionAnotherProjectLists(t *testing.T)
 		t.Errorf("persisted title = %+v; want it moved to p2", titles["sess-1"])
 	}
 	// The other project's next projection shows the title, and keeps both.
-	if err := s.ReplaceWorkstreams("p2", []domain.Workstream{{
+	if err := s.ReplaceWorkstreams("p2", nil, []domain.Workstream{{
 		ID: "ws-2", Name: "ws", Provider: "core", StrategyID: "in-place", WorkingDir: "/tmp/shared",
 		Sessions: []domain.Session{shared},
 	}}); err != nil {
@@ -202,7 +202,7 @@ func TestStaleProjectionKeepsAJustPromotedSessionsLaunchConfig(t *testing.T) {
 		t.Fatalf("PromoteEphemeralSession: %v", err)
 	}
 
-	if err := s.ReplaceWorkstreams("p1", staleProjection()); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, staleProjection()); err != nil {
 		t.Fatalf("ReplaceWorkstreams (stale): %v", err)
 	}
 	if got, ok := s.LaunchConfig("sess-1"); !ok || string(got.Config) != `{"model":"opus"}` {
@@ -216,7 +216,7 @@ func TestStaleProjectionKeepsAJustPromotedSessionsLaunchConfig(t *testing.T) {
 	}
 
 	// The session has really gone: the next projection drops it, and its record.
-	if err := s.ReplaceWorkstreams("p1", staleProjection()); err != nil {
+	if err := s.ReplaceWorkstreams("p1", nil, staleProjection()); err != nil {
 		t.Fatalf("ReplaceWorkstreams: %v", err)
 	}
 	if _, ok := s.LaunchConfig("sess-1"); ok {

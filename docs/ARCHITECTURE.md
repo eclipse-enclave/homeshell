@@ -295,6 +295,10 @@ flowchart TB
   must not flush sessions, but a session nothing can confirm must not linger as a ghost.
 - Per-project locks serialize passes; the store is re-read after discovery so concurrent creates
   survive.
+- **Changes during a pass win.** A pass writes back with the read it started from, and
+  `store.ReplaceWorkstreams` keeps every field, workstream or session removal that changed in the
+  store since that read (`keepChangesSinceRead`). Why: a rename, a dismissed message or a
+  removal made while the pass ran is newer than the pass's copy and must not be reverted.
 
 ## Persistence
 
