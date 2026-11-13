@@ -250,7 +250,7 @@ describe('ProjectView sections', () => {
 
     expect(
       within(section(/^In the project folder/)).getByText(
-        'Nothing works in the project folder.',
+        'No workstream in the project folder.',
       ),
     ).toBeTruthy();
     expect(

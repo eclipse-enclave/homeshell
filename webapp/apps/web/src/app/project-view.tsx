@@ -698,7 +698,7 @@ export function ProjectView({
           ) : (
             <div className={styles.emptySection}>
               <p className={styles.emptyText}>
-                Nothing works in the project folder.
+                No workstream in the project folder.
               </p>
               <Button
                 ref={workHereRef}

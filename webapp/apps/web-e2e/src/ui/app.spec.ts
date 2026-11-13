@@ -180,7 +180,7 @@ test('switching the project swaps the workstream panel', async ({ page }) => {
 
   await nav.getByRole('button', { name: /notes/ }).click();
   await expect(
-    page.getByText('Nothing works in the project folder.'),
+    page.getByText('No workstream in the project folder.'),
   ).toBeVisible();
 });
 

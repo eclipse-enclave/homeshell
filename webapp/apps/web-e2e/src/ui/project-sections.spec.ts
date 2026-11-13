@@ -58,7 +58,7 @@ test('a git project shows its folder apart from its worktrees, and Work here tak
   );
   expect(removed.status()).toBe(204);
   await expect(
-    folder.getByText('Nothing works in the project folder.'),
+    folder.getByText('No workstream in the project folder.'),
   ).toBeVisible();
   await folder.getByRole('button', { name: 'Work here' }).click();
 
