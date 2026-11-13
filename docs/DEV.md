@@ -323,8 +323,9 @@ pull request cancels its running checks.
 - The daemon job cross-compiles for macOS. Why: every CI job runs on Ubuntu while releases also
   build on macOS, so a Linux-only syscall would break only in the release build.
 - `release-assets-smoke.yml` builds every release artifact for a pull request that touches
-  packaging (`Makefile`, `debian/`, `packaging/`, the asset workflow, `go.mod`). It publishes
-  nothing.
+  packaging (`Makefile`, `debian/`, `packaging/`, the asset workflow, `go.mod`) or the desktop
+  app's cgo code (`desktop/cmd/`). It publishes nothing. Why `desktop/cmd/`: the CI desktop job
+  builds on Linux only, so this is the only PR build of the macOS code.
 - Workflows pin every action to a full commit SHA, with its release tag in a comment. Why: a tag
   can be moved to other code, and the release jobs hold a token that can write releases.
 

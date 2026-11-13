@@ -18,6 +18,8 @@ on:
       - 'scripts/verify-package.sh'
       - 'daemon/go.mod'
       - 'desktop/go.mod'
+      # The desktop app's cgo code; the CI desktop job builds it on Linux only.
+      - 'desktop/cmd/**'
 
 concurrency:
   group: release-assets-smoke-${{ github.event.pull_request.number || github.ref }}
