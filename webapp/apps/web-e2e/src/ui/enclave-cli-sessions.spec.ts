@@ -1,8 +1,11 @@
+import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
+  betweenChecks,
   buildEnclaveFixture,
+  calls,
   cliContainer,
   isolatedDaemon,
   projectAndWorkstream,
@@ -13,6 +16,8 @@ import { browserServer } from './browser-server';
 import { selectProject } from './workstream-helpers';
 
 const container = 'enclave-codex-0123456789ab-feature';
+// What a plain `enclave` in a terminal starts: the project's default container.
+const unnamed = 'enclave-codex-0123456789ab';
 const takeOverWarning =
   'This ends the session in its terminal and continues its conversation in HomeShell.';
 
@@ -116,6 +121,90 @@ test.describe('Enclave sessions started with the CLI', () => {
       await browser.close();
       await ws.remove();
       await daemon.stop();
+    }
+  });
+
+  // A daemon, a browser on it, and the project card, with an unnamed session
+  // started in a terminal.
+  async function unnamedInTerminal(page: Page) {
+    const daemon = await isolatedDaemon({ inventoryMs: 200 });
+    const browser = await browserServer(daemon);
+    const ws = await projectAndWorkstream(daemon);
+    const dir = join(daemon.root, 'project');
+    const startInTerminal = () =>
+      cliContainer(daemon.fixture, {
+        name: unnamed,
+        session: '',
+        dir,
+        background: false,
+      });
+    startInTerminal();
+    await page.goto(browser.url);
+    await selectProject(page, basename(dir));
+    const card = page.getByRole('region', { name: 'Workstream enclave' });
+    const row = card.locator(`[data-nav-id="${unnamed}"]`);
+    const close = async () => {
+      await page.close();
+      await browser.close();
+      await ws.remove();
+      await daemon.stop();
+    };
+    return { daemon, card, row, startInTerminal, close };
+  }
+
+  test('Restart in HomeShell keeps the conversation of an unnamed terminal session', async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const { card, row, close } = await unnamedInTerminal(page);
+    try {
+      await row
+        .getByRole('button', { name: 'Restart in HomeShell', exact: true })
+        .click();
+      await page
+        .getByRole('dialog', { name: 'Restart "codex session" in HomeShell?' })
+        .getByRole('button', { name: 'Restart in HomeShell', exact: true })
+        .click();
+      // The same row goes on: under another name its conversation would be
+      // missing and the agent would exit.
+      await expect(row.getByText('Ready')).toBeVisible({ timeout: 20_000 });
+      await expect(card.locator('[data-nav-id]')).toHaveCount(1);
+    } finally {
+      await close();
+    }
+  });
+
+  test('Continue of an ended row leaves a new terminal session under its name running', async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const { daemon, row, startInTerminal, close } =
+      await unnamedInTerminal(page);
+    try {
+      const state = row.getByTestId('session-state');
+      await expect(state).toHaveText('Running');
+      rmSync(join(daemon.fixture, `container-${unnamed}.json`));
+      const continueButton = row.getByRole('button', { name: 'Continue' });
+      await expect(continueButton).toBeVisible();
+
+      // Started again in the terminal, and Continue clicked before the next
+      // check found it.
+      const stopsBefore = calls(daemon.fixture, 'stop').length;
+      await betweenChecks(daemon.fixture, async () => {
+        startInTerminal();
+        await continueButton.click();
+      });
+      await expect(page.getByRole('alert')).toContainText(
+        'This session is running again, started outside HomeShell.',
+      );
+      await expect(state).toHaveText('Running');
+      await expect(
+        row.getByText('Running in a terminal.', { exact: false }),
+      ).toBeVisible();
+      expect(calls(daemon.fixture, 'stop')).toHaveLength(stopsBefore);
+      expect(calls(daemon.fixture, 'continue')).toHaveLength(0);
+    } finally {
+      await close();
     }
   });
 });

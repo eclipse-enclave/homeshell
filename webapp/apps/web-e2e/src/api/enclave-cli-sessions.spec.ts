@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import {
   afterChecks,
   attaches,
+  betweenChecks,
   buildEnclaveFixture,
   calls,
   cliContainer,
@@ -42,8 +43,7 @@ test.describe('Enclave sessions started with the CLI', () => {
     const daemon = await isolatedDaemon({ inventoryMs: 200 });
     const ws = await projectAndWorkstream(daemon);
     const dir = join(daemon.root, 'project');
-    const row = (id: string) => ws.session(id);
-    return { daemon, ws, dir, row };
+    return { daemon, ws, dir };
   }
 
   test('adopts a background CLI session and attaches it once, across a daemon restart', async () => {
@@ -117,7 +117,7 @@ test.describe('Enclave sessions started with the CLI', () => {
 
   test('a foreground session that ends becomes an ended row that continues in HomeShell', async () => {
     test.setTimeout(60_000);
-    const { daemon, ws, dir, row } = await setUp();
+    const { daemon, ws, dir } = await setUp();
     try {
       cliContainer(daemon.fixture, {
         name: foreground,
@@ -133,19 +133,15 @@ test.describe('Enclave sessions started with the CLI', () => {
 
       const started = await daemon.api.post(`${ws.base}/${foreground}/start`);
       expect(started.ok()).toBe(true);
-      const continued = await pollFor('the continued session', async () =>
-        (await ws.sessions()).find(
-          (s) => s.id !== foreground && s.state === 'idle',
-        ),
-      );
-      expect(continued.id).toMatch(/-hs-/);
+      // Under its own name, which holds its conversation.
+      const continued = await rowWhere(ws, foreground, 'idle');
       expect(continued.restartable).toBe(true);
       expect(continued.capabilities).toBeUndefined();
-      expect(await row(foreground)).toBeUndefined();
+      expect(await ws.sessions()).toHaveLength(1);
 
       const last = calls(daemon.fixture, 'continue').at(-1) ?? [];
       expect(last).toContain('--background');
-      expect(last[last.indexOf('--name') + 1]).toMatch(/^hs-/);
+      expect(last).not.toContain('--name');
 
       const config = await daemon.api.get(
         `${ws.base}/${continued.id}/launch-config`,
@@ -153,6 +149,72 @@ test.describe('Enclave sessions started with the CLI', () => {
       expect((await config.json()).config).toEqual({
         enclave: { allowDomains: ['y.org'] },
       });
+    } finally {
+      await ws.remove();
+      await daemon.stop();
+    }
+  });
+
+  test('Restart in HomeShell continues an unnamed terminal session under its name', async () => {
+    test.setTimeout(60_000);
+    const { daemon, ws, dir } = await setUp();
+    try {
+      cliContainer(daemon.fixture, {
+        name: foreground,
+        session: '',
+        dir,
+        background: false,
+      });
+      await rowWhere(ws, foreground, 'running');
+
+      const restarted = await daemon.api.post(
+        `${ws.base}/${foreground}/restart`,
+      );
+      expect(restarted.status()).toBe(202);
+      // The fixture, as Enclave, keeps the conversation per session name: under
+      // another name the continue would find none and fail.
+      const continued = await rowWhere(ws, foreground, 'idle');
+      expect(continued.capabilities).toBeUndefined();
+      expect(await ws.sessions()).toHaveLength(1);
+      const last = calls(daemon.fixture, 'continue').at(-1) ?? [];
+      expect(last).not.toContain('--name');
+    } finally {
+      await ws.remove();
+      await daemon.stop();
+    }
+  });
+
+  test('Continue leaves a session started again under its name to the terminal', async () => {
+    test.setTimeout(60_000);
+    const { daemon, ws, dir } = await setUp();
+    try {
+      const startInTerminal = () =>
+        cliContainer(daemon.fixture, {
+          name: foreground,
+          session: '',
+          dir,
+          background: false,
+        });
+      startInTerminal();
+      await rowWhere(ws, foreground, 'running');
+      rmSync(join(daemon.fixture, `container-${foreground}.json`));
+      await rowWhere(ws, foreground, 'done');
+
+      // A plain `enclave` in the terminal takes the default container again,
+      // and Continue is clicked before the next check found it.
+      const stopsBefore = calls(daemon.fixture, 'stop').length;
+      const started = await betweenChecks(daemon.fixture, () => {
+        startInTerminal();
+        return daemon.api.post(`${ws.base}/${foreground}/start`);
+      });
+      expect(started.status()).toBe(409);
+      expect((await started.json()).error).toBe(
+        'This session is running again, started outside HomeShell. It shows here as running in a moment.',
+      );
+      expect(calls(daemon.fixture, 'stop')).toHaveLength(stopsBefore);
+      expect(calls(daemon.fixture, 'continue')).toHaveLength(0);
+      const adopted = await rowWhere(ws, foreground, 'running');
+      expect(adopted.capabilities?.takeOver).toBe(true);
     } finally {
       await ws.remove();
       await daemon.stop();

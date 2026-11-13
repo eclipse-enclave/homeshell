@@ -327,7 +327,9 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
   provider can; the Enclave provider does so as a restart.
 - **Restart** without a body reuses the last launch config; `fresh` starts a new conversation
   instead of continuing. A session with no launch config restarts with the settings its provider
-  observed, if any. `409` while the session is `starting`, or for one that cannot restart.
+  observed, if any. `409` while the session is `starting`, or for one that cannot restart, such as
+  an ended Enclave session whose container runs again
+  ([Eclipse Enclave](PROVIDERS.md#eclipse-enclave)); Start answers the same.
 - **Launch config** is what the session was last started with, plus the option's schema, so a
   restart form opens pre-filled. For a session with none it holds the settings its provider
   observed, if any. `continueRefusal` says why the conversation cannot be continued.

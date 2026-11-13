@@ -237,9 +237,13 @@ container is Enclave's to manage.
 - **Start** of a stopped, done or error session is an `enclave continue`, run by the service as a
   restart.
 - **Restart** or Continue runs in the background, attached by HomeShell; a foreground session ends in
-  its terminal. A named session keeps its name. An unnamed container (the default one, or an
-  auto-numbered one) goes on under a new HomeShell name; the row is replaced and keeps its title and
-  settings. Why: the default container stays free for the next `enclave` start in a terminal.
+  its terminal. A session that continues its conversation keeps its name, the default container
+  included. Why: Enclave keeps the conversation per session name, so under another name there is
+  none to continue. A fresh restart of an unnamed container (the default one, or an auto-numbered
+  one) goes on under a new HomeShell name; the row is replaced and keeps its title and settings.
+  Why: the default container stays free for the next `enclave` start in a terminal. A restart or
+  Continue of an ended session whose container runs again (a new `enclave` start in a terminal) is
+  refused (`409`) and stops nothing; the next inventory check adopts the new session.
 - **CLI session settings:** a CLI session has no recorded launch config (a session HomeShell started
   that is started again in a terminal under its name drops its own), so its restart or Continue
   starts with the options Enclave recorded for the container, as far as the create form models

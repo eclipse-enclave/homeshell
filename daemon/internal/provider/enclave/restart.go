@@ -1,6 +1,7 @@
 package enclave
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -16,9 +17,9 @@ import (
 // continue: cannotContinue). Which name the session goes on under (restartNames) and what it continues are in
 // docs/PROVIDERS.md (Eclipse Enclave).
 //
-// Everything that can refuse the restart — a container that is not Enclave's (CheckRestart), settings that cannot
-// become flags — is checked here, and nothing is changed: the session is only shown as starting once the returned
-// func runs.
+// Everything that can refuse the restart — a container that is not Enclave's (CheckRestart), an ended session whose
+// container runs again (refuseRunningAgain), settings that cannot become flags — is checked here, and nothing is
+// changed: the session is only shown as starting once the returned func runs.
 func (p *Provider) PrepareRestart(ctx context.Context, req provider.RestartSessionRequest) (provider.RestartFunc, error) {
 	container := req.Session.SessionID
 	record, owned := p.bridgeRecordFor(container)
@@ -26,8 +27,11 @@ func (p *Provider) PrepareRestart(ctx context.Context, req provider.RestartSessi
 		return nil, fmt.Errorf("%w: unknown Enclave session", provider.ErrSessionNotRestartable)
 	}
 	tool := restartTool(req.OptionID)
-	target, sessionName, err := restartNames(container, tool)
+	target, sessionName, err := restartNames(container, tool, req.Fresh)
 	if err != nil {
+		return nil, err
+	}
+	if err := p.refuseRunningAgain(ctx, record, req.WorkingDir); err != nil {
 		return nil, err
 	}
 	p.forgetBase(req.WorkingDir, tool)
@@ -56,6 +60,37 @@ func (p *Provider) PrepareRestart(ctx context.Context, req provider.RestartSessi
 	return func(ctx context.Context) error { return p.restart(ctx, restarting, opts) }, nil
 }
 
+// refuseRunningAgain refuses to restart an ended session whose container runs again, as a plain `enclave` start in
+// a terminal takes the default container again: the restart would stop that session, unwarned. The next inventory
+// check adopts it instead, by the same rule (adoptionDue). It lists the project Enclave resolved the container to,
+// whose listing has the container wherever it runs. A listing that fails refuses too, as it cannot tell; a start in
+// the moment between the listing and the stop is not caught.
+func (p *Provider) refuseRunningAgain(ctx context.Context, record bridgeRecord, workingDir string) error {
+	if !record.State.Terminal() {
+		return nil
+	}
+	dir := cmp.Or(record.Container.ProjectDir, record.Container.Directory, workingDir)
+	containers, err := p.cli.ListSessions(ctx, dir)
+	if err != nil {
+		return fmt.Errorf("%w: cannot tell whether it is running again: %v", provider.ErrSessionNotRestartable, err)
+	}
+	for _, listed := range containers {
+		if listed.Name == record.Container.Name && adoptionDue(listed, record, true, nil) {
+			return runningAgainError{}
+		}
+	}
+	return nil
+}
+
+// runningAgainError is refuseRunningAgain's refusal: a conflict (ErrSessionNotRestartable), in words for the user
+// rather than behind the sentinel's.
+type runningAgainError struct{}
+
+func (runningAgainError) Error() string {
+	return "This session is running again, started outside HomeShell. It shows here as running in a moment."
+}
+func (runningAgainError) Unwrap() error { return provider.ErrSessionNotRestartable }
+
 // CheckRestart refuses a session PrepareRestart would refuse whatever its
 // settings: one this provider has no record of, or a container not named as
 // Enclave names the tool's.
@@ -63,7 +98,7 @@ func (p *Provider) CheckRestart(ref provider.SessionRef, optionID string) error 
 	if _, owned := p.bridgeRecordFor(ref.SessionID); !owned {
 		return fmt.Errorf("%w: unknown Enclave session", provider.ErrSessionNotRestartable)
 	}
-	_, _, err := restartNames(ref.SessionID, restartTool(optionID))
+	_, _, err := restartNames(ref.SessionID, restartTool(optionID), false /* fresh: refuses the same names */)
 	return err
 }
 
@@ -89,19 +124,19 @@ func restartTool(optionID string) string {
 	return optionID
 }
 
-// restartNames is the container a restart of container brings back and the --name it passes: the same ones for
-// a named session; for the default container or an auto-assigned number (`1`, `2`, …) a new hs- name. Why: an
-// unnamed start in a terminal takes the default container, or numbers its own when that is taken; continued
-// under either name, the session would hold it or pass for one started there. A user's `--name 3` reads as
-// a number too.
-func restartNames(container, tool string) (target, sessionName string, err error) {
+// restartNames is the container a restart of container brings back and the --name it passes: the same ones when
+// the restart continues the conversation, which Enclave keeps per session name, so `enclave continue` under another
+// name would find none. A fresh restart of the default container or an auto-assigned number (`1`, `2`, …) takes a
+// new hs- name instead. Why: an unnamed start in a terminal takes the default container, or numbers its own when
+// that is taken; a new conversation need not hold it. A user's `--name 3` reads as a number too.
+func restartNames(container, tool string, fresh bool) (target, sessionName string, err error) {
 	base, ok := containerBase(container, tool)
 	if !ok {
 		return "", "", fmt.Errorf("%w: %q is not the name of an Enclave %s container", provider.ErrSessionNotRestartable,
 			container, tool)
 	}
 	sessionName = strings.TrimPrefix(strings.TrimPrefix(container, base), "-")
-	if unnamed := sessionName == "" || isDigits(sessionName); !unnamed {
+	if unnamed := sessionName == "" || isDigits(sessionName); !unnamed || !fresh {
 		return container, sessionName, nil
 	}
 	sessionName = newSessionName()

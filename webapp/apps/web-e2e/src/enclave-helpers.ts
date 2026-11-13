@@ -191,6 +191,8 @@ export function cliContainer(
       ...container,
     }),
   );
+  // Its agent has a conversation, kept under its name, to continue.
+  writeFileSync(join(fixture, `conversation-${container.name}`), '');
 }
 
 export function calls(fixture: string, ...commands: string[]): string[][] {
@@ -230,6 +232,33 @@ export function rowWhere(
     const found = await ws.session(id);
     return found?.state === state ? found : undefined;
   });
+}
+
+/**
+ * Runs act between two inventory checks: the check is held in its `enclave ps`
+ * while act runs, so the daemon's records stay as the last check left them.
+ * act's own `enclave ps` waits too, and both go on once it has asked.
+ */
+export async function betweenChecks<T>(
+  fixture: string,
+  act: () => Promise<T>,
+): Promise<T> {
+  const block = join(fixture, 'block-inventory');
+  rmSync(join(fixture, 'inventory-blocked'), { force: true });
+  writeFileSync(block, '');
+  try {
+    await expect
+      .poll(() => existsSync(join(fixture, 'inventory-blocked')))
+      .toBe(true);
+    const listings = () => calls(fixture, 'ps').length;
+    const before = listings();
+    const pending = act();
+    await expect.poll(listings).toBeGreaterThan(before);
+    rmSync(block);
+    return await pending;
+  } finally {
+    rmSync(block, { force: true });
+  }
 }
 
 // Marker files the fixture CLI keeps per live container and gateway.

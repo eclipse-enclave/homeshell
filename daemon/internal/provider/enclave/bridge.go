@@ -58,9 +58,9 @@ type bridgeRecord struct {
 	// Foreground is a session started with the CLI that runs in a user's terminal: it has no bridge, and its
 	// state comes from the inventory (adopt.go). It, not Container.Background, says whether a record is bridged().
 	Foreground bool `json:"foreground,omitempty"`
-	// Replaces is the session this one continues under a new name (restartNames). It stays set, and Enclave may
-	// reuse the old ID (its default container): the store moves records only to a session listed for the first
-	// time, so an earlier replacement does not take what a later session under that ID leaves.
+	// Replaces is the session a fresh restart replaced with this one, under a new name (restartNames). It stays
+	// set, and Enclave may reuse the old ID (its default container): the store moves records only to a session
+	// listed for the first time, so an earlier replacement does not take what a later session under that ID leaves.
 	Replaces string `json:"replaces,omitempty"`
 	// ReplacingFrom marks a restart under a new name that has not ended (replace); hidden meanwhile. A daemon that
 	// finds it on load crashed in between, and completes the replacement (completeReplacements).

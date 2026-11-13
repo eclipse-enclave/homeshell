@@ -192,24 +192,30 @@ func TestContinueRefusal(t *testing.T) {
 	}
 }
 
-// A named session is restarted under its own name; an unnamed one — the project's default container, or one
-// Enclave numbered because the default was taken — under a new HomeShell name, leaving its name to the terminal.
+// A restart that continues keeps the session's name, as Enclave keeps the conversation per name. A fresh one
+// keeps a named session's name too; an unnamed one (the project's default container, or one Enclave numbered
+// because the default was taken) takes a new HomeShell name, leaving its name to the terminal.
 func TestRestartNames(t *testing.T) {
 	tests := []struct {
 		name            string
 		container       string
-		wantSessionName string // "" for a new hs- name
+		fresh           bool
+		wantSessionName string
+		wantNewName     bool
 		wantErr         error
 	}{
-		{name: "the default container", container: "enclave-claude-abc123abc123"},
-		{name: "an auto-numbered container", container: "enclave-claude-abc123abc123-1"},
-		{name: "a named session", container: "enclave-claude-abc123abc123-feature", wantSessionName: "feature"},
+		{name: "continue the default container", container: "enclave-claude-abc123abc123"},
+		{name: "continue an auto-numbered container", container: "enclave-claude-abc123abc123-1", wantSessionName: "1"},
+		{name: "continue a named session", container: "enclave-claude-abc123abc123-feature", wantSessionName: "feature"},
+		{name: "fresh default container", container: "enclave-claude-abc123abc123", fresh: true, wantNewName: true},
+		{name: "fresh auto-numbered container", container: "enclave-claude-abc123abc123-1", fresh: true, wantNewName: true},
+		{name: "fresh named session", container: "enclave-claude-abc123abc123-feature", fresh: true, wantSessionName: "feature"},
 		{name: "another tool's container", container: "enclave-codex-abc123abc123", wantErr: provider.ErrSessionNotRestartable},
 		{name: "no Enclave container", container: "not-an-enclave-name", wantErr: provider.ErrSessionNotRestartable},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			target, sessionName, err := restartNames(tt.container, "claude")
+			target, sessionName, err := restartNames(tt.container, "claude", tt.fresh)
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
 					t.Fatalf("restartNames = %v; want %v", err, tt.wantErr)
@@ -220,7 +226,7 @@ func TestRestartNames(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantTarget := tt.container
-			if tt.wantSessionName == "" {
+			if tt.wantNewName {
 				if !strings.HasPrefix(sessionName, sessionNamePrefix) {
 					t.Fatalf("session name = %q; want a new %s name", sessionName, sessionNamePrefix)
 				}
@@ -257,6 +263,7 @@ func adoptedDefault(t *testing.T, background bool) (*Provider, *fakeCLI, *testBr
 		t.Fatal("the default container was not adopted")
 	}
 	cli.runBase = defaultContainer
+	cli.conversations = map[string]bool{defaultContainer: true}
 	return p, cli, bridge, project
 }
 
@@ -268,11 +275,43 @@ func restartOf(p *Provider, project provider.ProjectRef, container string) (prov
 	})
 }
 
-// A restart of an unnamed session continues it under a new HomeShell name, in the background, and its row is
-// replaced by the new session's, attached once. Until then the session shows alone, starting.
-func TestRestartOfAnUnnamedSessionReplacesIt(t *testing.T) {
+// freshRestartOf restarts container on a new conversation.
+func freshRestartOf(p *Provider, project provider.ProjectRef, container string) (provider.RestartFunc, error) {
+	return p.PrepareRestart(context.Background(), provider.RestartSessionRequest{
+		Session:    provider.SessionRef{ProjectID: project.ID, SessionID: container},
+		WorkingDir: project.Path,
+		OptionID:   "codex",
+		Fresh:      true,
+	})
+}
+
+// A restart of an unnamed session continues its conversation under its own name, in the background, attached
+// once more: the conversation is kept per session name.
+func TestRestartOfAnUnnamedSessionKeepsItsName(t *testing.T) {
 	p, cli, bridge, project := adoptedDefault(t, true)
 	run, err := restartOf(p, project, defaultContainer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if opts := cli.runCalls[0].opts; !opts.Continue || !opts.Background || opts.SessionName != "" {
+		t.Fatalf("run = %+v; want a background continue of the default container", opts)
+	}
+	if shown := rows(t, p, project); len(shown) != 1 || shown[defaultContainer].State.Terminal() {
+		t.Errorf("rows = %+v; want only %s, running", shown, defaultContainer)
+	}
+	if len(bridge.starts) != 2 {
+		t.Errorf("bridge started %d times; want twice, by the adoption and by the restart", len(bridge.starts))
+	}
+}
+
+// A fresh restart of an unnamed session goes on under a new HomeShell name, in the background, and its row is
+// replaced by the new session's, attached once. Until then the session shows alone, starting.
+func TestFreshRestartOfAnUnnamedSessionReplacesIt(t *testing.T) {
+	p, cli, bridge, project := adoptedDefault(t, true)
+	run, err := freshRestartOf(p, project, defaultContainer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,8 +325,8 @@ func TestRestartOfAnUnnamedSessionReplacesIt(t *testing.T) {
 	}
 
 	opts := cli.runCalls[0].opts
-	if !opts.Continue || !opts.Background || !strings.HasPrefix(opts.SessionName, sessionNamePrefix) {
-		t.Fatalf("run = %+v; want a background continue under a new %s name", opts, sessionNamePrefix)
+	if opts.Continue || !opts.Background || !strings.HasPrefix(opts.SessionName, sessionNamePrefix) {
+		t.Fatalf("run = %+v; want a fresh background run under a new %s name", opts, sessionNamePrefix)
 	}
 	replacement := defaultContainer + "-" + opts.SessionName
 	shown := rows(t, p, project)
@@ -352,7 +391,7 @@ func TestShutdownDuringARenamingRestart(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			tt.cancel(cli, bridge, cancel)
-			run, err := restartOf(p, project, defaultContainer)
+			run, err := freshRestartOf(p, project, defaultContainer)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -425,7 +464,8 @@ func TestRestartingSessionOwnedThroughItsProjectDir(t *testing.T) {
 	}
 }
 
-// Continue of a foreground session that ended in its terminal goes on under a new HomeShell name.
+// Continue of a foreground session that ended in its terminal goes on under its own name, which holds its
+// conversation.
 func TestContinueOfAnEndedCLISession(t *testing.T) {
 	p, cli, _, project := adoptedDefault(t, false)
 	listed(cli, project)
@@ -444,13 +484,66 @@ func TestContinueOfAnEndedCLISession(t *testing.T) {
 	if err := run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	opts := cli.runCalls[0].opts
-	replacement := defaultContainer + "-" + opts.SessionName
-	if !opts.Continue || !strings.HasPrefix(opts.SessionName, sessionNamePrefix) {
-		t.Fatalf("run = %+v; want a continue under a new %s name", opts, sessionNamePrefix)
+	if opts := cli.runCalls[0].opts; !opts.Continue || opts.SessionName != "" {
+		t.Fatalf("run = %+v; want a continue of the default container", opts)
 	}
-	if shown := rows(t, p, project); len(shown) != 1 || shown[replacement].Replaces != defaultContainer {
-		t.Errorf("rows = %+v; want only %s, replacing %s", shown, replacement, defaultContainer)
+	if shown := rows(t, p, project); len(shown) != 1 || shown[defaultContainer].State.Terminal() {
+		t.Errorf("rows = %+v; want only %s, running", shown, defaultContainer)
+	}
+}
+
+// Continue of an ended session whose name runs again, as a terminal `enclave` start takes the default container
+// again, is refused before it stops anything: that session is the user's, and the next check adopts it.
+func TestContinueRefusedWhileItsNameRunsAgain(t *testing.T) {
+	runsAgain := func(cli *fakeCLI, project provider.ProjectRef) {
+		listed(cli, project, Container{Name: defaultContainer, Tool: "codex", Directory: project.Path, Status: "running"})
+	}
+	tests := []struct {
+		name        string
+		failed      bool
+		listing     func(cli *fakeCLI, project provider.ProjectRef)
+		wantRefused bool
+	}{
+		{"its name runs again", false, runsAgain, true},
+		{"a failed session's name runs again", true, runsAgain, true},
+		{"the listing fails", false, func(cli *fakeCLI, _ provider.ProjectRef) { cli.listErr = errors.New("Docker unavailable") },
+			true},
+		{"its name is free", false, func(*fakeCLI, provider.ProjectRef) {}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, cli, _, project := adoptedDefault(t, false)
+			listed(cli, project)
+			p.checkInventory(context.Background())
+			if tt.failed {
+				p.bridges.mu.Lock()
+				record := p.bridges.records[defaultContainer]
+				record.State, record.Error = domain.SessionError, "exited right after starting"
+				p.bridges.setRecord(defaultContainer, record)
+				p.bridges.mu.Unlock()
+			}
+			tt.listing(cli, project)
+
+			run, err := restartOf(p, project, defaultContainer)
+			if refused := err != nil; refused != tt.wantRefused {
+				t.Fatalf("PrepareRestart = %v; want refused: %v", err, tt.wantRefused)
+			}
+			if tt.wantRefused {
+				if !errors.Is(err, provider.ErrSessionNotRestartable) {
+					t.Errorf("PrepareRestart = %v; want ErrSessionNotRestartable", err)
+				}
+				if len(cli.stopped) != 0 {
+					t.Errorf("stopped %q; want nothing stopped", cli.stopped)
+				}
+				return
+			}
+			if err := run(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(cli.stopped, []string{defaultContainer}) {
+				t.Errorf("stopped %q; want the ended container's name cleared", cli.stopped)
+			}
+		})
 	}
 }
 
@@ -731,7 +824,7 @@ func prepareRestartOf(t *testing.T, renaming bool) restartingSession {
 	t.Helper()
 	if renaming {
 		enclaveProvider, cli, bridge, project := adoptedDefault(t, true)
-		run, err := restartOf(enclaveProvider, project, defaultContainer)
+		run, err := freshRestartOf(enclaveProvider, project, defaultContainer)
 		if err != nil {
 			t.Fatal(err)
 		}

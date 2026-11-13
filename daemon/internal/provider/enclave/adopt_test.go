@@ -142,19 +142,18 @@ func TestInventorySkipsContainersHomeShellIsStarting(t *testing.T) {
 		cli.runResult = cliSessionName
 		ref := stoppedSession(t, p, project)
 		listed(cli, project, cliSession(project.Path, true))
-		// The check lists the stopped session while a restart starts it again.
+		// The check lists the session as running when a restart starts it again: the listing is a moment late.
 		running, release := make(chan struct{}), make(chan struct{})
 		cli.onRun = func() {
 			close(running)
 			<-release
 		}
-		var once sync.Once
 		restarted := make(chan error, 1)
 		cli.onList = func() {
-			once.Do(func() {
-				go func() { restarted <- startBridge(t, p, ref, project.Path) }()
-				<-running
-			})
+			cli.onList = nil
+			listed(cli, project)
+			go func() { restarted <- startBridge(t, p, ref, project.Path) }()
+			<-running
 		}
 		p.checkInventory(context.Background())
 		close(release)
@@ -443,16 +442,16 @@ func TestInventorySkipsASessionRestartedDuringTheListing(t *testing.T) {
 			cli.runResult = cliSessionName
 			listed(cli, project, cliSession(project.Path, true))
 			ref := test.ended(t, p, bridge, project)
-			var once sync.Once
+			// The listing is a moment old: the container it shows running is down for the restart.
 			cli.onList = func() {
-				once.Do(func() {
-					if err := startBridge(t, p, ref, project.Path); err != nil {
-						t.Error(err)
-					}
-					if test.endAgain {
-						endAdopted(p, bridge)
-					}
-				})
+				cli.onList = nil
+				listed(cli, project)
+				if err := startBridge(t, p, ref, project.Path); err != nil {
+					t.Error(err)
+				}
+				if test.endAgain {
+					endAdopted(p, bridge)
+				}
 			}
 			p.checkInventory(context.Background())
 			if len(bridge.starts) != 2 {
@@ -469,13 +468,11 @@ func TestInventoryReadoptsDespiteAnotherSessionRestartedDuringTheListing(t *test
 	p.checkInventory(context.Background())
 	endAdopted(p, bridge)
 	own := stoppedSession(t, p, project)
-	var once sync.Once
 	cli.onList = func() {
-		once.Do(func() {
-			if err := startBridge(t, p, own, project.Path); err != nil {
-				t.Error(err)
-			}
-		})
+		cli.onList = nil
+		if err := startBridge(t, p, own, project.Path); err != nil {
+			t.Error(err)
+		}
 	}
 	p.checkInventory(context.Background())
 	if got := rows(t, p, project)[cliSessionName].State; got.Terminal() {

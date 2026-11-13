@@ -134,6 +134,10 @@ type fakeCLI struct {
 	// runBase, when set, makes Run return the container Enclave names after the session: runBase, then
 	// `-<session name>` when Run is given one.
 	runBase string
+	// conversations, when set, are the containers with a conversation to continue: Enclave keeps one per
+	// session name, so a continue under a name without one fails, as the agent finds nothing to continue.
+	// A run that starts fresh gives its container one.
+	conversations map[string]bool
 }
 
 // runCall records a fakeCLI.Run call, so a test can assert on the flags the
@@ -202,10 +206,19 @@ func (f *fakeCLI) Run(_ context.Context, dir string, opts RunOpts) (string, erro
 		return "", f.continueErr
 	}
 	if f.runBase != "" && f.runErr == nil {
-		if opts.SessionName == "" {
-			return f.runBase, nil
+		started := f.runBase
+		if opts.SessionName != "" {
+			started += "-" + opts.SessionName
 		}
-		return f.runBase + "-" + opts.SessionName, nil
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.conversations != nil {
+			if opts.Continue && !f.conversations[started] {
+				return "", fmt.Errorf("container %s exited: No conversation found to continue", started)
+			}
+			f.conversations[started] = true
+		}
+		return started, nil
 	}
 	return f.runResult, f.runErr
 }

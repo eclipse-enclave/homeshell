@@ -434,7 +434,8 @@ the agent's PTY and serves screen snapshots on a unix socket; the wire format is
   exited, `error` for one that died right after starting.
 - **Lifecycle guard.** Each session has its own lock and revision, so a late poll cannot revive,
   reattach or relaunch a session that was stopped, removed or restarted meanwhile.
-- **Restart under a new name** ([Eclipse Enclave](PROVIDERS.md#eclipse-enclave)). The new record is
+- **Restart under a new name** (a fresh restart of an unnamed container,
+  [Eclipse Enclave](PROVIDERS.md#eclipse-enclave)). The new record is
   saved marked as replacing the old one (`ReplacingFrom`); the restart's end swaps the records in one
   step, and a daemon that finds the mark on load completes the swap
   (`provider/enclave/restart.go` `completeReplacements`). Cancelled, as by a shutdown, the restart
