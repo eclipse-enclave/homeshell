@@ -540,85 +540,41 @@ func (p *pausingRefresher) Refresh(_ context.Context, _ ProjectRef, ws domain.Wo
 	return ws
 }
 
-// A change the user makes while a projection pass is in flight outlives the
-// pass, which is newer than what the pass read, and the next pass builds on it.
-func TestReconcileKeepsChangesMadeDuringThePass(t *testing.T) {
-	tests := []struct {
-		name   string
-		change func(t *testing.T, st *store.Store)
-		check  func(t *testing.T, st *store.Store)
-	}{
-		{
-			name: "a rename",
-			change: func(t *testing.T, st *store.Store) {
-				ws, err := st.Workstream("p1", "ws1")
-				if err != nil {
-					t.Fatal(err)
-				}
-				ws.Name = "my work"
-				if err := st.UpdateWorkstream("p1", ws); err != nil {
-					t.Fatal(err)
-				}
-			},
-			check: func(t *testing.T, st *store.Store) {
-				ws, err := st.Workstream("p1", "ws1")
-				if err != nil || ws.Name != "my work" || ws.Branch != "main" {
-					t.Errorf("workstream = %q on %q, %v; want my work on main", ws.Name, ws.Branch, err)
-				}
-			},
-		},
-		{
-			name: "a dismissed status message",
-			change: func(t *testing.T, st *store.Store) {
-				if err := st.SetStatusMessage("p1", "ws1", ""); err != nil {
-					t.Fatal(err)
-				}
-			},
-			check: func(t *testing.T, st *store.Store) {
-				if ws, err := st.Workstream("p1", "ws1"); err != nil || ws.StatusMessage != "" {
-					t.Errorf("status = %q, %v; want it dismissed", ws.StatusMessage, err)
-				}
-			},
-		},
-		{
-			name: "a removed workstream",
-			change: func(t *testing.T, st *store.Store) {
-				if err := st.RemoveWorkstream("p1", "ws1"); err != nil {
-					t.Fatal(err)
-				}
-			},
-			check: func(t *testing.T, st *store.Store) {
-				if ws, err := st.Workstream("p1", "ws1"); err == nil {
-					t.Errorf("workstream = %+v, want it to stay removed", ws)
-				}
-			},
-		},
+// A rename made while a projection pass is in flight outlives the pass, and the
+// next pass moves the branch under it. The store's rules for what a pass keeps
+// are tested with store.ReplaceWorkstreams; this is the reconciler handing over
+// its read.
+func TestReconcileKeepsARenameMadeDuringThePass(t *testing.T) {
+	st := store.NewTestStore(t, []domain.Project{{ID: "p1", Path: "/p1", Workstreams: []domain.Workstream{
+		{ID: "ws1", Name: "feature", Branch: "feature", Provider: "pausing", WorkingDir: "/p1", Sessions: []domain.Session{}},
+	}}})
+	reg := NewRegistry()
+	refresher := &pausingRefresher{stubWorkstreamProvider: stubWorkstreamProvider{id: "pausing"},
+		branch: "main", paused: make(chan struct{}), release: make(chan struct{})}
+	if err := reg.RegisterWorkstreamProvider(refresher); err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			st := store.NewTestStore(t, []domain.Project{{ID: "p1", Path: "/p1", Workstreams: []domain.Workstream{
-				{ID: "ws1", Name: "feature", Branch: "feature", Provider: "pausing", WorkingDir: "/p1",
-					StatusMessage: "Restarting failed", Sessions: []domain.Session{}},
-			}}})
-			reg := NewRegistry()
-			refresher := &pausingRefresher{stubWorkstreamProvider: stubWorkstreamProvider{id: "pausing"},
-				branch: "main", paused: make(chan struct{}), release: make(chan struct{})}
-			if err := reg.RegisterWorkstreamProvider(refresher); err != nil {
-				t.Fatal(err)
-			}
-			reconciler := NewReconciler(st, reg, 0)
+	reconciler := NewReconciler(st, reg, 0)
 
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				reconciler.Reconcile(context.Background())
-			}()
-			<-refresher.paused
-			tt.change(t, st)
-			close(refresher.release)
-			<-done
-			reconciler.Reconcile(context.Background())
-			tt.check(t, st)
-		})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		reconciler.Reconcile(context.Background())
+	}()
+	<-refresher.paused
+	ws, err := st.Workstream("p1", "ws1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.Name = "my work"
+	if err := st.UpdateWorkstream("p1", ws); err != nil {
+		t.Fatal(err)
+	}
+	close(refresher.release)
+	<-done
+	reconciler.Reconcile(context.Background())
+
+	if got, err := st.Workstream("p1", "ws1"); err != nil || got.Name != "my work" || got.Branch != "main" {
+		t.Errorf("workstream = %q on %q, %v; want my work on main", got.Name, got.Branch, err)
 	}
 }

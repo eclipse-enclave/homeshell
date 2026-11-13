@@ -470,12 +470,7 @@ func (s *Store) ReplaceWorkstreams(projectID string, read, workstreams []domain.
 // reconciler carries a session its provider did not report over as the stored
 // copy, which is still the restored idle placeholder and says nothing about it.
 func (s *Store) stampEndedAtLocked(previous, incoming []domain.Workstream) {
-	before := map[string]domain.Session{}
-	for _, workstream := range previous {
-		for _, session := range workstream.Sessions {
-			before[session.ID] = session
-		}
-	}
+	before := sessionsByID(previous)
 	now := s.now()
 	for _, workstream := range incoming {
 		for j := range workstream.Sessions {
@@ -641,11 +636,11 @@ func keepChangesSinceRead(read, live, next []domain.Workstream) []domain.Workstr
 		workstream.Sessions = keepSessionChanges(workstream.Sessions, now.Sessions, readSessions, liveSessions, listed)
 		kept = append(kept, workstream)
 	}
+	projected := workstreamsByID(next)
 	for _, now := range live {
 		_, wasRead := readWorkstreams[now.ID]
-		if wasRead || strings.HasPrefix(now.ID, PlaceholderIDPrefix) || slices.ContainsFunc(kept, func(workstream domain.Workstream) bool {
-			return workstream.ID == now.ID
-		}) {
+		_, isProjected := projected[now.ID]
+		if wasRead || isProjected || strings.HasPrefix(now.ID, PlaceholderIDPrefix) {
 			continue
 		}
 		kept = append(kept, now)

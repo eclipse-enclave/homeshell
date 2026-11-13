@@ -1044,23 +1044,31 @@ func TestRestoredSessionKeepsItsPersistedEnd(t *testing.T) {
 func TestReplaceWorkstreamsKeepsChangesSinceTheRead(t *testing.T) {
 	seed := func() []domain.Project {
 		return []domain.Project{{ID: "p1", Path: "/p1", Workstreams: []domain.Workstream{{
-			ID: "ws1", Name: "feature", Branch: "feature", WorkingDir: "/p1",
+			ID: "ws1", Name: "feature", Branch: "feature", WorkingDir: "/p1", StatusMessage: "Restarting failed",
 			Sessions: []domain.Session{
 				{ID: "s1", Provider: "prov", State: domain.SessionRunning},
 				{ID: "s2", Provider: "prov", State: domain.SessionRunning},
 			},
 		}}}}
 	}
+	ws1 := func(t *testing.T, s *Store) domain.Workstream {
+		t.Helper()
+		ws, err := s.Workstream("p1", "ws1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ws
+	}
 	tests := []struct {
 		name   string
 		change func(t *testing.T, s *Store)
-		check  func(t *testing.T, ws domain.Workstream)
+		check  func(t *testing.T, s *Store)
 	}{
 		{
 			name:   "nothing changed: the projection settles",
 			change: func(*testing.T, *Store) {},
-			check: func(t *testing.T, ws domain.Workstream) {
-				if ws.Name != "main" || ws.Branch != "main" || len(ws.Sessions) != 2 {
+			check: func(t *testing.T, s *Store) {
+				if ws := ws1(t, s); ws.Name != "main" || ws.Branch != "main" || len(ws.Sessions) != 2 {
 					t.Errorf("workstream = %q on %q with %d sessions, want main on main with 2", ws.Name, ws.Branch, len(ws.Sessions))
 				}
 			},
@@ -1068,28 +1076,57 @@ func TestReplaceWorkstreamsKeepsChangesSinceTheRead(t *testing.T) {
 		{
 			name: "a rename is kept",
 			change: func(t *testing.T, s *Store) {
-				ws, _ := s.Workstream("p1", "ws1")
+				ws := ws1(t, s)
 				ws.Name = "my work"
 				if err := s.UpdateWorkstream("p1", ws); err != nil {
 					t.Fatal(err)
 				}
 			},
-			check: func(t *testing.T, ws domain.Workstream) {
-				if ws.Name != "my work" {
+			check: func(t *testing.T, s *Store) {
+				if ws := ws1(t, s); ws.Name != "my work" {
 					t.Errorf("name = %q, want my work", ws.Name)
 				}
 			},
 		},
 		{
-			name: "a name another workstream took meanwhile is not given",
+			name: "a dismissed status message stays dismissed",
+			change: func(t *testing.T, s *Store) {
+				if err := s.SetStatusMessage("p1", "ws1", ""); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, s *Store) {
+				if ws := ws1(t, s); ws.StatusMessage != "" {
+					t.Errorf("status = %q, want it dismissed", ws.StatusMessage)
+				}
+			},
+		},
+		{
+			name: "an added workstream stays, and its name is not given",
 			change: func(t *testing.T, s *Store) {
 				if err := s.AddWorkstream("p1", domain.Workstream{ID: "ws2", Name: "main", WorkingDir: "/p1/other"}); err != nil {
 					t.Fatal(err)
 				}
 			},
-			check: func(t *testing.T, ws domain.Workstream) {
-				if ws.Name != "feature" || ws.Branch != "main" {
+			check: func(t *testing.T, s *Store) {
+				if _, err := s.Workstream("p1", "ws2"); err != nil {
+					t.Errorf("Workstream(ws2) err = %v, want the added workstream kept", err)
+				}
+				if ws := ws1(t, s); ws.Name != "feature" || ws.Branch != "main" {
 					t.Errorf("workstream = %q on %q, want feature on main", ws.Name, ws.Branch)
+				}
+			},
+		},
+		{
+			name: "a removed workstream stays removed",
+			change: func(t *testing.T, s *Store) {
+				if err := s.RemoveWorkstream("p1", "ws1"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, s *Store) {
+				if ws, err := s.Workstream("p1", "ws1"); err == nil {
+					t.Errorf("workstream = %+v, want it to stay removed", ws)
 				}
 			},
 		},
@@ -1100,8 +1137,8 @@ func TestReplaceWorkstreamsKeepsChangesSinceTheRead(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			check: func(t *testing.T, ws domain.Workstream) {
-				if len(ws.Sessions) != 1 || ws.Sessions[0].ID != "s1" {
+			check: func(t *testing.T, s *Store) {
+				if ws := ws1(t, s); len(ws.Sessions) != 1 || ws.Sessions[0].ID != "s1" {
 					t.Errorf("sessions = %+v, want s1 only", ws.Sessions)
 				}
 			},
@@ -1113,8 +1150,8 @@ func TestReplaceWorkstreamsKeepsChangesSinceTheRead(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			check: func(t *testing.T, ws domain.Workstream) {
-				if ws.Sessions[0].State != domain.SessionStopped {
+			check: func(t *testing.T, s *Store) {
+				if ws := ws1(t, s); ws.Sessions[0].State != domain.SessionStopped {
 					t.Errorf("s1 state = %q, want stopped", ws.Sessions[0].State)
 				}
 			},
@@ -1130,26 +1167,7 @@ func TestReplaceWorkstreamsKeepsChangesSinceTheRead(t *testing.T) {
 			if err := s.ReplaceWorkstreams("p1", read, projected); err != nil {
 				t.Fatalf("ReplaceWorkstreams: %v", err)
 			}
-			ws, err := s.Workstream("p1", "ws1")
-			if err != nil {
-				t.Fatal(err)
-			}
-			tt.check(t, ws)
+			tt.check(t, s)
 		})
 	}
-
-	t.Run("a workstream added meanwhile stays", func(t *testing.T) {
-		s := NewTestStore(t, seed())
-		read := s.Projects()[0].Workstreams
-		projected := s.Projects()[0].Workstreams
-		if err := s.AddWorkstream("p1", domain.Workstream{ID: "ws2", Name: "work here", WorkingDir: "/p1/other"}); err != nil {
-			t.Fatal(err)
-		}
-		if err := s.ReplaceWorkstreams("p1", read, projected); err != nil {
-			t.Fatalf("ReplaceWorkstreams: %v", err)
-		}
-		if _, err := s.Workstream("p1", "ws2"); err != nil {
-			t.Errorf("Workstream(ws2) err = %v, want the added workstream kept", err)
-		}
-	})
 }
