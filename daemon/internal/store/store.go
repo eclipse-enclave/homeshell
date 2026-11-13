@@ -311,6 +311,39 @@ func (s *Store) applyTitlesLocked(sessions sessionWalk) {
 	}
 }
 
+// carryOverReplacedLocked moves the custom title and launch config of each session
+// an incoming one replaces to the new ID, unless the new ID has its own, and
+// reports whether it moved anything. A replaced session that is still listed keeps
+// its records. Once it is gone, the prunes that follow would drop them. Only a
+// session listed for the first time takes them over: Replaces stays set, and an
+// earlier replacement of a reused ID must not take what its successor left.
+// listed holds the IDs of sessions.
+func (s *Store) carryOverReplacedLocked(projectID string, previous, sessions sessionWalk,
+	listed map[string]bool) (moved bool) {
+	listedBefore := sessionIDsIn(previous)
+	for _, session := range sessions {
+		if session.Replaces == "" || session.Replaces == session.ID || listed[session.Replaces] ||
+			listedBefore[session.ID] {
+			continue
+		}
+		custom, hasTitle := s.sessionTitles[session.Replaces]
+		_, titleTaken := s.sessionTitles[session.ID]
+		if hasTitle && custom.ProjectID == projectID && !titleTaken {
+			s.sessionTitles[session.ID] = custom
+			s.forgetTitleLocked(session.Replaces)
+			moved = true
+		}
+		launch, hasLaunch := s.launchConfigs[session.Replaces]
+		_, launchTaken := s.launchConfigs[session.ID]
+		if hasLaunch && launch.ProjectID == projectID && !launchTaken {
+			s.launchConfigs[session.ID] = launch
+			s.forgetLaunchConfigLocked(session.Replaces)
+			moved = true
+		}
+	}
+	return moved
+}
+
 // sessionWalk visits sessions, each with the ID of the workstream listing it.
 type sessionWalk = iter.Seq2[string, *domain.Session]
 
@@ -496,16 +529,18 @@ func (s *Store) replaceProjectionLocked(projectID string, read, workstreams []do
 		s.forgetPromotionsLocked(projectID)
 		previousSessions := projectSessions(&s.projects[i])
 		incomingSessions := sessionsOf(workstreams, untracked)
+		listed := sessionIDsIn(incomingSessions)
+		// Before the titles are applied and the records pruned.
+		changed := s.carryOverReplacedLocked(projectID, previousSessions, incomingSessions, listed)
 		// The providers just reported these sessions under their own titles; a
 		// session the user renamed keeps the name they gave it. Applied before the
 		// snapshot is written so the projection and the file agree.
 		s.applyTitlesLocked(incomingSessions)
 		keepPlaceholderLinks(previousSessions, incomingSessions)
 		s.stampEndedAtLocked(previousSessions, incomingSessions)
-		listed := sessionIDsIn(incomingSessions)
 		s.forgetUnobservedLocked(previousSessions, listed)
-		pruned := s.pruneTitlesLocked(projectID, listed)
-		pruned = s.pruneLaunchConfigsLocked(projectID, listed) || pruned
+		changed = s.pruneTitlesLocked(projectID, listed) || changed
+		changed = s.pruneLaunchConfigsLocked(projectID, listed) || changed
 		// Held for the change check below. Recompute normalizes derived fields, so
 		// the comparison has to be made between two recomputed sets; it mutates the
 		// new slices only, leaving these to compare against.
@@ -514,7 +549,7 @@ func (s *Store) replaceProjectionLocked(projectID string, read, workstreams []do
 		s.projects[i].Workstreams = workstreams
 		s.projects[i].UntrackedWorktrees = untracked
 		s.projects[i].Recompute()
-		if pruned || !reflect.DeepEqual(previous, s.projects[i].Workstreams) ||
+		if changed || !reflect.DeepEqual(previous, s.projects[i].Workstreams) ||
 			!sameSuggestions(previousUntracked, s.projects[i].UntrackedWorktrees) {
 			// Placeholders (workstream and session) are kept out of the snapshot by
 			// snapshotLocked, so the projection carrying them through every cycle

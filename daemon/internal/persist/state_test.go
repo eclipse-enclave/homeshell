@@ -182,7 +182,7 @@ func TestSnapshotDropsOnlyLiveState(t *testing.T) {
 	dropped := map[string][]string{
 		"Project":    {"State", "RuntimeState", "Effective", "UntrackedWorktrees"},
 		"Workstream": {"ProviderLabel", "Strategy", "InProjectFolder", "State", "RuntimeState", "Effective", "StatusMessage", "OpenModes", "Actions", "PlaceholderID", "CreateFailed", "FolderMissing"},
-		"Session":    {"State", "Ended", "Preview", "Error", "PlaceholderID", "Restartable", "OutdatedSettings", "ObservationData"},
+		"Session":    {"State", "Ended", "Preview", "Error", "PlaceholderID", "Placeholder", "Restartable", "OutdatedSettings", "ObservationData", "Capabilities", "Replaces"},
 	}
 	tests := []struct {
 		name   string

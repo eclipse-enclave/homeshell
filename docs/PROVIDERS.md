@@ -61,6 +61,7 @@ Capabilities are what clients gate on. Two kinds:
 | `SessionStartStopper` | Session | Stop and start; `sessionStartStop`. Start may be a restart (`ErrStartIsRestart`) |
 | `SessionRestarter` | Session | Restart with new settings (`PrepareRestart`); served as `sessionRestart` |
 | `ContinueRefuser` | Session | Refuses to continue a conversation another session in the directory makes ambiguous |
+| `LaunchObserver` | Session | A restart of a session with no launch config replays the settings the provider observed |
 | `OptionSchemaProvider` | Session | One option's schema without listing them all |
 | `ShellOpener` | Session | A shell inside the session's environment, offered as an extra open mode |
 | `LinkOpener` | Session | Browser links, offered as `link:<id>` open modes |
@@ -77,6 +78,9 @@ Capabilities are what clients gate on. Two kinds:
 
 - Why `ConfigValidator`: JSON Schema cannot state git's branch-name rules, and a rule checked in
   the asynchronous `Create` would surface minutes later as an `error` workstream instead of a `400`.
+
+- A provider can also set `capabilities` on a single session; see
+  the API's [Sessions](API.md#sessions) section.
 
 ## Wiring
 
@@ -225,10 +229,31 @@ container is Enclave's to manage.
 - **Available** when `enclave` is on `PATH` and meets the provider's CLI contract, and the
   session bridge can run (as for [Local System](#local-system)).
 - `OpenShell` opens a shell inside the container.
+- **CLI sessions** started with the `enclave` CLI show up within one inventory check: a background
+  one is attached and runs as HomeShell's own; a foreground one shows as running until it ends
+  ([Enclave sessions](ARCHITECTURE.md#enclave-sessions)).
+- **Foreground CLI sessions:** Open opens a shell in the container, Stop ends the session in its
+  terminal too, and Restart in HomeShell continues it attached.
 - **Start** of a stopped, done or error session is an `enclave continue`, run by the service as a
   restart.
+- **Restart** or Continue runs in the background, attached by HomeShell; a foreground session ends in
+  its terminal. A session that continues its conversation keeps its name, the default container
+  included. Why: Enclave keeps the conversation per session name, so under another name there is
+  none to continue. A fresh restart of an unnamed container (the default one, or an auto-numbered
+  one) goes on under a new HomeShell name; the row is replaced and keeps its title and settings.
+  Why: the default container stays free for the next `enclave` start in a terminal. A restart or
+  Continue of an ended session whose container runs again (a new `enclave` start in a terminal) is
+  refused (`409`) and stops nothing; the next inventory check adopts the new session.
+- **CLI session settings:** a CLI session has no recorded launch config (a session HomeShell started
+  that is started again in a terminal under its name drops its own), so its restart or Continue
+  starts with the options Enclave recorded for the container, as far as the create form models
+  them (features, directories, ports, bridge ports, domains, host config). They become its launch
+  config, so [drift](ARCHITECTURE.md#enclave-sessions) and the settings editor apply from then on.
+  Other options and the tool's arguments restart as Enclave resolves them now (GAP 11).
 - **CLI gaps** that limit it are in `provider/enclave/gaps.go`: no container event stream, `stop`
-  also removes, no `start`, no published-port URL (so no web-IDE link), no `logs`.
+  also removes, no `start`, no published-port URL (so no web-IDE link), no `logs`, no shell
+  container told from an agent's (GAP 9), no attached session told from another (GAP 10), no
+  option to replace a list or report tool arguments (GAP 11).
 
 ### Fake
 

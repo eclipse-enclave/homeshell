@@ -268,6 +268,11 @@ type Session struct {
 	// so the client that asked for it can tell which row is its own. Not
 	// persisted.
 	PlaceholderID string `json:"placeholderId,omitempty"`
+	// Placeholder marks the daemon's own row for a session create in flight, or
+	// one that failed: no provider has heard of it, so stopping it is removing it,
+	// which cancels the create. A session restarting is starting too, but is not
+	// one. Not persisted, as placeholders are not.
+	Placeholder bool `json:"placeholder,omitempty"`
 	// Restartable is whether the session can be restarted with settings, as far
 	// as the daemon can tell without asking its provider anything costly. Derived
 	// during projection like Workstream.OpenModes; not persisted.
@@ -278,6 +283,33 @@ type Session struct {
 	// Sorted, in the provider's own names; empty when nothing changed or the
 	// provider cannot tell. Live, like Preview: never persisted.
 	OutdatedSettings []string `json:"outdatedSettings,omitempty"`
+	// Capabilities are what a client may do with this session beyond its
+	// provider's capabilities. Nil means the session is live (HomeShell sees and
+	// types into it), offers no take-over and needs no stop warning. Derived by
+	// the provider; never persisted.
+	Capabilities *SessionCapabilities `json:"capabilities,omitempty"`
+	// Replaces is the ID of the session this one goes on from under a new ID; the
+	// store carries the old session's title and launch config over to it when it
+	// is first listed. Set by the provider and kept; never serialized.
+	Replaces string `json:"-"`
+}
+
+// SessionCapabilities are what a client may do with one session beyond its
+// provider's capabilities. A session without them is live, offers no take-over
+// and needs no stop warning.
+type SessionCapabilities struct {
+	// Live is whether HomeShell sees the session's screen and can type into it.
+	Live bool `json:"live"`
+	// TakeOver is whether the session runs outside HomeShell, so that a restart
+	// brings it under HomeShell.
+	TakeOver bool `json:"takeOver"`
+	// StopWarning is what a confirmation before stopping or deleting says.
+	StopWarning string `json:"stopWarning,omitempty"`
+	// TakeOverWarning is what a confirmation before a take-over says.
+	TakeOverWarning string `json:"takeOverWarning,omitempty"`
+	// Note is what the session's row says about where it runs, such as why
+	// HomeShell neither shows nor types into it.
+	Note string `json:"note,omitempty"`
 }
 
 // LaunchConfig is what a session was last (re)started with: its provider, the

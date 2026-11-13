@@ -57,6 +57,8 @@ test('the create answers with the placeholder it projects', async ({
   const created = (await res.json()) as ListedSession;
   expect(isStartingSession(created.id)).toBe(true);
   expect(created.state).toBe('starting');
+  // Stopping it is deleting it, which a client can only tell from this.
+  expect(created.placeholder).toBe(true);
 
   const projected = await pollFor('the created placeholder', async () =>
     (await sessionsOf(request, projectId, workstreamId)).find((s) => s.id === created.id),

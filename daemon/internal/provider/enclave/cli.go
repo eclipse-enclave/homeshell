@@ -143,9 +143,15 @@ type Container struct {
 	Tool string
 	// Directory is the directory the session runs in: its worktree as given to
 	// Enclave, else the project directory Enclave resolved.
-	Directory   string
+	Directory string
+	// ProjectDir is the project directory Enclave resolved, which differs from
+	// Directory for a session started in a git worktree of the project.
+	ProjectDir  string
 	Status      string
 	SessionName string
+	// Background is whether the session runs detached, as `enclave run --background` starts one. On a record,
+	// Foreground says it: records saved before this was read have it unset.
+	Background bool
 	// Options are the typed values of the options the session was started with,
 	// keyed like ResolvedConfig.Options; nil when Enclave did not record them.
 	Options map[string]json.RawMessage
@@ -836,6 +842,7 @@ func parsePSJSON(out []byte) ([]Container, error) {
 		Worktree    string                     `json:"worktree"`
 		Status      string                     `json:"status"`
 		SessionName string                     `json:"sessionName"`
+		Background  bool                       `json:"background"`
 		Options     map[string]json.RawMessage `json:"options"`
 	}
 	if err := json.Unmarshal(out, &entries); err != nil {
@@ -851,6 +858,8 @@ func parsePSJSON(out []byte) ([]Container, error) {
 			Name:        entry.Name,
 			Tool:        entry.Tool,
 			Directory:   dir,
+			ProjectDir:  entry.ProjectDir,
+			Background:  entry.Background,
 			Status:      entry.Status,
 			SessionName: entry.SessionName,
 			Options:     entry.Options,

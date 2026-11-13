@@ -89,9 +89,9 @@ export async function addUntrackedWorktree(
 }
 
 /** A refusal as the message it carries, which is all these callers show. */
-function refusalMessage(
-  result: Workstream | string | Refusal,
-): Workstream | string {
+export function refusalMessage<T extends object>(
+  result: T | string | Refusal,
+): T | string {
   return typeof result !== 'string' && 'message' in result
     ? result.message
     : result;

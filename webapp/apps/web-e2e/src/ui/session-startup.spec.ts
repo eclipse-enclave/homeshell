@@ -64,11 +64,9 @@ test('a starting session shows its name and streams the startup log into its box
   await expect(output).toBeVisible();
   await expect(output).toContainText('#', { timeout: 10_000 });
 
-  // Nothing to drive yet: no send box, and no Stop, which would be routed to a
-  // provider that has never heard of this session. Remove is the exception — the
-  // daemon handles its own placeholder row, and removing it cancels the build.
+  // Nothing to type into yet. Delete cancels the build (as Stop does, below):
+  // the daemon handles its own placeholder row.
   await expect(card.getByLabel('Send text to session')).toHaveCount(0);
-  await expect(card.getByRole('button', { name: 'Stop' })).toHaveCount(0);
   await openMoreActions(sessionRows(card));
   await expect(page.getByRole('menuitem', { name: 'Delete' })).toBeVisible();
   await page.keyboard.press('Escape');
@@ -81,6 +79,27 @@ test('a starting session shows its name and streams the startup log into its box
     'aria-label',
     /^Sessions: 1 [a-z ]+$/,
   );
+});
+
+test('Stop on a starting session cancels it once confirmed, and its row goes', async ({
+  page,
+  request,
+}) => {
+  const { dirName, projectId, workstreamId } =
+    await projectWithWorkstream(request);
+  const card = await openCard(page, dirName);
+  await request.post(
+    `/api/projects/${projectId}/workstreams/${workstreamId}/sessions`,
+    { data: { providerId: 'fake', optionId: 'claude', config: {} } },
+  );
+  await expect(card.getByTestId('session-state')).toHaveText('Starting');
+
+  await card.getByRole('button', { name: 'Stop' }).click();
+  await page
+    .getByRole('dialog', { name: /Stop starting/ })
+    .getByRole('button', { name: 'Stop' })
+    .click();
+  await expect(sessionRows(card)).toHaveCount(0);
 });
 
 test('the starting row names the agent, and nothing repeats it on the workstream', async ({

@@ -1,6 +1,5 @@
 import type { APIResponse, Locator, Page } from '@playwright/test';
 import { expect, test } from '../fixtures';
-import { createServer, request as proxyRequest } from 'node:http';
 import { basename } from 'node:path';
 import {
   buildEnclaveFixture,
@@ -11,60 +10,10 @@ import {
   projectAndWorkstream,
   removeEnclaveFixture,
 } from '../enclave-helpers';
-import { webUrl } from '../e2e-env';
 import { disposeIsolatedDaemons } from '../isolated-daemon';
 import { pollFor } from '../api/workstream-helpers';
+import { browserServer } from './browser-server';
 import { selectProject } from './workstream-helpers';
-
-// Serve Vite and the isolated real daemon at one origin, including streaming SSE.
-// No provider responses or lifecycle endpoints are mocked in these UI tests.
-async function browserServer(
-  daemon: Awaited<ReturnType<typeof isolatedDaemon>>,
-) {
-  const server = createServer((request, response) => {
-    const target = new URL(
-      request.url ?? '/',
-      request.url?.startsWith('/api/')
-        ? daemon.url
-        : webUrl,
-    );
-    const upstream = proxyRequest(
-      target,
-      {
-        method: request.method,
-        headers: {
-          ...request.headers,
-          host: target.host,
-          origin: target.origin,
-          authorization: `Bearer ${daemon.token}`,
-        },
-      },
-      (incoming) => {
-        response.writeHead(incoming.statusCode ?? 502, incoming.headers);
-        incoming.pipe(response);
-      },
-    );
-    upstream.on('error', () => {
-      response.writeHead(502);
-      response.end();
-    });
-    response.on('close', () => upstream.destroy());
-    request.pipe(upstream);
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string')
-    throw new Error('proxy has no address');
-  return {
-    url: `http://127.0.0.1:${address.port}`,
-    close: async () => {
-      server.closeAllConnections();
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
-    },
-  };
-}
 
 test.describe('Enclave lifecycle controls', () => {
   test.skip(process.platform === 'win32', 'Host bridge requires Unix PTYs');

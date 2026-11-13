@@ -22,8 +22,8 @@ export interface RestartSessionData {
    * the session starts with what it was last started with.
    */
   config?: Record<string, unknown>;
-  /** Start the agent on a new conversation rather than continuing its last. */
-  fresh: boolean;
+  /** Start the agent on a new conversation rather than continuing its last (default: continue). */
+  fresh?: boolean;
 }
 
 export interface RestartSessionDialogProps {
@@ -45,6 +45,11 @@ export interface RestartSessionDialogProps {
    */
   continueRefusal?: string;
   /**
+   * What the restart costs when it ends the session where it runs (its
+   * capabilities' takeOverWarning): the dialog says so before it is done.
+   */
+  takeOverWarning?: string;
+  /**
    * Where focus goes on close when what it came from has left the page, such
    * as the session's row once the session is gone.
    */
@@ -65,6 +70,7 @@ export function RestartSessionDialog({
   onCancel,
   disabledReason,
   continueRefusal,
+  takeOverWarning,
   fallbackFocus,
 }: RestartSessionDialogProps) {
   const formId = useId();
@@ -128,6 +134,7 @@ export function RestartSessionDialog({
         onSubmit={handleSubmit}
         aria-label="Restart settings"
       >
+        {takeOverWarning && <p>{takeOverWarning}</p>}
         {fields.map(({ key, prop, required }) => (
           <SchemaField
             key={key}

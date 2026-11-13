@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 
 import { RestartSessionDialog } from './restart-session-dialog';
 
@@ -279,5 +285,14 @@ describe('RestartSessionDialog', () => {
     expect(restart.getAttribute('aria-disabled')).toBe('true');
     fireEvent.click(restart);
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('says what a take-over costs only when the restart is one', () => {
+    const warning = 'This ends it there and continues it here.';
+    renderDialog({ takeOverWarning: warning });
+    expect(screen.getByRole('dialog').textContent).toContain(warning);
+    cleanup();
+    renderDialog();
+    expect(screen.getByRole('dialog').textContent).not.toContain(warning);
   });
 });

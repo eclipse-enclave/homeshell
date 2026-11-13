@@ -1,7 +1,9 @@
 import {
   displaySessionState,
+  hasSessionRuntime,
   isSessionActive,
   isSessionTerminal,
+  sessionCapabilities,
 } from './types';
 
 describe('displaySessionState', () => {
@@ -32,6 +34,21 @@ describe('isSessionActive', () => {
     expect(isSessionActive('unknown')).toBe(false);
     expect(isSessionActive('stopped')).toBe(false);
     expect(isSessionActive('done')).toBe(false);
+  });
+});
+
+describe('hasSessionRuntime', () => {
+  it.each([
+    ['running', true],
+    ['waiting', true],
+    ['idle', true],
+    ['unknown', true],
+    ['starting', false],
+    ['stopped', false],
+    ['done', false],
+    ['error', false],
+  ] as const)('%s: %s', (state, has) => {
+    expect(hasSessionRuntime(state)).toBe(has);
   });
 });
 
@@ -82,5 +99,20 @@ describe('the starting state', () => {
   it('passes through displaySessionState untouched (the done overlay is idle-only)', () => {
     expect(displaySessionState('starting', false)).toBe('starting');
     expect(displaySessionState('starting', true)).toBe('starting');
+  });
+});
+
+describe('sessionCapabilities', () => {
+  it('defaults to a live session with no take-over and no warning', () => {
+    expect(sessionCapabilities({})).toEqual({ live: true, takeOver: false });
+  });
+
+  it('keeps what the session declares', () => {
+    const capabilities = {
+      live: false,
+      takeOver: true,
+      stopWarning: 'Careful.',
+    };
+    expect(sessionCapabilities({ capabilities })).toEqual(capabilities);
   });
 });

@@ -61,6 +61,11 @@ export interface WorkstreamCardProps {
   /** Removes a non-busy session. */
   onRemoveSession?: (sessionId: string) => void;
   /**
+   * Restarts a session running outside HomeShell in HomeShell. Offered on the
+   * sessions whose capabilities allow a take-over.
+   */
+  onTakeOverSession?: (sessionId: string) => void | Promise<void>;
+  /**
    * Renames a session. The title is what the user typed, or the empty string when
    * they cleared the box — which asks for the provider's own name back (see
    * SessionRow.onRename). A returned message is a **refusal**, which the row shows
@@ -167,6 +172,7 @@ export function WorkstreamCard({
   canSessionStartStop,
   onRestartSession,
   onRemoveSession,
+  onTakeOverSession,
   onRenameSession,
   onSeenSession,
   onPromptSession,
@@ -508,6 +514,9 @@ export function WorkstreamCard({
           onRestartSession && session.restartable
             ? () => onRestartSession(session.id)
             : undefined
+        }
+        onTakeOver={
+          onTakeOverSession ? () => onTakeOverSession(session.id) : undefined
         }
         onRemove={
           onRemoveSession ? () => onRemoveSession(session.id) : undefined

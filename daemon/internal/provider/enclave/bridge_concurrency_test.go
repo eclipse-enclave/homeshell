@@ -108,7 +108,7 @@ func TestSlowBridgeIOLeavesOtherSessionOperationsResponsive(t *testing.T) {
 					p.sampleBridgeAndWait(context.Background(), first.ID, nil, true)
 					finished <- nil
 				case "attach":
-					finished <- p.registerBridge(context.Background(), Container{Name: first.ID, Tool: "codex", Directory: project.Path})
+					finished <- p.registerBridge(context.Background(), bridgeRecord{Container: Container{Name: first.ID, Tool: "codex", Directory: project.Path}})
 				case "stop":
 					finished <- p.removeBridge(context.Background(), first.ID, false)
 				}
@@ -753,7 +753,7 @@ func TestPollDuringAttachDoesNotOutliveCreate(t *testing.T) {
 	}()
 	<-entered
 	// The record exists but nothing serves its socket until the attach returns.
-	p.sampleBridges(context.Background(), p.detectionAgents(), func(string) bool { return true }, true)
+	p.sampleBridges(context.Background(), p.detectionAgents(), func(Container) bool { return true }, true)
 	p.waitForBridgeSamples()
 	close(release)
 	if err := <-created; err != nil {

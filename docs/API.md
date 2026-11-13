@@ -320,18 +320,31 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
 - **Schemas** list the session types each session provider offers in this workstream; `schema`
   is a JSON Schema the UI renders as the create form. Read per request, so catalog edits apply
   at once.
+- **Placeholders** carry `placeholder: true`: the daemon's own row for a session create in
+  flight, or one that failed. Deleting one cancels its create. A session restarting is `starting`
+  too, but carries no flag.
 - **Start** continues a session in a terminal state (`stopped`, `done` or `error`) where its
   provider can; the Enclave provider does so as a restart.
 - **Restart** without a body reuses the last launch config; `fresh` starts a new conversation
-  instead of continuing. `409` while the session is `starting`, or for one that cannot restart.
+  instead of continuing. A session with no launch config restarts with the settings its provider
+  observed, if any. `409` while the session is `starting`, or for one that cannot restart, such as
+  an ended Enclave session whose container runs again
+  ([Eclipse Enclave](PROVIDERS.md#eclipse-enclave)); Start answers the same.
 - **Launch config** is what the session was last started with, plus the option's schema, so a
-  restart form opens pre-filled. `continueRefusal` says why the conversation cannot be continued.
+  restart form opens pre-filled. For a session with none it holds the settings its provider
+  observed, if any. `continueRefusal` says why the conversation cannot be continued.
 - **Ended sessions** (`done`, `stopped`; see [CONTEXT.md](../CONTEXT.md)) stay listed until removed,
   as do sessions in `error`. The session object says so in `ended`, which clients list and count
   by, and carries `endedAt` (RFC 3339) once the daemon has seen it end: set when a live session
   turns terminal, kept while it stays terminal, dropped when it runs again. A session first seen
   already terminal has it only if its provider reports when it ended. A daemon restart keeps it
   ([Persistence](ARCHITECTURE.md#persistence)).
+- **Capabilities** (`capabilities: {live, takeOver, stopWarning?, takeOverWarning?, note?}`) are
+  what a client may do with one session. Absent means the session is live (HomeShell sees and
+  types into it), offers no take-over and needs no warning. The provider authors the text: the
+  warnings a client shows before a stop or delete and before a take-over, and the `note` it shows
+  on the session's row. Derived, never persisted. Providers' own capabilities are in
+  [PROVIDERS.md](PROVIDERS.md#capabilities).
 - **Prompt** sends one line of text; body at most 64 KiB (`413`).
 - **Key** sends one of `up`, `down`, `left`, `right`, `enter`, `escape`, `tab`, for navigating
   an agent's menu (`provider.SessionKeys`); another key is `400`.

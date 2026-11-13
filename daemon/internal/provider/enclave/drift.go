@@ -23,37 +23,32 @@ import (
 // are compared: the flags another was started with are unknown, and each option
 // they set would read as changed.
 //
-// Nothing tells HomeShell that Enclave's config changed, so a watch loop asks
-// (refreshOutdated) and discovery reports what it last found.
+// Nothing tells HomeShell that Enclave's config changed, so the watch loop's
+// inventory check asks (outdatedFrom) and discovery reports what it last found.
 
 // driftCheckInterval is how often the watch loop asks. Each time costs Enclave
 // calls per session, so it is slower than the state poll.
 const driftCheckInterval = 30 * time.Second
 
-// refreshOutdated works out again which settings a restart of each running
-// container would change, and reports whether that differs from what it found
-// last time.
-func (p *Provider) refreshOutdated(ctx context.Context) bool {
+// outdatedFrom works out again, from an inventory, which settings a restart of
+// each running container would change, and reports whether that differs from
+// what it found last time.
+func (p *Provider) outdatedFrom(ctx context.Context, found inventory) bool {
 	if p.store == nil {
 		return false
 	}
 	bridges := p.bridges
-	bridges.mu.Lock()
-	restartsBefore := bridges.restarts
-	bridges.mu.Unlock()
 	outdated := map[string][]string{}
 	listed, checked, untold, asked := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
 	compared := map[string]domain.LaunchConfig{}
 	listFailed := false
 	// Listed per project, as a project's config may pick its own engine; a
 	// container two projects list is checked once.
-	for _, project := range p.store.Projects() {
-		containers, err := p.cli.ListSessions(ctx, project.Path)
-		if err != nil {
+	for _, listing := range found.listings {
+		if listing.err != nil {
 			listFailed = true
-			continue
 		}
-		for _, container := range containers {
+		for _, container := range listing.containers {
 			listed[container.Name] = true
 			if checked[container.Name] || container.Options == nil {
 				continue
@@ -90,17 +85,19 @@ func (p *Provider) refreshOutdated(ctx context.Context) bool {
 	}
 	bridges.mu.Lock()
 	defer bridges.mu.Unlock()
-	// A session restarted meanwhile, or whose restart was abandoned, may have
-	// been compared against settings it no longer has.
-	if bridges.restarts != restartsBefore {
-		return false
-	}
-	// What could not be told this time, whose project could not list, or that is
-	// being restarted against settings it does not run with yet, keeps the last
+	// What could not be told this time, whose project could not list, that is
+	// being restarted against settings it does not run with yet, or whose record
+	// changed since the listing (a restart, even an abandoned one), keeps the last
 	// result.
 	for name := range bridges.restarting {
 		untold[name] = true
 		delete(outdated, name)
+	}
+	for name := range compared {
+		if bridges.changedSince(found, name) {
+			untold[name] = true
+			delete(outdated, name)
+		}
 	}
 	for name, settings := range bridges.outdated {
 		if untold[name] || (listFailed && !listed[name]) {

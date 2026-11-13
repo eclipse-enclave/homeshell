@@ -607,6 +607,45 @@ describe('WorkstreamCard', () => {
     expect(screen.getAllByLabelText(/send text to session/i)).toHaveLength(1);
   });
 
+  it('treats a session running in a terminal as one HomeShell cannot type into, and can take over', () => {
+    const outside = (id: string, takeOver: boolean): Session => ({
+      id,
+      title: id,
+      agent: 'Claude Code',
+      state: 'running',
+      restartable: true,
+      capabilities: { live: false, takeOver },
+    });
+    const onTakeOverSession = vi.fn();
+    render(
+      <Card
+        workstream={workstream('running', [
+          outside('term', true),
+          outside('plain', false),
+        ])}
+        onPromptSession={vi.fn()}
+        onTakeOverSession={onTakeOverSession}
+      />,
+    );
+    for (const toggle of screen.getAllByRole('button', {
+      name: /toggle session details/i,
+    })) {
+      fireEvent.click(toggle);
+    }
+    expect(screen.queryByLabelText(/send text to session/i)).toBeNull();
+    const takeOvers = screen.getAllByRole('button', {
+      name: 'Restart in HomeShell',
+    });
+    expect(takeOvers).toHaveLength(1);
+    fireEvent.click(takeOvers[0]);
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', {
+        name: 'Restart in HomeShell',
+      }),
+    );
+    expect(onTakeOverSession).toHaveBeenCalledWith('term');
+  });
+
   it('wires each session Open button to onOpenSession with the session id', () => {
     const onOpenSession = vi.fn();
     render(

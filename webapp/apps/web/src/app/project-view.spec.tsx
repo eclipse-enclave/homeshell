@@ -1,5 +1,5 @@
 import { useMnemonics } from '@homeshell/components';
-import type { Project } from '@homeshell/model';
+import type { Project, SessionState } from '@homeshell/model';
 import {
   act,
   fireEvent,
@@ -142,7 +142,7 @@ const withCards = (...workstreams: Project['workstreams']): Project => ({
 });
 const session = (
   id: string,
-  state: 'running' | 'idle' | 'stopped' = 'running',
+  state: SessionState = 'running',
 ) => ({
   id,
   title: id,
@@ -1150,7 +1150,7 @@ describe('ProjectView focus around creating', () => {
     );
   });
 
-  // Stop goes away when the session goes idle rather than stopped.
+  // Stop goes away when the session fails.
   it('hands focus to the row when a control in it goes away', async () => {
     stubCreates(() => ({}));
     const rerender = await renderLive(
@@ -1159,7 +1159,7 @@ describe('ProjectView focus around creating', () => {
     const row = screen.getAllByRole('listitem')[0];
     act(() => screen.getByRole('button', { name: 'Stop' }).focus());
 
-    await rerender(withCards(card('w1', 'x', [session('s1', 'idle')])));
+    await rerender(withCards(card('w1', 'x', [session('s1', 'error')])));
 
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
     expect(document.activeElement).toBe(row);
@@ -1342,6 +1342,58 @@ describe('ProjectView selection commands', () => {
 
     expect(
       screen.getByRole('textbox', { name: 'Workstream name' }),
+    ).toBeTruthy();
+  });
+});
+
+describe('ProjectView restart in HomeShell', () => {
+  const outside = {
+    ...session('s1'),
+    restartable: true,
+    capabilities: { live: false, takeOver: true },
+  };
+
+  function stubRestart(status: number, body: unknown = {}) {
+    const bodies: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/restart'))
+          bodies.push(JSON.parse(String(init?.body)));
+        const answered = url.endsWith('/restart');
+        return {
+          ok: answered ? status < 400 : true,
+          status: answered ? status : 200,
+          json: async () => (answered ? body : {}),
+        };
+      }),
+    );
+    return bodies;
+  }
+
+  async function takeOver() {
+    await renderLive(withCards(card('w1', 'x', [outside])));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Restart in HomeShell' }),
+    );
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', {
+        name: 'Restart in HomeShell',
+      }),
+    );
+  }
+
+  it('posts a bare restart', async () => {
+    const bodies = stubRestart(202);
+    await takeOver();
+    await waitFor(() => expect(bodies).toEqual([{}]));
+  });
+
+  it('shows why Restart in HomeShell was refused', async () => {
+    stubRestart(409, { error: 'The terminal session is still busy.' });
+    await takeOver();
+    expect(
+      await screen.findByText('The terminal session is still busy.'),
     ).toBeTruthy();
   });
 });

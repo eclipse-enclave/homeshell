@@ -24,6 +24,7 @@ func TestParsePSJSON(t *testing.T) {
     "worktree": "/home/me/demo-app",
     "status": "running",
     "sessionName": "hs-6e299ca1fde8624d",
+    "background": true,
     "ports": [],
     "network": null,
     "options": {"features": ["devtools"], "yolo": true}
@@ -49,10 +50,16 @@ func TestParsePSJSON(t *testing.T) {
 		first.Directory != "/home/me/demo-app" || first.Status != "running" || first.SessionName != "hs-6e299ca1fde8624d" {
 		t.Errorf("first = %+v; want the directory the session was given, not the resolved one", first)
 	}
+	if first.ProjectDir != "/real/demo-app" || !first.Background {
+		t.Errorf("first = %+v; want the project directory and background read next to the worktree", first)
+	}
 	if string(first.Options["features"]) != `["devtools"]` || string(first.Options["yolo"]) != "true" {
 		t.Errorf("options = %v; want the recorded values as they are", first.Options)
 	}
 	second := got[1]
+	if second.Background {
+		t.Errorf("second = %+v; want a session without the field to be foreground", second)
+	}
 	if second.Directory != "/tmp/my project" || second.SessionName != "" || second.Options != nil {
 		t.Errorf("second = %+v; want the project directory without a worktree, and no options when none are recorded", second)
 	}

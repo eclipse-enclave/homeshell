@@ -442,3 +442,87 @@ func TestSessionSchemaWhenEnclaveCannotListItsTools(t *testing.T) {
 		t.Errorf("SessionSchema = %v; want ErrProviderUnavailable", err)
 	}
 }
+
+func TestSandboxChoiceFromOptions(t *testing.T) {
+	base := sandboxschema.EffectiveConfig{
+		"features":      option(`["a"]`, "global"),
+		"allow_domains": option(`["x.org"]`, "global"),
+		"host_config":   option(`"none"`, "default"),
+	}
+	tests := []struct {
+		name    string
+		running map[string]string
+		want    sandboxChoice
+	}{
+		{name: "a feature more", running: map[string]string{"features": `["a","b"]`}, want: sandboxChoice{Features: &[]string{"a", "b"}}},
+		{name: "the configured features", running: map[string]string{"features": `["a"]`}},
+		{name: "domains extend the configured ones", running: map[string]string{"allow_domains": `["x.org","y.org"]`},
+			want: sandboxChoice{AllowDomains: []string{"y.org"}}},
+		{name: "a configured domain alone is not dropped", running: map[string]string{"allow_domains": `["y.org"]`},
+			want: sandboxChoice{AllowDomains: []string{"y.org"}}},
+		{name: "a writable directory", running: map[string]string{"add_dirs": `["/w"]`},
+			want: sandboxChoice{Dirs: []sandboxschema.Dir{{Path: "/w", Readonly: ptr(false)}}}},
+		{name: "a read-only directory", running: map[string]string{"add_readonly_dirs": `["/r"]`},
+			want: sandboxChoice{Dirs: []sandboxschema.Dir{{Path: "/r"}}}},
+		{name: "ports", running: map[string]string{"ports": `["8080:80"]`, "bridge_ports": `["3000"]`},
+			want: sandboxChoice{Ports: []string{"8080:80"}, BridgePorts: []int{3000}}},
+		{name: "host config passed through", running: map[string]string{"host_config": `"passthrough"`},
+			want: sandboxChoice{HostConfig: ptr(true)}},
+		{name: "host config as configured", running: map[string]string{"host_config": `"none"`}},
+		{name: "options the form does not model", running: map[string]string{"yolo": `true`, "backend": `"auto"`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			running := map[string]json.RawMessage{}
+			for name, value := range tt.running {
+				running[name] = json.RawMessage(value)
+			}
+			got := sandboxChoiceFromOptions(running, base)
+			if !bytes.Equal(got.config(), tt.want.config()) {
+				t.Errorf("choice = %s; want %s", got.config(), tt.want.config())
+			}
+		})
+	}
+}
+
+func TestSandboxChoiceConfigHasNoNulls(t *testing.T) {
+	if got := (sandboxChoice{AllowDomains: []string{"y.org"}}).config(); string(got) != `{"enclave":{"allowDomains":["y.org"]}}` {
+		t.Errorf("config = %s", got)
+	}
+	if got := (sandboxChoice{}).config(); string(got) != `{}` {
+		t.Errorf("empty config = %s; want {}", got)
+	}
+}
+
+func TestObservedLaunchConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		options   map[string]json.RawMessage
+		unavail   bool
+		container string
+		want      string
+	}{
+		{name: "an adopted session with options", options: map[string]json.RawMessage{"allow_domains": json.RawMessage(`["y.org"]`)},
+			container: cliSessionName, want: `{"enclave":{"allowDomains":["y.org"]}}`},
+		{name: "a session without options", container: cliSessionName},
+		{name: "an unknown session", options: map[string]json.RawMessage{}, container: "nope"},
+		{name: "Enclave's config unavailable", options: map[string]json.RawMessage{"ports": json.RawMessage(`["1:2"]`)},
+			unavail: true, container: cliSessionName},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, cli, _, project := bridgeProvider(t)
+			session := cliSession(project.Path, true)
+			session.Options = tt.options
+			listed(cli, project, session)
+			p.checkInventory(context.Background())
+			if tt.unavail {
+				cli.configErr = errors.New("enclave config failed")
+			}
+			got, known := p.ObservedLaunchConfig(context.Background(), provider.SessionRef{ProjectID: project.ID, SessionID: tt.container}, "codex")
+			if known != (tt.want != "") || string(got) != tt.want {
+				t.Errorf("ObservedLaunchConfig = %s, %v; want %q", got, known, tt.want)
+			}
+		})
+	}
+}

@@ -7,6 +7,7 @@ const root = process.env.HOMESHELL_ENCLAVE_FIXTURE;
 const args = process.argv.slice(2);
 const fixturePath = (name) => path.join(root, name);
 const containerPath = (name) => fixturePath(`container-${name}.json`);
+const conversationPath = (name) => fixturePath(`conversation-${name}`);
 
 function flag(name, fallback = '') {
   const index = args.indexOf(name);
@@ -41,12 +42,25 @@ async function runSession() {
   if (fs.existsSync(fixturePath('refuse-start'))) {
     throw new Error('refusing to mount sensitive host paths: fixture refusal');
   }
-  const name = `enclave-codex-0123456789ab-${flag('--name')}`;
+  const session = flag('--name');
+  const name = session
+    ? `enclave-codex-0123456789ab-${session}`
+    : 'enclave-codex-0123456789ab';
+  // Enclave keeps an agent's conversation per session name: a continue under a
+  // name that never ran finds none, and the agent exits.
+  const conversation = conversationPath(name);
+  if (args[0] === 'continue' && !fs.existsSync(conversation)) {
+    throw new Error(
+      `container ${name} exited: No conversation found to continue`,
+    );
+  }
+  fs.writeFileSync(conversation, '');
   saveContainer({
     name,
-    session: flag('--name'),
+    session,
     dir: process.cwd(),
     status: 'running',
+    background: true,
     text: 'Ready',
     generation: Date.now(),
   });
@@ -76,9 +90,14 @@ async function listSessions() {
       containers.push({
         name: container.name,
         sessionName: container.session,
-        tool: 'codex',
-        projectDir: container.dir,
+        tool: container.tool ?? 'codex',
+        projectHash: '0123456789ab',
+        createdAt: new Date(container.generation ?? 0).toISOString(),
+        worktree: container.dir,
+        projectDir: container.projectDir ?? container.dir,
         status: container.status,
+        background: container.background ?? true,
+        options: container.options,
       });
     }
   }

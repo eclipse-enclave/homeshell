@@ -106,6 +106,7 @@ type fakeCLI struct {
 	mu         sync.Mutex
 	listCalls  int
 	allCalls   int
+	toolCalls  int
 	runCalls   []runCall
 	execOutput map[string]string
 	execErr    error
@@ -130,6 +131,13 @@ type fakeCLI struct {
 	// onProgress runs inside every Run with its progress callback, for a test
 	// that prints startup output.
 	onProgress func(progress func(string))
+	// runBase, when set, makes Run return the container Enclave names after the session: runBase, then
+	// `-<session name>` when Run is given one.
+	runBase string
+	// conversations, when set, are the containers with a conversation to continue: Enclave keeps one per
+	// session name, so a continue under a name without one fails, as the agent finds nothing to continue.
+	// A run that starts fresh gives its container one.
+	conversations map[string]bool
 }
 
 // runCall records a fakeCLI.Run call, so a test can assert on the flags the
@@ -197,6 +205,21 @@ func (f *fakeCLI) Run(_ context.Context, dir string, opts RunOpts) (string, erro
 	if opts.Continue && f.continueErr != nil {
 		return "", f.continueErr
 	}
+	if f.runBase != "" && f.runErr == nil {
+		started := f.runBase
+		if opts.SessionName != "" {
+			started += "-" + opts.SessionName
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.conversations != nil {
+			if opts.Continue && !f.conversations[started] {
+				return "", fmt.Errorf("container %s exited: No conversation found to continue", started)
+			}
+			f.conversations[started] = true
+		}
+		return started, nil
+	}
 	return f.runResult, f.runErr
 }
 
@@ -237,6 +260,9 @@ func (f *fakeCLI) Features(ctx context.Context, _ string) ([]sandboxschema.Featu
 }
 
 func (f *fakeCLI) Tools(_ context.Context) ([]Tool, error) {
+	f.mu.Lock()
+	f.toolCalls++
+	f.mu.Unlock()
 	var tools []Tool
 	for _, name := range f.tools {
 		label := f.toolLabels[name]
@@ -474,7 +500,7 @@ func TestOpenShellExecsAShellInTheContainer(t *testing.T) {
 	// `enclave shell` would build a *new* container. Held on a startup failure:
 	// the workstream's plain "Open" lands here, and an exec that fails at once
 	// must not close the window it just opened.
-	want := terminal.HoldOnStartupFailureIn("/proj", "enclave", "exec", "--name", "7", "--tool", "claude", "--", "bash")
+	want := terminal.HoldOnStartupFailureIn("/proj", "enclave", "exec", "--name", container, "--tool", "claude", "--", "bash")
 	if !slices.Equal(fl.launched[0], want) {
 		t.Errorf("launched = %q, want %q", fl.launched[0], want)
 	}
@@ -509,7 +535,7 @@ func TestExecRunsFromTheSessionsOwnDirectory(t *testing.T) {
 			if _, err := p.OpenShell(context.Background(), ref); err != nil {
 				t.Fatalf("OpenShell: %v", err)
 			}
-			want := terminal.HoldOnStartupFailureIn(tc.want, "enclave", "exec", "--name", "hs-eeaa4332b7b2c7d9", "--tool", "claude", "--", "bash")
+			want := terminal.HoldOnStartupFailureIn(tc.want, "enclave", "exec", "--name", container, "--tool", "claude", "--", "bash")
 			if len(fl.launched) != 1 || !slices.Equal(fl.launched[0], want) {
 				t.Errorf("launched = %q, want [%q]", fl.launched, want)
 			}

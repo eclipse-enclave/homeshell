@@ -65,6 +65,7 @@ import {
   openWorkstream,
   openWorkstreamNote,
   promptSession,
+  refusalMessage,
   removeProject,
   renameProject,
   renameSession,
@@ -466,6 +467,25 @@ export function ProjectView({
     }
   };
 
+  /**
+   * Restarts a session running outside HomeShell in HomeShell: a bare restart,
+   * so the daemon continues its conversation with what it recorded. A refusal
+   * shows as the page's error.
+   */
+  const handleTakeOverSession = async (
+    workstreamId: string,
+    sessionId: string,
+  ) => {
+    const result = await restartSession(
+      project.id,
+      workstreamId,
+      sessionId,
+      {},
+    );
+    const refusal = refusalMessage(result);
+    if (typeof refusal === 'string') setError(refusal);
+  };
+
   const handleRestartSubmit = async (
     data: RestartSessionData,
   ): Promise<string | Refusal | null> => {
@@ -591,6 +611,9 @@ export function ProjectView({
       }
       onRestartSession={(sessionId) =>
         handleRestartSession(workstream.id, sessionId)
+      }
+      onTakeOverSession={(sessionId) =>
+        handleTakeOverSession(workstream.id, sessionId)
       }
       canPromptSession={(session) =>
         Boolean(caps[session.provider ?? '']?.oneOffPrompt)
@@ -831,6 +854,7 @@ export function ProjectView({
           schema={restarting.schema}
           config={restarting.config}
           continueRefusal={restarting.continueRefusal}
+          takeOverWarning={restartingSession?.capabilities?.takeOverWarning}
           onSubmit={handleRestartSubmit}
           onCancel={() => setRestarting(null)}
           disabledReason={disabledReason}

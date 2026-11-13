@@ -350,7 +350,7 @@ All files live in the data directory (`persist.DefaultDir`; [how it is chosen](C
 | `agents.json` | `agentcatalog` | The agent catalog |
 | `daemon.json` | `daemonstate` | Discovery record, including the API token (`0600`) |
 | `local-provider.json` | `provider/local` | Local System sessions and their bridge sockets |
-| `enclave-provider.json` | `provider/enclave` | Enclave sessions, containers, last titles |
+| `enclave-provider.json` | `provider/enclave` | Enclave and CLI sessions, containers, last titles, replacement marks |
 | `workstreams/` | core workstream provider | Managed copy and worktree directories (default location) |
 | `daemon.log` | `cli/spawn.go` | Output of a daemon started by `ensure-running` |
 
@@ -434,10 +434,50 @@ the agent's PTY and serves screen snapshots on a unix socket; the wire format is
   exited, `error` for one that died right after starting.
 - **Lifecycle guard.** Each session has its own lock and revision, so a late poll cannot revive,
   reattach or relaunch a session that was stopped, removed or restarted meanwhile.
+- **Restart under a new name** (a fresh restart of an unnamed container,
+  [Eclipse Enclave](PROVIDERS.md#eclipse-enclave)). The new record is
+  saved marked as replacing the old one (`ReplacingFrom`); the restart's end swaps the records in one
+  step, and a daemon that finds the mark on load completes the swap
+  (`provider/enclave/restart.go` `completeReplacements`). Cancelled, as by a shutdown, the restart
+  stops the new container, so the session is left to end and be continued.
 - **Outdated settings.** Every 30 s (`provider/enclave/drift.go`) the provider compares each
   session's options with what Enclave's config now resolves.
 - **Sandbox settings** come from Enclave's config and features, cached briefly
   (`provider/enclave/sandbox.go`); HomeShell passes them through.
+- **CLI sessions.** The same check adopts sessions started with the `enclave` CLI
+  (`provider/enclave/adopt.go` `adoptListed`); the flowchart below shows which:
+  - a background one gets a bridge around `enclave attach` and is HomeShell's own from then on;
+  - a foreground one runs in the user's terminal: a bridgeless record (`Foreground`) whose state
+    comes from the check, `done` once a successful listing of its project no longer has it;
+  - an ended one listed running again is adopted again, unless its old bridge still answers at a
+    socket this daemon no longer uses (as in recovery);
+  - an `hs-` session name this daemon has no record of is another daemon's;
+  - the agent tool profiles (`enclave tools`) are listed only when a check finds a running
+    container without a record and without an `hs-` session name, at most once per check;
+  - two daemons whose projects cover one folder may both attach one (GAP 10 in
+    `provider/enclave/gaps.go`).
+- **Changed while listed.** Every write of a record bumps its generation, which the check takes
+  before it lists. A record written since wins over the listing, for adoption, ending foreground
+  sessions and drift alike. Why: the listing may predate a start, stop, restart or removal.
+- **Failed adoption.** A bridge that cannot attach leaves the container running and unrecorded,
+  for the next check to try again.
+
+```mermaid
+flowchart TD
+    L["container in a project's enclave ps listing"] --> U{"status running?"}
+    U -->|no| S["skip"]
+    U -->|yes| O{"in a folder the project owns, or in no<br/>project's folder and Enclave's project is it?"}
+    O -->|no| S
+    O -->|yes| R{"recorded by this daemon?"}
+    R -->|live| S
+    R -->|ended| C
+    R -->|no| I{"agent tool profile (enclave tools, not theia)<br/>and no hs- session name?"}
+    I -->|no| S
+    I -->|yes| C{"record changed since the listing,<br/>or restarting? (under its lock)"}
+    C -->|yes| S
+    C -->|"no, background"| AT["record and attach a bridge"]
+    C -->|"no, foreground"| FG["record as foreground,<br/>no bridge"]
+```
 
 ## Desktop shell
 

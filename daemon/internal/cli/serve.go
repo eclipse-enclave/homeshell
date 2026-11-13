@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -23,6 +22,7 @@ import (
 	"github.com/eclipsesource/homeshell/daemon/internal/api"
 	"github.com/eclipsesource/homeshell/daemon/internal/daemonstate"
 	"github.com/eclipsesource/homeshell/daemon/internal/domain"
+	"github.com/eclipsesource/homeshell/daemon/internal/envutil"
 	"github.com/eclipsesource/homeshell/daemon/internal/filedialog"
 	"github.com/eclipsesource/homeshell/daemon/internal/git"
 	"github.com/eclipsesource/homeshell/daemon/internal/logging"
@@ -43,22 +43,12 @@ import (
 // demoInterval is the cadence of the demo simulator's state transitions.
 const demoInterval = 3 * time.Second
 
-// fakeSessionStartupEnv makes the demo provider's session creation take a while
+// fakeSessionStartupEnv, in milliseconds, makes the demo provider's session creation take a while
 // and stream synthetic build output while it does, so the starting-session
 // placeholder and its log tail can be driven over the public API. Read from the
 // environment for the same reason as HOMESHELL_UPDATE_BASE_URL above: it exists
 // for the test harness, not for users, so it stays off the flag surface.
 const fakeSessionStartupEnv = "HOMESHELL_FAKE_SESSION_STARTUP_MS"
-
-// fakeSessionStartup reads that knob. Anything unparseable or non-positive means
-// off, which is the default and what the demo runs with.
-func fakeSessionStartup() time.Duration {
-	ms, err := strconv.Atoi(strings.TrimSpace(os.Getenv(fakeSessionStartupEnv)))
-	if err != nil || ms <= 0 {
-		return 0
-	}
-	return time.Duration(ms) * time.Millisecond
-}
 
 // newUpdateService builds the self-update service for the release channel this
 // binary was stamped with. HOMESHELL_UPDATE_BASE_URL points it at another
@@ -303,7 +293,7 @@ func run(ctx context.Context, env Env, flags serveFlags, logLevel *logging.Level
 			// starting-session placeholder and its startup log with no window to be
 			// observed in. The e2e suite sets this to open one; the demo leaves it
 			// unset so creating a session there stays immediate.
-			SessionStartup: fakeSessionStartup(),
+			SessionStartup: envutil.Milliseconds(fakeSessionStartupEnv),
 		})
 		if err := registry.RegisterWorkstreamProvider(fakeProvider); err != nil {
 			return fmt.Errorf("registering fake workstream provider: %w", err)

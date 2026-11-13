@@ -83,56 +83,6 @@ func TestRestartSessionFreshStartsANewConversation(t *testing.T) {
 	}
 }
 
-// While the container is down the session stays on the card, as starting —
-// dropping it, even for one poll, would also drop its custom title.
-func TestRestartingSessionIsDiscoveredAsStarting(t *testing.T) {
-	cli := &fakeCLI{available: true, runResult: restartContainer}
-	p := restartProvider(t, cli)
-
-	p.bridges.restarting[restartContainer] = restartProjection{
-		workingDir: "/tmp/project/wt",
-		session:    domain.Session{ID: restartContainer, State: domain.SessionStarting},
-	}
-	// The old container is still listed on its way down.
-	cli.containers = map[string][]Container{"/tmp/project": {{Name: restartContainer, Tool: "claude", Directory: "/tmp/project/wt", Status: "running"}}}
-
-	found, err := p.DiscoverSessions(context.Background(), provider.ProjectRef{ID: "proj-1", Path: "/tmp/project"})
-	if err != nil {
-		t.Fatalf("DiscoverSessions: %v", err)
-	}
-	if len(found) != 1 || found[0].Session.State != domain.SessionStarting {
-		t.Errorf("discovered = %+v; want the one session, starting", found)
-	}
-}
-
-// A restart Enclave refuses after the old container is stopped — a mount it will
-// not make, say — shows on the session, as a failed start does, and can be tried
-// again: the container is already gone, so the second stop failing must not stop
-// it.
-func TestRestartSessionFailureIsReportedOnTheSession(t *testing.T) {
-	cli := &fakeCLI{available: true, runErr: errors.New("enclave continue: refusing to mount sensitive path ~/.ssh")}
-	p := restartProvider(t, cli)
-
-	if err := restartNow(p, restartRequest(`{}`, false)); err != nil {
-		t.Fatalf("RestartSession: %v; want the failure on the session instead", err)
-	}
-	sess, err := p.SessionState(context.Background(), provider.SessionRef{ProjectID: "proj-1", SessionID: restartContainer})
-	if err != nil || sess.State != domain.SessionError || sess.Error == "" {
-		t.Fatalf("after a failed restart: %+v, %v; want it in error, saying why", sess, err)
-	}
-
-	cli.runErr = nil
-	cli.runResult = restartContainer
-	cli.stopErr = errors.New("no such container")
-	if err := restartNow(p, restartRequest(`{}`, false)); err != nil {
-		t.Fatalf("RestartSession (retry): %v", err)
-	}
-	sess, _ = p.SessionState(context.Background(), provider.SessionRef{ProjectID: "proj-1", SessionID: restartContainer})
-	if sess.State != domain.SessionRunning {
-		t.Errorf("after the retry: %+v; want it running", sess)
-	}
-}
-
 // A restart whose old container cannot be stopped leaves the session as it was —
 // the container most likely still runs it — and says why to the service, rather
 // than showing a failed start beside a container that is still up.
@@ -182,24 +132,6 @@ func TestRestartOfAFailedSessionIgnoresTheStopFailure(t *testing.T) {
 	sess, _ := p.SessionState(context.Background(), provider.SessionRef{ProjectID: "proj-1", SessionID: restartContainer})
 	if sess.State != domain.SessionRunning {
 		t.Errorf("session = %+v; want it running", sess)
-	}
-}
-
-// A container that comes back under another name is not the session's: the
-// restart fails, on the session, and the stray container is stopped.
-func TestRestartUnderAnotherNameFails(t *testing.T) {
-	cli := &fakeCLI{available: true, runResult: "enclave-claude-abc123abc123-hs-other"}
-	p := restartProvider(t, cli)
-
-	if err := restartNow(p, restartRequest(`{}`, false)); err != nil {
-		t.Fatalf("RestartSession: %v", err)
-	}
-	sess, _ := p.SessionState(context.Background(), provider.SessionRef{ProjectID: "proj-1", SessionID: restartContainer})
-	if sess.State != domain.SessionError || !strings.Contains(sess.Error, "hs-other") {
-		t.Errorf("session = %+v; want it in error, naming the container it got", sess)
-	}
-	if !slices.Contains(cli.stopped, "enclave-claude-abc123abc123-hs-other") {
-		t.Errorf("stopped = %q; want the stray container stopped", cli.stopped)
 	}
 }
 
@@ -260,25 +192,358 @@ func TestContinueRefusal(t *testing.T) {
 	}
 }
 
-// A container started without a session name cannot be restarted as itself:
-// `enclave run` without one would start the tool's default container instead.
-func TestRestartSessionNeedsASessionName(t *testing.T) {
-	cli := &fakeCLI{available: true}
-	p := restartProvider(t, cli)
-	req := restartRequest(`{}`, false)
-	req.Session.SessionID = "enclave-claude-abc123abc123"
-	if _, err := p.PrepareRestart(context.Background(), req); !errors.Is(err, provider.ErrSessionNotRestartable) {
-		t.Errorf("PrepareRestart = %v; want ErrSessionNotRestartable", err)
+// A restart that continues keeps the session's name, as Enclave keeps the conversation per name. A fresh one
+// keeps a named session's name too; an unnamed one (the project's default container, or one Enclave numbered
+// because the default was taken) takes a new HomeShell name, leaving its name to the terminal.
+func TestRestartNames(t *testing.T) {
+	tests := []struct {
+		name            string
+		container       string
+		fresh           bool
+		wantSessionName string
+		wantNewName     bool
+		wantErr         error
+	}{
+		{name: "continue the default container", container: "enclave-claude-abc123abc123"},
+		{name: "continue an auto-numbered container", container: "enclave-claude-abc123abc123-1", wantSessionName: "1"},
+		{name: "continue a named session", container: "enclave-claude-abc123abc123-feature", wantSessionName: "feature"},
+		{name: "fresh default container", container: "enclave-claude-abc123abc123", fresh: true, wantNewName: true},
+		{name: "fresh auto-numbered container", container: "enclave-claude-abc123abc123-1", fresh: true, wantNewName: true},
+		{name: "fresh named session", container: "enclave-claude-abc123abc123-feature", fresh: true, wantSessionName: "feature"},
+		{name: "another tool's container", container: "enclave-codex-abc123abc123", wantErr: provider.ErrSessionNotRestartable},
+		{name: "no Enclave container", container: "not-an-enclave-name", wantErr: provider.ErrSessionNotRestartable},
 	}
-	// Refused before any settings are chosen, so the restart form is never offered.
-	if err := p.CheckRestart(req.Session, "claude"); !errors.Is(err, provider.ErrSessionNotRestartable) {
-		t.Errorf("CheckRestart = %v; want ErrSessionNotRestartable", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target, sessionName, err := restartNames(tt.container, "claude", tt.fresh)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("restartNames = %v; want %v", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantTarget := tt.container
+			if tt.wantNewName {
+				if !strings.HasPrefix(sessionName, sessionNamePrefix) {
+					t.Fatalf("session name = %q; want a new %s name", sessionName, sessionNamePrefix)
+				}
+				wantTarget = "enclave-claude-abc123abc123-" + sessionName
+			} else if sessionName != tt.wantSessionName {
+				t.Errorf("session name = %q; want %q", sessionName, tt.wantSessionName)
+			}
+			if target != wantTarget {
+				t.Errorf("target = %q; want %q", target, wantTarget)
+			}
+		})
 	}
-	if err := p.CheckRestart(restartRequest(`{}`, false).Session, "claude"); err != nil {
-		t.Errorf("CheckRestart of a named container = %v; want nil", err)
+}
+
+// The restart form is offered for an unnamed container too.
+func TestCheckRestartOfTheDefaultContainer(t *testing.T) {
+	p := restartProvider(t, &fakeCLI{available: true})
+	container := Container{Name: "enclave-claude-abc123abc123", Tool: "claude", Directory: "/tmp/project/wt", Status: "running"}
+	p.bridges.records[container.Name] = bridgeRecord{Container: container}
+	if err := p.CheckRestart(provider.SessionRef{ProjectID: "proj-1", SessionID: container.Name}, "claude"); err != nil {
+		t.Errorf("CheckRestart = %v; want nil", err)
 	}
-	if len(cli.stopped) != 0 {
-		t.Error("stopped a container it could not bring back")
+}
+
+const defaultContainer = "enclave-codex-0123456789ab"
+
+// adoptedDefault adopts the project's default codex container, started with a plain `enclave codex`.
+func adoptedDefault(t *testing.T, background bool) (*Provider, *fakeCLI, *testBridge, provider.ProjectRef) {
+	t.Helper()
+	p, cli, bridge, project := bridgeProvider(t)
+	listed(cli, project, Container{Name: defaultContainer, Tool: "codex", Directory: project.Path, Status: "running", Background: background})
+	p.checkInventory(context.Background())
+	if _, adopted := p.bridgeRecordFor(defaultContainer); !adopted {
+		t.Fatal("the default container was not adopted")
+	}
+	cli.runBase = defaultContainer
+	cli.conversations = map[string]bool{defaultContainer: true}
+	return p, cli, bridge, project
+}
+
+func restartOf(p *Provider, project provider.ProjectRef, container string) (provider.RestartFunc, error) {
+	return p.PrepareRestart(context.Background(), provider.RestartSessionRequest{
+		Session:    provider.SessionRef{ProjectID: project.ID, SessionID: container},
+		WorkingDir: project.Path,
+		OptionID:   "codex",
+	})
+}
+
+// freshRestartOf restarts container on a new conversation.
+func freshRestartOf(p *Provider, project provider.ProjectRef, container string) (provider.RestartFunc, error) {
+	return p.PrepareRestart(context.Background(), provider.RestartSessionRequest{
+		Session:    provider.SessionRef{ProjectID: project.ID, SessionID: container},
+		WorkingDir: project.Path,
+		OptionID:   "codex",
+		Fresh:      true,
+	})
+}
+
+// A restart of an unnamed session continues its conversation under its own name, in the background, attached
+// once more: the conversation is kept per session name.
+func TestRestartOfAnUnnamedSessionKeepsItsName(t *testing.T) {
+	p, cli, bridge, project := adoptedDefault(t, true)
+	run, err := restartOf(p, project, defaultContainer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if opts := cli.runCalls[0].opts; !opts.Continue || !opts.Background || opts.SessionName != "" {
+		t.Fatalf("run = %+v; want a background continue of the default container", opts)
+	}
+	if shown := rows(t, p, project); len(shown) != 1 || shown[defaultContainer].State.Terminal() {
+		t.Errorf("rows = %+v; want only %s, running", shown, defaultContainer)
+	}
+	if len(bridge.starts) != 2 {
+		t.Errorf("bridge started %d times; want twice, by the adoption and by the restart", len(bridge.starts))
+	}
+}
+
+// A fresh restart of an unnamed session goes on under a new HomeShell name, in the background, and its row is
+// replaced by the new session's, attached once. Until then the session shows alone, starting.
+func TestFreshRestartOfAnUnnamedSessionReplacesIt(t *testing.T) {
+	p, cli, bridge, project := adoptedDefault(t, true)
+	run, err := freshRestartOf(p, project, defaultContainer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var attaching map[string]domain.Session
+	bridge.onStart = func() { attaching = rows(t, p, project) }
+	if err := run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(attaching) != 1 || attaching[defaultContainer].State != domain.SessionStarting {
+		t.Errorf("rows while the new container was attached = %+v; want only the session, starting", attaching)
+	}
+
+	opts := cli.runCalls[0].opts
+	if opts.Continue || !opts.Background || !strings.HasPrefix(opts.SessionName, sessionNamePrefix) {
+		t.Fatalf("run = %+v; want a fresh background run under a new %s name", opts, sessionNamePrefix)
+	}
+	replacement := defaultContainer + "-" + opts.SessionName
+	shown := rows(t, p, project)
+	if len(shown) != 1 || shown[replacement].Replaces != defaultContainer {
+		t.Errorf("rows = %+v; want only %s, replacing %s", shown, replacement, defaultContainer)
+	}
+	if _, kept := reloaded(t, p, cli).bridgeRecordFor(defaultContainer); kept {
+		t.Error("the records file still has the replaced session")
+	}
+	listed(cli, project, Container{Name: replacement, Tool: "codex", Directory: project.Path, Status: "running",
+		Background: true, SessionName: opts.SessionName})
+	p.checkInventory(context.Background())
+	if len(bridge.starts) != 2 {
+		t.Errorf("bridge started %d times; want twice, by the adoption and by the restart", len(bridge.starts))
+	}
+}
+
+// A foreground session restarted in HomeShell ends in its terminal and goes on in the background, attached.
+func TestRestartOfAForegroundSessionAttachesHomeShell(t *testing.T) {
+	p, cli, bridge, project := bridgeProvider(t)
+	foreground := cliSession(project.Path, false)
+	foreground.ProjectDir = "/where/enclave/resolved/the/project"
+	listed(cli, project, foreground)
+	p.checkInventory(context.Background())
+	cli.runResult = cliSessionName
+
+	run, err := restartOf(p, project, cliSessionName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(cli.stopped, []string{cliSessionName}) || bridge.stops != 0 {
+		t.Errorf("stopped %q and %d bridges; want the container, which has no bridge", cli.stopped, bridge.stops)
+	}
+	if opts := cli.runCalls[0].opts; opts.SessionName != "feature" || !opts.Continue || !opts.Background {
+		t.Errorf("run = %+v; want a background continue under the same name", opts)
+	}
+	record, _ := p.bridgeRecordFor(cliSessionName)
+	if record.Foreground || !record.Container.Background || record.Container.ProjectDir != foreground.ProjectDir {
+		t.Errorf("record = %+v; want it attached in the background, in the same project", record)
+	}
+	if len(bridge.starts) != 1 {
+		t.Errorf("bridge started %d times; want once", len(bridge.starts))
+	}
+}
+
+// A restart under a new name cancelled by the daemon shutting down withdraws the new container, whichever point it
+// got to: the next daemon has the session as it was, to end and continue, and no unrecorded hs- container.
+func TestShutdownDuringARenamingRestart(t *testing.T) {
+	tests := []struct {
+		name   string
+		cancel func(cli *fakeCLI, bridge *testBridge, cancel func())
+	}{
+		{"while the container comes up", func(cli *fakeCLI, _ *testBridge, cancel func()) { cli.onRun = cancel }},
+		{"once it is attached", func(_ *fakeCLI, bridge *testBridge, cancel func()) { bridge.onStart = cancel }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, cli, bridge, project := adoptedDefault(t, true)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			tt.cancel(cli, bridge, cancel)
+			run, err := freshRestartOf(p, project, defaultContainer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := run(ctx); !errors.Is(err, provider.ErrRestartInterrupted) {
+				t.Fatalf("restart = %v; want ErrRestartInterrupted", err)
+			}
+
+			replacement := defaultContainer + "-" + cli.runCalls[0].opts.SessionName
+			if !slices.Contains(cli.stopped, replacement) {
+				t.Errorf("stopped = %q; want the new container stopped", cli.stopped)
+			}
+			shown := rows(t, reloaded(t, p, cli), project)
+			if _, kept := shown[defaultContainer]; len(shown) != 1 || !kept {
+				t.Errorf("rows after a daemon restart = %+v; want the session as it was, alone", shown)
+			}
+		})
+	}
+}
+
+// A daemon that crashed after a restart under a new name recorded the new container, but before it replaced the
+// old record, completes the replacement on load.
+func TestCrashDuringARenamingRestartIsCompletedOnLoad(t *testing.T) {
+	p, cli, _, project := adoptedDefault(t, true)
+	const replacement = defaultContainer + "-hs-1a2b"
+	p.bridges.mu.Lock()
+	p.bridges.setRecord(replacement, bridgeRecord{
+		Container:     Container{Name: replacement, Tool: "codex", Directory: project.Path, Status: "running", Background: true},
+		Replaces:      defaultContainer,
+		ReplacingFrom: defaultContainer,
+	})
+	if err := p.bridges.save(); err != nil {
+		t.Fatal(err)
+	}
+	p.bridges.mu.Unlock()
+
+	again := reloaded(t, p, cli)
+	if shown := rows(t, again, project); len(shown) != 1 || shown[replacement].Replaces != defaultContainer {
+		t.Errorf("rows = %+v; want only %s, replacing %s", shown, replacement, defaultContainer)
+	}
+	if record, _ := reloaded(t, again, cli).bridgeRecordFor(replacement); record.ReplacingFrom != "" {
+		t.Errorf("record = %+v; want the completed replacement saved", record)
+	}
+}
+
+// A session its project owns through the folder Enclave resolved it to stays on that project's card while it
+// restarts, so its title and settings are not pruned meanwhile.
+func TestRestartingSessionOwnedThroughItsProjectDir(t *testing.T) {
+	p, cli, _, project := bridgeProvider(t)
+	session := cliSession(t.TempDir(), true)
+	session.ProjectDir = project.Path
+	listed(cli, project, session)
+	p.checkInventory(context.Background())
+	cli.runResult = cliSessionName
+	var during domain.Session
+	cli.onRun = func() { during = rows(t, p, project)[cliSessionName] }
+
+	run, err := p.PrepareRestart(context.Background(), provider.RestartSessionRequest{
+		Session:    provider.SessionRef{ProjectID: project.ID, SessionID: cliSessionName},
+		WorkingDir: session.Directory,
+		OptionID:   "codex",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if during.State != domain.SessionStarting {
+		t.Errorf("while restarting: %+v; want the session shown, starting", during)
+	}
+}
+
+// Continue of a foreground session that ended in its terminal goes on under its own name, which holds its
+// conversation.
+func TestContinueOfAnEndedCLISession(t *testing.T) {
+	p, cli, _, project := adoptedDefault(t, false)
+	listed(cli, project)
+	p.checkInventory(context.Background())
+	if state := rows(t, p, project)[defaultContainer].State; state != domain.SessionDone {
+		t.Fatalf("state = %s; want the session done", state)
+	}
+	ref := provider.SessionRef{ProjectID: project.ID, SessionID: defaultContainer}
+	if err := p.StartSession(context.Background(), ref); !errors.Is(err, provider.ErrStartIsRestart) {
+		t.Fatalf("StartSession = %v; want ErrStartIsRestart", err)
+	}
+	run, err := restartOf(p, project, defaultContainer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if opts := cli.runCalls[0].opts; !opts.Continue || opts.SessionName != "" {
+		t.Fatalf("run = %+v; want a continue of the default container", opts)
+	}
+	if shown := rows(t, p, project); len(shown) != 1 || shown[defaultContainer].State.Terminal() {
+		t.Errorf("rows = %+v; want only %s, running", shown, defaultContainer)
+	}
+}
+
+// Continue of an ended session whose name runs again, as a terminal `enclave` start takes the default container
+// again, is refused before it stops anything: that session is the user's, and the next check adopts it.
+func TestContinueRefusedWhileItsNameRunsAgain(t *testing.T) {
+	runsAgain := func(cli *fakeCLI, project provider.ProjectRef) {
+		listed(cli, project, Container{Name: defaultContainer, Tool: "codex", Directory: project.Path, Status: "running"})
+	}
+	tests := []struct {
+		name        string
+		failed      bool
+		listing     func(cli *fakeCLI, project provider.ProjectRef)
+		wantRefused bool
+	}{
+		{"its name runs again", false, runsAgain, true},
+		{"a failed session's name runs again", true, runsAgain, true},
+		{"the listing fails", false, func(cli *fakeCLI, _ provider.ProjectRef) { cli.listErr = errors.New("Docker unavailable") },
+			true},
+		{"its name is free", false, func(*fakeCLI, provider.ProjectRef) {}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, cli, _, project := adoptedDefault(t, false)
+			listed(cli, project)
+			p.checkInventory(context.Background())
+			if tt.failed {
+				p.bridges.mu.Lock()
+				record := p.bridges.records[defaultContainer]
+				record.State, record.Error = domain.SessionError, "exited right after starting"
+				p.bridges.setRecord(defaultContainer, record)
+				p.bridges.mu.Unlock()
+			}
+			tt.listing(cli, project)
+
+			run, err := restartOf(p, project, defaultContainer)
+			if refused := err != nil; refused != tt.wantRefused {
+				t.Fatalf("PrepareRestart = %v; want refused: %v", err, tt.wantRefused)
+			}
+			if tt.wantRefused {
+				if !errors.Is(err, provider.ErrSessionNotRestartable) {
+					t.Errorf("PrepareRestart = %v; want ErrSessionNotRestartable", err)
+				}
+				if len(cli.stopped) != 0 {
+					t.Errorf("stopped %q; want nothing stopped", cli.stopped)
+				}
+				return
+			}
+			if err := run(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(cli.stopped, []string{defaultContainer}) {
+				t.Errorf("stopped %q; want the ended container's name cleared", cli.stopped)
+			}
+		})
 	}
 }
 
@@ -375,108 +640,6 @@ func TestRestartVouchesForADefaultRootWorkstreamDirectory(t *testing.T) {
 				if !slices.Equal(call.opts.SensitiveDirs, want) {
 					t.Errorf("run %d (continue=%v): SensitiveDirs = %q; want %q", i, call.opts.Continue, call.opts.SensitiveDirs, want)
 				}
-			}
-		})
-	}
-}
-
-// Preparing a restart changes nothing; the session reads as starting while the
-// restart runs, in SessionState as in discovery.
-func TestRestartingSessionStateIsStarting(t *testing.T) {
-	cli := &fakeCLI{available: true, runResult: restartContainer}
-	p := restartProvider(t, cli)
-
-	ref := provider.SessionRef{ProjectID: "proj-1", SessionID: restartContainer}
-
-	run, err := p.PrepareRestart(context.Background(), restartRequest(`{}`, false))
-	if err != nil {
-		t.Fatalf("PrepareRestart: %v", err)
-	}
-	before, err := p.SessionState(context.Background(), provider.SessionRef{ProjectID: "proj-1", SessionID: restartContainer})
-	if err != nil || before.State != domain.SessionRunning {
-		t.Fatalf("prepare changed session: %+v err=%v", before, err)
-	}
-	var during domain.Session
-	cli.onRun = func() { during, _ = p.SessionState(context.Background(), ref) }
-	run(context.Background())
-	if during.State != domain.SessionStarting {
-		t.Errorf("while the container came up: %+v; want it starting", during)
-	}
-}
-
-// Removing a session while it restarts withdraws the restart: the session does not
-// come back, the removal is not refused for the container being down, and a
-// container started meanwhile is stopped.
-func TestRemoveSessionWithdrawsARestart(t *testing.T) {
-	ref := provider.SessionRef{ProjectID: "proj-1", WorkstreamID: "ws1", SessionID: restartContainer}
-	tests := []struct {
-		name string
-		// cancelDuringRun cancels the restart while the new container is coming
-		// up; otherwise it is cancelled before the restart runs at all.
-		cancelDuringRun bool
-		// removeAfterRun removes the session only once the cancelled restart has
-		// ended; otherwise it is removed right after the cancel, as the service does.
-		removeAfterRun bool
-		// keepContext withdraws by removal alone, without cancelling.
-		keepContext bool
-	}{
-		{name: "before the restart runs"},
-		{name: "while the container comes up", cancelDuringRun: true},
-		{name: "while the container comes up, removed once the restart ended", cancelDuringRun: true, removeAfterRun: true},
-		{name: "while the container comes up, uncancelled", cancelDuringRun: true, keepContext: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cli := &fakeCLI{available: true, runResult: restartContainer}
-			p := restartProvider(t, cli)
-
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			run, err := p.PrepareRestart(context.Background(), restartRequest(`{}`, false))
-			if err != nil {
-				t.Fatalf("PrepareRestart: %v", err)
-			}
-			remove := func() {
-				if tt.cancelDuringRun {
-					// The restart has already stopped the old container.
-					cli.stopErr = errors.New("no such container")
-				}
-				if err := p.RemoveSession(context.Background(), ref); err != nil {
-					t.Errorf("RemoveSession: %v; want the restarting session removed", err)
-				}
-				cli.stopErr = nil
-			}
-			withdraw := func() {
-				if !tt.keepContext {
-					cancel()
-				}
-				if !tt.removeAfterRun {
-					remove()
-				}
-			}
-			if tt.cancelDuringRun {
-				cli.onRun = withdraw
-			} else {
-				withdraw()
-			}
-			run(ctx)
-			if tt.removeAfterRun {
-				remove()
-			}
-
-			if sess, err := p.SessionState(context.Background(), ref); err == nil {
-				t.Errorf("after the removal: %+v; want the session gone", sess)
-			}
-			found, _ := p.DiscoverSessions(context.Background(), provider.ProjectRef{ID: "proj-1", Path: "/tmp/project"})
-			if len(found) != 0 {
-				t.Errorf("discovered %+v; want nothing", found)
-			}
-			if tt.cancelDuringRun && cli.stopped[len(cli.stopped)-1] != restartContainer {
-				t.Errorf("stopped = %q; want the container started meanwhile stopped", cli.stopped)
-			}
-			if !tt.cancelDuringRun && (len(cli.runCalls) != 0 || len(cli.stopped) != 1) {
-				t.Errorf("ran %d and stopped %d times; want only the removal's stop", len(cli.runCalls), len(cli.stopped))
 			}
 		})
 	}
@@ -618,4 +781,230 @@ func restartProvider(t *testing.T, cli *fakeCLI) *Provider {
 	c := Container{Name: restartContainer, Tool: "claude", Directory: "/tmp/project/wt", Status: "running"}
 	p.bridges.records[c.Name] = bridgeRecord{Container: c}
 	return p
+}
+
+// A foreground session whose recorded options name a directory that is gone is refused before the container is
+// stopped: the service checks the observed config against the schema, then PrepareRestart checks the directories.
+func TestRestartOfAForegroundSessionIsRefusedBeforeItStops(t *testing.T) {
+	p, cli, _, project := bridgeProvider(t)
+	foreground := cliSession(project.Path, false)
+	foreground.Options = map[string]json.RawMessage{"add_dirs": json.RawMessage(`["/no/such/directory"]`)}
+	listed(cli, project, foreground)
+	p.checkInventory(context.Background())
+
+	ref := provider.SessionRef{ProjectID: project.ID, SessionID: cliSessionName}
+	observed, known := p.ObservedLaunchConfig(context.Background(), ref, "codex")
+	if !known {
+		t.Fatal("the session's options were not observed")
+	}
+	_, err := p.PrepareRestart(context.Background(), provider.RestartSessionRequest{
+		Session: ref, WorkingDir: project.Path, OptionID: "codex", Config: observed,
+	})
+	var validation *provider.ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("PrepareRestart = %v; want a ValidationError", err)
+	}
+	if len(cli.stopped) != 0 {
+		t.Errorf("stopped %q; want nothing", cli.stopped)
+	}
+}
+
+// restartingSession is a session with its restart prepared: a named one, restarted under its own name, or, renaming,
+// the project's default container, restarted under a new one.
+type restartingSession struct {
+	provider *Provider
+	cli      *fakeCLI
+	bridge   *testBridge
+	project  provider.ProjectRef
+	ref      provider.SessionRef
+	run      provider.RestartFunc
+}
+
+func prepareRestartOf(t *testing.T, renaming bool) restartingSession {
+	t.Helper()
+	if renaming {
+		enclaveProvider, cli, bridge, project := adoptedDefault(t, true)
+		run, err := freshRestartOf(enclaveProvider, project, defaultContainer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ref := provider.SessionRef{ProjectID: project.ID, SessionID: defaultContainer}
+		return restartingSession{enclaveProvider, cli, bridge, project, ref, run}
+	}
+	cli := &fakeCLI{available: true, runResult: restartContainer}
+	enclaveProvider := restartProvider(t, cli)
+	run, err := enclaveProvider.PrepareRestart(context.Background(), restartRequest(`{}`, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := provider.ProjectRef{ID: "proj-1", Path: "/tmp/project"}
+	ref := provider.SessionRef{ProjectID: "proj-1", WorkstreamID: "ws1", SessionID: restartContainer}
+	return restartingSession{enclaveProvider, cli, enclaveProvider.bridges.runtime.(*testBridge), project, ref, run}
+}
+
+// target is the container the restart brings back, once it ran.
+func (session restartingSession) target() string {
+	if session.ref.SessionID != defaultContainer {
+		return session.ref.SessionID
+	}
+	return defaultContainer + "-" + session.cli.runCalls[0].opts.SessionName
+}
+
+// Preparing a restart changes nothing; while the container comes up the session reads as starting, in SessionState
+// as in discovery. Dropping it, even for one poll, would also drop its custom title.
+func TestRestartingSessionIsStarting(t *testing.T) {
+	tests := []struct {
+		name string
+		read func(*testing.T, restartingSession) domain.Session
+	}{
+		{"in SessionState", func(t *testing.T, session restartingSession) domain.Session {
+			read, err := session.provider.SessionState(context.Background(), session.ref)
+			if err != nil {
+				t.Errorf("SessionState: %v", err)
+			}
+			return read
+		}},
+		{"in discovery", func(t *testing.T, session restartingSession) domain.Session {
+			found, err := session.provider.DiscoverSessions(context.Background(), session.project)
+			if err != nil || len(found) != 1 {
+				t.Errorf("discovered %+v, %v; want the one session", found, err)
+				return domain.Session{}
+			}
+			return found[0].Session
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := prepareRestartOf(t, false)
+			if before := tt.read(t, session); before.State != domain.SessionRunning {
+				t.Fatalf("after preparing: %+v; want it running, unchanged", before)
+			}
+			var during domain.Session
+			session.cli.onRun = func() { during = tt.read(t, session) }
+			if err := session.run(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if during.State != domain.SessionStarting {
+				t.Errorf("while the container came up: %+v; want it starting", during)
+			}
+		})
+	}
+}
+
+// A restart that fails once the old container is stopped shows on the session's row alone, saying why, as a failed
+// start does.
+func TestRestartFailureIsReportedOnTheSession(t *testing.T) {
+	const stray = "enclave-claude-abc123abc123-hs-other"
+	tests := []struct {
+		name      string
+		renaming  bool
+		arrange   func(*fakeCLI, *testBridge)
+		wantError string
+		// wantStopped is a container that is not the session's, stopped rather than left running.
+		wantStopped string
+	}{
+		{name: "Enclave refuses it", wantError: "refusing to mount", arrange: func(cli *fakeCLI, _ *testBridge) {
+			cli.runErr = errors.New("enclave continue: refusing to mount sensitive path ~/.ssh")
+		}},
+		{name: "it comes back under another name", wantError: "hs-other", wantStopped: stray,
+			arrange: func(cli *fakeCLI, _ *testBridge) { cli.runResult = stray }},
+		{name: "under a new name, it cannot attach nor be stopped", renaming: true, wantError: "bridge refused",
+			arrange: func(cli *fakeCLI, bridge *testBridge) {
+				bridge.startErr = errors.New("bridge refused")
+				bridge.onStart = func() { cli.stopErr = errors.New("docker is not running") }
+			}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := prepareRestartOf(t, tt.renaming)
+			tt.arrange(session.cli, session.bridge)
+			if err := session.run(context.Background()); err != nil {
+				t.Fatalf("restart = %v; want the failure on the session instead", err)
+			}
+			shown := rows(t, session.provider, session.project)
+			failed := shown[session.ref.SessionID]
+			if len(shown) != 1 || failed.State != domain.SessionError || !strings.Contains(failed.Error, tt.wantError) {
+				t.Errorf("rows = %+v; want only the session, failed, saying %q", shown, tt.wantError)
+			}
+			if tt.wantStopped != "" && !slices.Contains(session.cli.stopped, tt.wantStopped) {
+				t.Errorf("stopped = %q; want %s stopped", session.cli.stopped, tt.wantStopped)
+			}
+		})
+	}
+}
+
+// Removing a session while it restarts withdraws the restart, under the session's name or a new one: nothing of it
+// is left, the removal is not refused for the container being down, and a container started meanwhile is stopped.
+func TestRemoveSessionWithdrawsARestart(t *testing.T) {
+	tests := []struct {
+		name     string
+		renaming bool
+		// cancelDuringRun cancels the restart while the new container is coming up; otherwise it is cancelled
+		// before the restart runs at all.
+		cancelDuringRun bool
+		// removeAfterRun removes the session only once the cancelled restart has ended; otherwise it is removed
+		// right after the cancel, as the service does.
+		removeAfterRun bool
+		// keepContext withdraws by removal alone, without cancelling.
+		keepContext bool
+	}{
+		{name: "before the restart runs"},
+		{name: "while the container comes up", cancelDuringRun: true},
+		{name: "while the container comes up, removed once the restart ended", cancelDuringRun: true, removeAfterRun: true},
+		{name: "while the container comes up, uncancelled", cancelDuringRun: true, keepContext: true},
+		{name: "under a new name, while the container comes up, uncancelled", renaming: true, cancelDuringRun: true,
+			keepContext: true},
+		{name: "under a new name, removed once the restart ended", renaming: true, cancelDuringRun: true,
+			removeAfterRun: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := prepareRestartOf(t, tt.renaming)
+			cli := session.cli
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			remove := func() {
+				if tt.cancelDuringRun {
+					// The restart has already stopped the old container.
+					listed(cli, session.project)
+					cli.stopErr = errors.New("no such container")
+				}
+				if err := session.provider.RemoveSession(context.Background(), session.ref); err != nil {
+					t.Errorf("RemoveSession: %v; want the restarting session removed", err)
+				}
+				cli.stopErr = nil
+			}
+			withdraw := func() {
+				if !tt.keepContext {
+					cancel()
+				}
+				if !tt.removeAfterRun {
+					remove()
+				}
+			}
+			stopsBeforeRun := 0
+			if tt.cancelDuringRun {
+				cli.onRun = func() {
+					stopsBeforeRun = len(cli.stopped)
+					withdraw()
+				}
+			} else {
+				withdraw()
+			}
+			_ = session.run(ctx)
+			if tt.removeAfterRun {
+				remove()
+			}
+
+			if len(session.provider.bridges.records) != 0 || len(rows(t, session.provider, session.project)) != 0 {
+				t.Errorf("records = %+v; want nothing of the session left", session.provider.bridges.records)
+			}
+			if tt.cancelDuringRun && !slices.Contains(cli.stopped[stopsBeforeRun:], session.target()) {
+				t.Errorf("stopped = %q; want the container started meanwhile stopped", cli.stopped)
+			}
+			if !tt.cancelDuringRun && (len(cli.runCalls) != 0 || len(cli.stopped) != 1) {
+				t.Errorf("ran %d and stopped %d times; want only the removal's stop", len(cli.runCalls), len(cli.stopped))
+			}
+		})
+	}
 }
