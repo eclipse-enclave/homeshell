@@ -1188,36 +1188,44 @@ func session(id, replaces string) domain.Session {
 	return domain.Session{ID: id, Title: "session", Agent: "agent", State: domain.SessionRunning, Replaces: replaces}
 }
 
+// The session that replaces another takes over its title and launch config, a
+// title given while the pass that found the replacement ran included.
 func TestReplacingSessionTakesOverTitleAndLaunchConfig(t *testing.T) {
-	store := NewTestStore(t, replacementSeed())
-	launch := domain.LaunchConfig{ProviderID: "enclave", OptionID: "codex", Config: json.RawMessage(`{"x":1}`)}
-	if err := store.RenameSession("p1", "ws1", "old", "Mine"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SetLaunchConfig("p1", "old", launch); err != nil {
-		t.Fatal(err)
-	}
+	for _, renamedDuringPass := range []bool{false, true} {
+		store := NewTestStore(t, replacementSeed())
+		launch := domain.LaunchConfig{ProviderID: "enclave", OptionID: "codex", Config: json.RawMessage(`{"x":1}`)}
+		if err := store.SetLaunchConfig("p1", "old", launch); err != nil {
+			t.Fatal(err)
+		}
+		var read []domain.Workstream
+		if renamedDuringPass {
+			read = store.Projects()[0].Workstreams
+		}
+		if err := store.RenameSession("p1", "ws1", "old", "Mine"); err != nil {
+			t.Fatal(err)
+		}
 
-	if err := store.ReplaceProjection("p1", nil, listing(session("new", "old")), nil); err != nil {
-		t.Fatal(err)
-	}
+		if err := store.ReplaceProjection("p1", read, listing(session("new", "old")), nil); err != nil {
+			t.Fatal(err)
+		}
 
-	if got, ok := store.LaunchConfig("new"); !ok || got.OptionID != launch.OptionID || string(got.Config) != string(launch.Config) {
-		t.Errorf("LaunchConfig(new) = %+v, %v; want %+v", got, ok, launch)
-	}
-	if _, ok := store.LaunchConfig("old"); ok {
-		t.Error("the replaced session keeps its launch config")
-	}
-	project := findProject(t, decodeProjects(t, store.Snapshot().Data), "p1")
-	if title := project.Workstreams[0].Sessions[0].Title; title != "Mine" {
-		t.Errorf("title of the new session = %q, want Mine", title)
-	}
-	saved := Saved(t, store).SessionTitles
-	if got := saved["new"].Title; got != "Mine" {
-		t.Errorf("persisted title of the new session = %q, want Mine", got)
-	}
-	if _, ok := saved["old"]; ok {
-		t.Error("the replaced session's title is still persisted")
+		if got, ok := store.LaunchConfig("new"); !ok || got.OptionID != launch.OptionID || string(got.Config) != string(launch.Config) {
+			t.Errorf("renamed during the pass %v: LaunchConfig(new) = %+v, %v; want %+v", renamedDuringPass, got, ok, launch)
+		}
+		if _, ok := store.LaunchConfig("old"); ok {
+			t.Errorf("renamed during the pass %v: the replaced session keeps its launch config", renamedDuringPass)
+		}
+		sessions := findProject(t, decodeProjects(t, store.Snapshot().Data), "p1").Workstreams[0].Sessions
+		if len(sessions) != 1 || sessions[0].ID != "new" || sessions[0].Title != "Mine" {
+			t.Errorf("renamed during the pass %v: sessions = %+v, want only new, titled Mine", renamedDuringPass, sessions)
+		}
+		saved := Saved(t, store).SessionTitles
+		if got := saved["new"].Title; got != "Mine" {
+			t.Errorf("renamed during the pass %v: persisted title of the new session = %q, want Mine", renamedDuringPass, got)
+		}
+		if _, ok := saved["old"]; ok {
+			t.Errorf("renamed during the pass %v: the replaced session's title is still persisted", renamedDuringPass)
+		}
 	}
 }
 
