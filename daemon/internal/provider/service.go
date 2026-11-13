@@ -445,15 +445,18 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Workstream
 	if err := s.store.AddWorkstream(in.ProjectID, placeholder); err != nil {
 		return domain.Workstream{}, err
 	}
+	// Read back before the create goes on: once it has promoted the placeholder
+	// there is none to read, and the local copy lacks what the store derives.
+	stored, err := s.store.Workstream(in.ProjectID, placeholderID)
+	if err != nil {
+		return domain.Workstream{}, err
+	}
 
 	// Detached context so directory preparation is not cancelled when the HTTP
 	// request completes.
-	go s.finishCreate(context.WithoutCancel(ctx), in, ref, wp, placeholderID)
-
-	if projected, err := s.store.Workstream(in.ProjectID, placeholderID); err == nil {
-		return projected, nil
-	}
-	return placeholder, nil
+	finishCtx := context.WithoutCancel(ctx)
+	goFinishCreate(func() { s.finishCreate(finishCtx, in, ref, wp, placeholderID) })
+	return stored, nil
 }
 
 // AddProject adds a project with its default workstream: one in place, in the
@@ -644,6 +647,10 @@ func (s *Service) finishCreate(ctx context.Context, in CreateInput, ref ProjectR
 	// provider-reported state shows up now rather than on the next cycle.
 	_ = s.reconciler.ReconcileProject(ctx, in.ProjectID)
 }
+
+// goFinishCreate runs the part of a create that comes after Create has answered.
+// A variable so tests can have it finish first.
+var goFinishCreate = func(work func()) { go work() }
 
 // createCheckTimeout bounds the naming and validation of a create together. A
 // variable so tests can shorten it.

@@ -392,6 +392,26 @@ func TestCreatePlaceholderOfAnInPlaceCreateIsInTheProjectFolder(t *testing.T) {
 	}
 }
 
+// Create answers with the placeholder as the store shows it, in the project
+// folder, even when the create behind it has already finished.
+func TestCreateAnswersWithTheStoredPlaceholderWhenTheCreateFinishedFirst(t *testing.T) {
+	defer func(previous func(func())) { goFinishCreate = previous }(goFinishCreate)
+	goFinishCreate = func(work func()) { work() }
+	dir := t.TempDir()
+	st := store.NewTestStore(t, []domain.Project{{ID: "p1", Name: "p", Path: dir}})
+	svc := NewService(st, NewRegistry(), 0)
+
+	placeholder, err := svc.Create(context.Background(), CreateInput{
+		ProjectID: "p1", ProviderID: CoreProviderID, Name: "work", Config: []byte(`{"strategy":"in-place"}`),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !strings.HasPrefix(placeholder.ID, PlaceholderIDPrefix) || !placeholder.InProjectFolder {
+		t.Errorf("Create = %+v, want the placeholder in the project folder", placeholder)
+	}
+}
+
 // A project without a default workstream (one added before them, or whose
 // default was deleted) can be given one, but only while its folder is free.
 func TestServiceAddDefaultWorkstream(t *testing.T) {
