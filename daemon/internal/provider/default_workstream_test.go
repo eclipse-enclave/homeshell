@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -523,6 +524,7 @@ func assertFolderTaken(t *testing.T, svc *Service, projectID string) {
 type pausingRefresher struct {
 	stubWorkstreamProvider
 	branch  string
+	once    sync.Once
 	paused  chan struct{}
 	release chan struct{}
 }
@@ -530,14 +532,16 @@ type pausingRefresher struct {
 func (p *pausingRefresher) RefreshInterval() time.Duration { return 0 }
 
 func (p *pausingRefresher) Refresh(_ context.Context, _ ProjectRef, ws domain.Workstream) domain.Workstream {
-	p.paused <- struct{}{}
-	<-p.release
+	p.once.Do(func() {
+		p.paused <- struct{}{}
+		<-p.release
+	})
 	ws.Branch = p.branch
 	return ws
 }
 
 // A change the user makes while a projection pass is in flight outlives the
-// pass: it is newer than what the pass read.
+// pass, which is newer than what the pass read, and the next pass builds on it.
 func TestReconcileKeepsChangesMadeDuringThePass(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -613,6 +617,7 @@ func TestReconcileKeepsChangesMadeDuringThePass(t *testing.T) {
 			tt.change(t, st)
 			close(refresher.release)
 			<-done
+			reconciler.Reconcile(context.Background())
 			tt.check(t, st)
 		})
 	}

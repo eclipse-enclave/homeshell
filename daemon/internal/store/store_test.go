@@ -1066,7 +1066,7 @@ func TestReplaceWorkstreamsKeepsChangesSinceTheRead(t *testing.T) {
 			},
 		},
 		{
-			name: "a rename is kept, the branch still moves",
+			name: "a rename is kept",
 			change: func(t *testing.T, s *Store) {
 				ws, _ := s.Workstream("p1", "ws1")
 				ws.Name = "my work"
@@ -1075,8 +1075,21 @@ func TestReplaceWorkstreamsKeepsChangesSinceTheRead(t *testing.T) {
 				}
 			},
 			check: func(t *testing.T, ws domain.Workstream) {
-				if ws.Name != "my work" || ws.Branch != "main" {
-					t.Errorf("workstream = %q on %q, want my work on main", ws.Name, ws.Branch)
+				if ws.Name != "my work" {
+					t.Errorf("name = %q, want my work", ws.Name)
+				}
+			},
+		},
+		{
+			name: "a name another workstream took meanwhile is not given",
+			change: func(t *testing.T, s *Store) {
+				if err := s.AddWorkstream("p1", domain.Workstream{ID: "ws2", Name: "main", WorkingDir: "/p1/other"}); err != nil {
+					t.Fatal(err)
+				}
+			},
+			check: func(t *testing.T, ws domain.Workstream) {
+				if ws.Name != "feature" || ws.Branch != "main" {
+					t.Errorf("workstream = %q on %q, want feature on main", ws.Name, ws.Branch)
 				}
 			},
 		},
@@ -1124,4 +1137,19 @@ func TestReplaceWorkstreamsKeepsChangesSinceTheRead(t *testing.T) {
 			tt.check(t, ws)
 		})
 	}
+
+	t.Run("a workstream added meanwhile stays", func(t *testing.T) {
+		s := NewTestStore(t, seed())
+		read := s.Projects()[0].Workstreams
+		projected := s.Projects()[0].Workstreams
+		if err := s.AddWorkstream("p1", domain.Workstream{ID: "ws2", Name: "work here", WorkingDir: "/p1/other"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ReplaceWorkstreams("p1", read, projected); err != nil {
+			t.Fatalf("ReplaceWorkstreams: %v", err)
+		}
+		if _, err := s.Workstream("p1", "ws2"); err != nil {
+			t.Errorf("Workstream(ws2) err = %v, want the added workstream kept", err)
+		}
+	})
 }

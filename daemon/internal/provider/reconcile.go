@@ -212,8 +212,8 @@ func (r *Reconciler) reconcileProjectOnly(ctx context.Context, project domain.Pr
 	// Discovery can be slow and workstreams land concurrently, so re-read the
 	// store: ReplaceWorkstreams below writes the whole list, and deriving it
 	// from the pre-discovery snapshot would erase anything added in between.
-	// What changes after this read, while the pass refreshes and annotates, the
-	// store keeps, told what was read.
+	// ReplaceWorkstreams is handed this read, so it keeps what changes after it
+	// while the pass refreshes and annotates (store.keepChangesSinceRead).
 	workstreams := project.Workstreams
 	for _, current := range r.store.Projects() {
 		if current.ID == project.ID {

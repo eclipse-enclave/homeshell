@@ -603,10 +603,16 @@ func retainInFlightLocked(live, next []domain.Workstream, unprojected map[string
 }
 
 // keepChangesSinceRead carries onto a projection what changed in the live state
-// since the projection read it: a rename, a dismissed status message, a removed
-// workstream or session. Such a change was made while the pass was asking the
-// providers, so it is newer than anything the pass derived from its read, and
-// it wins; a field nobody changed meanwhile is the projection's to settle.
+// since the projection read it. A pass asks the providers between its read and
+// this write, so whatever changed meanwhile (a rename, a dismissed status, a
+// workstream added by Work here, a removal) is newer than the pass's copy:
+//
+//   - a workstream or session changed since the read is taken from the live
+//     state whole, so fields that belong together come from one writer; the
+//     next pass brings it up to date;
+//   - one removed since the read stays removed, and one added since stays;
+//   - a name the pass gave that another workstream now has is not taken.
+//
 // Placeholders are left to retainInFlightLocked, and a nil read (no read to
 // compare with) keeps the projection as it is.
 func keepChangesSinceRead(read, live, next []domain.Workstream) []domain.Workstream {
@@ -615,47 +621,78 @@ func keepChangesSinceRead(read, live, next []domain.Workstream) []domain.Workstr
 	}
 	readWorkstreams, liveWorkstreams := workstreamsByID(read), workstreamsByID(live)
 	readSessions, liveSessions := sessionsByID(read), sessionsByID(live)
-	kept := next[:0]
+	listed := sessionIDsIn(next)
+	kept := make([]domain.Workstream, 0, len(next))
 	for _, workstream := range next {
 		was, wasRead := readWorkstreams[workstream.ID]
-		now, isLive := liveWorkstreams[workstream.ID]
 		if strings.HasPrefix(workstream.ID, PlaceholderIDPrefix) || !wasRead {
 			kept = append(kept, workstream)
 			continue
 		}
+		now, isLive := liveWorkstreams[workstream.ID]
 		if !isLive {
 			continue
 		}
-		keepChangedFields(was, now, &workstream, "Sessions")
-		workstream.Sessions = slices.DeleteFunc(workstream.Sessions, func(sess domain.Session) bool {
-			_, wasRead := readSessions[sess.ID]
-			_, isLive := liveSessions[sess.ID]
-			return wasRead && !isLive && !isStartingPlaceholder(sess)
-		})
-		for j := range workstream.Sessions {
-			was, wasRead := readSessions[workstream.Sessions[j].ID]
-			now, isLive := liveSessions[workstream.Sessions[j].ID]
-			if wasRead && isLive {
-				keepChangedFields(was, now, &workstream.Sessions[j])
+		if !sameApartFromSessions(was, now) {
+			sessions := workstream.Sessions
+			workstream = now
+			workstream.Sessions = sessions
+		}
+		workstream.Sessions = keepSessionChanges(workstream.Sessions, now.Sessions, readSessions, liveSessions, listed)
+		kept = append(kept, workstream)
+	}
+	for _, now := range live {
+		_, wasRead := readWorkstreams[now.ID]
+		if wasRead || strings.HasPrefix(now.ID, PlaceholderIDPrefix) || slices.ContainsFunc(kept, func(workstream domain.Workstream) bool {
+			return workstream.ID == now.ID
+		}) {
+			continue
+		}
+		kept = append(kept, now)
+	}
+	for i := range kept {
+		now, isLive := liveWorkstreams[kept[i].ID]
+		if isLive && kept[i].Name != now.Name {
+			if _, taken := NameTaken(kept, kept[i].Name, kept[i].ID); taken {
+				kept[i].Name, kept[i].CreatorData = now.Name, now.CreatorData
 			}
 		}
-		kept = append(kept, workstream)
 	}
 	return kept
 }
 
-// keepChangedFields sets each field of next that differs between read and live,
-// skip aside, to live's value.
-func keepChangedFields[T any](read, live T, next *T, skip ...string) {
-	readValue, liveValue, nextValue := reflect.ValueOf(read), reflect.ValueOf(live), reflect.ValueOf(next).Elem()
-	for i := range readValue.NumField() {
-		if slices.Contains(skip, readValue.Type().Field(i).Name) {
+// keepSessionChanges is keepChangesSinceRead for the sessions of one
+// workstream: projected are the projection's, current the live state's. A
+// session added since the read is kept only where the projection lists it
+// nowhere (listed).
+func keepSessionChanges(projected, current []domain.Session, readSessions, liveSessions map[string]domain.Session, listed map[string]bool) []domain.Session {
+	sessions := make([]domain.Session, 0, len(projected))
+	for _, sess := range projected {
+		was, wasRead := readSessions[sess.ID]
+		now, isLive := liveSessions[sess.ID]
+		switch {
+		case isStartingPlaceholder(sess) || !wasRead:
+		case !isLive:
+			continue
+		case !reflect.DeepEqual(was, now):
+			sess = now
+		}
+		sessions = append(sessions, sess)
+	}
+	for _, now := range current {
+		if _, wasRead := readSessions[now.ID]; wasRead || listed[now.ID] || isStartingPlaceholder(now) {
 			continue
 		}
-		if !reflect.DeepEqual(readValue.Field(i).Interface(), liveValue.Field(i).Interface()) {
-			nextValue.Field(i).Set(liveValue.Field(i))
-		}
+		sessions = append(sessions, now)
 	}
+	return sessions
+}
+
+// sameApartFromSessions reports whether two copies of a workstream agree on
+// everything but their sessions.
+func sameApartFromSessions(a, b domain.Workstream) bool {
+	a.Sessions, b.Sessions = nil, nil
+	return reflect.DeepEqual(a, b)
 }
 
 // workstreamsByID indexes workstreams by ID.
