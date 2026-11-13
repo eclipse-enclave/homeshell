@@ -245,7 +245,7 @@ func TestCoreTrackFolderCapsALongNumberedName(t *testing.T) {
 }
 
 // A worktree added from a suggestion is one like the core creates: it follows
-// its branch, and Remove deletes the worktree.
+// its branch, keeps its name, and Remove deletes the worktree.
 func TestCoreTrackFolderMakesAWorktreeWorkstream(t *testing.T) {
 	repo := gitProject(t)
 	project := ProjectRef{Path: repo, GitBacked: true}
@@ -264,6 +264,15 @@ func TestCoreTrackFolderMakesAWorktreeWorkstream(t *testing.T) {
 	}
 	if refreshed := provider.Refresh(context.Background(), project, workstream); refreshed.Branch != "wt-a" {
 		t.Errorf("Refresh = branch %q; want wt-a", refreshed.Branch)
+	}
+	// Its name was the branch's, but only an in-place workstream's name follows
+	// the branch (coreCreatorData.GivenName), as for a worktree the core created.
+	if out, err := exec.Command("git", "-C", branched, "checkout", "-q", "-b", "wt-b").CombinedOutput(); err != nil {
+		t.Fatalf("git checkout: %v\n%s", err, out)
+	}
+	if refreshed := provider.Refresh(context.Background(), project, workstream); refreshed.Branch != "wt-b" ||
+		refreshed.Name != "wt-a" {
+		t.Errorf("Refresh after a switch = %q on %q; want wt-a on wt-b", refreshed.Name, refreshed.Branch)
 	}
 	if err := provider.Remove(context.Background(), project, workstream, RemoveOptions{}); err != nil {
 		t.Fatalf("Remove: %v", err)

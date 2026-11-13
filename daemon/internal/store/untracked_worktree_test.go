@@ -254,3 +254,29 @@ func TestReplaceProjectionHandsASuggestionToTheWorkstreamAddedThere(t *testing.T
 		t.Errorf("added workstream sessions = %+v, want the hidden one", workstream.Sessions)
 	}
 }
+
+// A session added since the pass's read stays out of a workstream when the
+// projection hides it on a suggestion: it is listed there, and once is enough.
+func TestReplaceProjectionKeepsASessionAddedSinceTheReadHiddenOnce(t *testing.T) {
+	s := titledStore(t)
+	read := s.Projects()[0].Workstreams
+	added := domain.Session{ID: "sess-2", Provider: "enclave", State: domain.SessionRunning}
+	if err := s.AddSession("p1", "ws-1", added); err != nil {
+		t.Fatal(err)
+	}
+	projected := s.Projects()[0].Workstreams
+	projected[0].Sessions = projected[0].Sessions[:1]
+	if err := s.ReplaceProjection("p1", read, projected, []domain.UntrackedWorktree{suggestion(added)}); err != nil {
+		t.Fatal(err)
+	}
+
+	project := s.Projects()[0]
+	for _, session := range project.Workstreams[0].Sessions {
+		if session.ID == "sess-2" {
+			t.Errorf("sess-2 is on ws-1 as well as hidden on the suggestion")
+		}
+	}
+	if got := project.UntrackedWorktrees; len(got) != 1 || len(got[0].Sessions) != 1 {
+		t.Errorf("suggestions = %+v, want the one hiding sess-2", got)
+	}
+}

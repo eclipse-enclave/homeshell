@@ -781,3 +781,59 @@ func TestUntrackedListsUnderACreatesBound(t *testing.T) {
 		t.Errorf("an Add listed within %v, want %v", got, createCheckTimeout)
 	}
 }
+
+// Changes made to the store while a surveyed pass is in flight outlive it: a
+// rename, a removal, and a workstream added in a suggested folder, which takes
+// the session hidden there rather than the pass suggesting the folder again.
+func TestReconcileKeepsChangesMadeDuringASurveyedPass(t *testing.T) {
+	reconciler, st, _, _ := surveyedReconciler(t, []domain.Project{surveyedProject(
+		domain.Workstream{ID: "ws1", Name: "feature", Provider: "pausing", WorkingDir: "/p1", Sessions: []domain.Session{}},
+		worktreeAt("ws2", "/wt/b"),
+	)}, map[string][]DiscoveredSession{"p1": {ds("/wt/a", "s1", domain.SessionRunning)}})
+	refresher := &pausingRefresher{stubWorkstreamProvider: stubWorkstreamProvider{id: "pausing"},
+		branch: "main", paused: make(chan struct{}), release: make(chan struct{})}
+	if err := reconciler.registry.RegisterWorkstreamProvider(refresher); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		reconciler.Reconcile(context.Background())
+	}()
+	<-refresher.paused
+	renamed, err := st.Workstream("p1", "ws1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed.Name = "my work"
+	if err := st.UpdateWorkstream("p1", renamed); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RemoveWorkstream("p1", "ws2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddWorkstream("p1", worktreeAt("ws3", "/wt/a")); err != nil {
+		t.Fatal(err)
+	}
+	close(refresher.release)
+	<-done
+
+	project := st.Projects()[0]
+	byID := map[string]domain.Workstream{}
+	for _, workstream := range project.Workstreams {
+		byID[workstream.ID] = workstream
+	}
+	if got := byID["ws1"].Name; got != "my work" {
+		t.Errorf("ws1 named %q, want the rename kept", got)
+	}
+	if _, ok := byID["ws2"]; ok {
+		t.Error("ws2, removed during the pass, is back")
+	}
+	if got := sessionIDs(byID["ws3"].Sessions); !slices.Equal(got, []string{"s1"}) {
+		t.Errorf("ws3, added during the pass, holds %q, want the hidden s1", got)
+	}
+	if len(project.UntrackedWorktrees) != 0 {
+		t.Errorf("suggestions = %+v, want none for the folder taken during the pass", project.UntrackedWorktrees)
+	}
+}
