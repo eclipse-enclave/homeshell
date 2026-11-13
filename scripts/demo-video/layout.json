@@ -1,0 +1,9 @@
+{
+  "comment": "Projects and worktree workstreams of the README demo. A worktree lives in <projects>/<project>-<name> on a branch of the same name; setup.sh trusts every folder listed here for Claude Code, seed.mjs creates the seeded ones, story.mjs the onCamera one.",
+  "projects": {
+    "acme-webshop": { "worktrees": ["gift-cards", "tax-rounding"], "onCamera": "checkout-coupons" },
+    "payments-api": { "worktrees": ["idempotency", "refund-webhooks"] },
+    "mobile-app": { "worktrees": ["dark-mode"] },
+    "developer-docs": { "worktrees": [] }
+  }
+}
