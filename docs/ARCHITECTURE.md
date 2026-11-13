@@ -494,6 +494,10 @@ flowchart TD
 - The daemon it starts is detached; closing the window leaves the daemon running.
   Why: the daemon may be serving other clients.
 - The shell never reads the discovery file or the token, so no secret passes through it.
+- [Page zoom](CONFIGURATION.md#desktop-app-zoom) (`desktop/internal/zoom`, wired in
+  `setUpZoom`): an injected script turns zoom input into calls to a bound Go function, which sets
+  the webview's native zoom and saves it. Why: a bare system webview has no zoom shortcuts; native
+  zoom scales like a browser's and keeps pointer coordinates right.
 - It is a separate Go module (`desktop/go.mod`). Why: the webview needs CGO, and the daemon stays
   CGO-free so it cross-compiles and self-updates as one static binary.
 

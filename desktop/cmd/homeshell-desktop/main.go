@@ -47,6 +47,7 @@ func run() (err error) {
 	window := webview.New(false)
 	window.SetTitle(shell.WindowTitle(version))
 	window.SetSize(1280, 800, webview.HintNone)
+	setUpZoom(window)
 	window.SetHtml(shell.StartingPage())
 
 	// Resolve off the main thread. SetHtml only queues a load — nothing renders

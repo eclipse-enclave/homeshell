@@ -169,6 +169,22 @@ Kept in the browser's `localStorage`, so each browser (and the desktop app) has 
 | `hs-logpane-height` | `260` | Height of the log pane in pixels; set by dragging it |
 | `hs-log-buffer` | `1000` | Log entries the log viewer keeps, at least 100. Set under Diagnostics |
 
+## Desktop app zoom
+
+The desktop app zooms like a browser, from 50% to 300% in 10% steps:
+
+| Input | Linux | macOS |
+|---|---|---|
+| Zoom in | Ctrl + `=` or `+`, Ctrl + wheel up | Cmd + `=` or `+`, Ctrl + wheel up, pinch out |
+| Zoom out | Ctrl + `-` or `_`, Ctrl + wheel down | Cmd + `-` or `_`, Ctrl + wheel down, pinch in |
+| Reset to 100% | Ctrl + `0` | Cmd + `0` |
+
+- The level is kept between launches in `homeshell/desktop.json` under the user config directory
+  (`~/.config` on Linux, `~/Library/Application Support` on macOS).
+- It belongs to the desktop app only, not to the daemon or its other clients.
+- On macOS, Ctrl + these keys still reach the page (e.g. a terminal), as in Safari. Zoom needs
+  macOS 11 or later.
+
 ## Command-line flags
 
 `homeshell` is one binary with verbs. `homeshell <verb> -h` prints a verb's flags. Flags take one
