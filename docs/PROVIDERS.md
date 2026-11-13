@@ -178,8 +178,9 @@ strategies ([CONTEXT.md](../CONTEXT.md#working-directory)) through `provider/wor
   tick, and must not find a repository above a copy), and a watch loop at the
   refresh interval re-projects when it moved, as nothing else notices a switch with no session
   running. Only an `in-place` workstream's name follows the branch, while it is still the one the
-  core gave (`coreCreatorData.NameFromBranch`) and no other workstream in the project has it; a
-  renamed workstream keeps its name. A detached HEAD clears the branch and keeps the name.
+  core gave (`coreCreatorData.GivenName`: the branch, or the folder's or a numbered name where the
+  branch was missing or taken) and no other workstream in the project has it; a renamed
+  workstream keeps its name. A detached HEAD clears the branch and keeps the name.
 - Removing an `in-place` workstream never deletes the project directory; `worktree` needs a
   git-backed project.
 - Managed worktree and copy directories go under the `workstreams.location` setting, read live,

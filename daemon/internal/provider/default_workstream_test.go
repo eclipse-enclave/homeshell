@@ -120,6 +120,37 @@ func TestCoreRefreshFollowsTheCheckedOutBranch(t *testing.T) {
 		}
 	})
 
+	// A name the core picked follows the branch too when it was not the branch:
+	// HomeShell chose it, the user did not.
+	t.Run("a name the core picked off the branch follows the next branch", func(t *testing.T) {
+		tests := []struct {
+			name, wantFirst string
+			prepare         func(t *testing.T)
+			nameTaken       func(string) bool
+		}{
+			{name: "on a detached HEAD, the folder's name", wantFirst: filepath.Base(repo),
+				prepare: func(t *testing.T) { checkout(t, repo, "--detach") }},
+			{name: "a numbered name past a clash", wantFirst: "feature-2",
+				prepare: func(*testing.T) {}, nameTaken: func(name string) bool { return name == "feature" }},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				tt.prepare(t)
+				t.Cleanup(func() { checkout(t, repo, "feature") })
+				ws, err := provider.Create(context.Background(), CreateRequest{
+					Project: project, Config: []byte(`{"strategy":"in-place"}`), NameTaken: tt.nameTaken,
+				})
+				if err != nil || ws.Name != tt.wantFirst {
+					t.Fatalf("Create = %q, %v; want %q", ws.Name, err, tt.wantFirst)
+				}
+				checkout(t, repo, "main")
+				if got := provider.Refresh(context.Background(), project, ws); got.Name != "main" {
+					t.Errorf("Refresh = %q, want main", got.Name)
+				}
+			})
+		}
+	})
+
 	t.Run("a project folder below the repository's root follows its branch", func(t *testing.T) {
 		below := filepath.Join(repo, "below")
 		if err := os.Mkdir(below, 0o755); err != nil {
@@ -128,7 +159,7 @@ func TestCoreRefreshFollowsTheCheckedOutBranch(t *testing.T) {
 		t.Cleanup(func() { _ = os.Remove(below) })
 		ws := domain.Workstream{
 			Name: "feature", Branch: "feature", WorkingDir: below,
-			CreatorData: marshalCreatorData(coreCreatorData{Strategy: "in-place", NameFromBranch: "feature"}),
+			CreatorData: marshalCreatorData(coreCreatorData{Strategy: "in-place", GivenName: "feature"}),
 		}
 		checkout(t, repo, "main")
 		t.Cleanup(func() { checkout(t, repo, "feature") })

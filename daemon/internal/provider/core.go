@@ -393,8 +393,8 @@ func (c *core) Create(ctx context.Context, req CreateRequest) (domain.Workstream
 		return domain.Workstream{}, err
 	}
 	creatorData := coreCreatorData{Strategy: strategy}
-	if wsfs.Strategy(strategy) == wsfs.InPlace && branch != "" && name == branch {
-		creatorData.NameFromBranch = name
+	if wsfs.Strategy(strategy) == wsfs.InPlace && (req.Name == "" || name == branch) {
+		creatorData.GivenName = name
 	}
 	return domain.Workstream{
 		Name:        name,
@@ -409,9 +409,9 @@ func (c *core) Create(ctx context.Context, req CreateRequest) (domain.Workstream
 // Refresh follows the branch checked out in a workstream's folder, which the
 // user switches outside HomeShell: the workstream's branch is the one checked
 // out now. An in-place workstream's name follows too while it still wears the
-// one the core gave it from the branch — a rename keeps the user's name. A
-// detached HEAD has no branch, and leaves the name as it was. A folder git does
-// not answer for changes nothing.
+// one the core gave it (coreCreatorData.GivenName); a rename keeps the user's
+// name. A detached HEAD has no branch, and leaves the name as it was. A folder
+// git does not answer for changes nothing.
 func (c *core) Refresh(ctx context.Context, project ProjectRef, workstream domain.Workstream) domain.Workstream {
 	creatorData := parseCreatorData(workstream)
 	branch, ok := checkedOutBranch(ctx, project, workstream, creatorData)
@@ -419,9 +419,9 @@ func (c *core) Refresh(ctx context.Context, project ProjectRef, workstream domai
 		return workstream
 	}
 	workstream.Branch = branch
-	if branch != "" && creatorData.NameFromBranch != "" && workstream.Name == creatorData.NameFromBranch {
+	if branch != "" && creatorData.GivenName != "" && workstream.Name == creatorData.GivenName {
 		workstream.Name = branch
-		creatorData.NameFromBranch = branch
+		creatorData.GivenName = branch
 		workstream.CreatorData = marshalCreatorData(creatorData)
 	}
 	return workstream
@@ -575,12 +575,14 @@ func (c *core) configuredLocation() string {
 // domain.Workstream.CreatorData. Only the core reads it. The materialized
 // directory itself lives in the public WorkingDir field.
 //
-// NameFromBranch is the name an in-place workstream was last given from the
-// branch checked out in its folder; while the workstream still wears it, the
-// name follows the branch (Refresh). Empty for one named anything else.
+// GivenName is the name the core last gave an in-place workstream: the branch
+// checked out in its folder, or, on none or past a clash, the folder's name or
+// a numbered one. A name typed as the branch counts too. While the workstream
+// still wears it, the name follows the branch (Refresh). Empty for one the user
+// named anything else.
 type coreCreatorData struct {
-	Strategy       string `json:"strategy"`
-	NameFromBranch string `json:"nameFromBranch,omitempty"`
+	Strategy  string `json:"strategy"`
+	GivenName string `json:"givenName,omitempty"`
 }
 
 // parseCreatorData reads the core's bookkeeping off workstream; unreadable or

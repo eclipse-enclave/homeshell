@@ -63,6 +63,23 @@ test('its name follows a branch switched outside HomeShell', async ({
   });
 });
 
+test('one added on a detached HEAD takes the next branch as its name', async ({
+  request,
+}) => {
+  const dir = await tempGitRepo('hs-default-ws-detached-');
+  await git(dir, 'checkout', '-q', '--detach');
+  const { projectId, workstream } = await addProjectWithDefault(request, dir);
+  expect(workstream.name).toBe(basename(dir));
+
+  await git(dir, 'checkout', '-q', 'main');
+  await pollFor('the workstream to take the name main', async () => {
+    const current = await workstreamOf(request, projectId, workstream.id);
+    return current?.name === 'main' && current.branch === 'main'
+      ? current
+      : undefined;
+  });
+});
+
 test('a renamed one keeps its name while its branch follows', async ({
   request,
 }) => {
