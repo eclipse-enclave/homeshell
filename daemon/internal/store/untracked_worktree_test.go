@@ -271,10 +271,8 @@ func TestReplaceProjectionKeepsASessionAddedSinceTheReadHiddenOnce(t *testing.T)
 	}
 
 	project := s.Projects()[0]
-	for _, session := range project.Workstreams[0].Sessions {
-		if session.ID == "sess-2" {
-			t.Errorf("sess-2 is on ws-1 as well as hidden on the suggestion")
-		}
+	if hasSession(project.Workstreams[0].Sessions, "sess-2") {
+		t.Errorf("sess-2 is on ws-1 as well as hidden on the suggestion")
 	}
 	if got := project.UntrackedWorktrees; len(got) != 1 || len(got[0].Sessions) != 1 {
 		t.Errorf("suggestions = %+v, want the one hiding sess-2", got)

@@ -548,10 +548,7 @@ func sameSuggestions(previous, current []domain.UntrackedWorktree) bool {
 // reconciler carries a session its provider did not report over as the stored
 // copy, which is still the restored idle placeholder and says nothing about it.
 func (s *Store) stampEndedAtLocked(previous, incoming sessionWalk) {
-	before := map[string]domain.Session{}
-	for _, session := range previous {
-		before[session.ID] = *session
-	}
+	before := sessionsByID(previous)
 	now := s.now()
 	for _, session := range incoming {
 		prev, known := before[session.ID]
@@ -693,7 +690,7 @@ func keepChangesSinceRead(read, live, next []domain.Workstream,
 		return next
 	}
 	readWorkstreams, liveWorkstreams := workstreamsByID(read), workstreamsByID(live)
-	readSessions, liveSessions := sessionsByID(read), sessionsByID(live)
+	readSessions, liveSessions := sessionsByID(sessionsOf(read, nil)), sessionsByID(sessionsOf(live, nil))
 	listed := sessionIDsIn(sessionsOf(next, untracked))
 	kept := make([]domain.Workstream, 0, len(next))
 	for _, workstream := range next {
@@ -707,7 +704,8 @@ func keepChangesSinceRead(read, live, next []domain.Workstream,
 			continue
 		}
 		if !sameApartFromSessions(was, now) {
-			// FolderMissing is the pass's own finding: nothing else writes it.
+			// FolderMissing is the pass's own finding: nothing else writes it, and
+			// it hangs on the folder alone, which no change made meanwhile moves.
 			sessions, folderMissing := workstream.Sessions, workstream.FolderMissing
 			workstream = now
 			workstream.Sessions, workstream.FolderMissing = sessions, folderMissing
@@ -778,13 +776,11 @@ func workstreamsByID(workstreams []domain.Workstream) map[string]domain.Workstre
 	return byID
 }
 
-// sessionsByID indexes the sessions workstreams list by ID.
-func sessionsByID(workstreams []domain.Workstream) map[string]domain.Session {
+// sessionsByID indexes sessions by ID.
+func sessionsByID(sessions sessionWalk) map[string]domain.Session {
 	byID := map[string]domain.Session{}
-	for _, workstream := range workstreams {
-		for _, sess := range workstream.Sessions {
-			byID[sess.ID] = sess
-		}
+	for _, session := range sessions {
+		byID[session.ID] = *session
 	}
 	return byID
 }

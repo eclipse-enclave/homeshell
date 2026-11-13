@@ -111,7 +111,8 @@ func (r *Reconciler) forgetProject(projectID string) {
 // resurvey asks for a pass of every project that surveys its folders again,
 // as a refresh tick that saw a listing change does; the session providers are
 // not asked anew. For changes that claim or free folders without changing a
-// listing: a removal that kept the files, a project added or removed.
+// listing: a removal that kept the files, an untracked worktree added, a
+// project added or removed.
 func (r *Reconciler) resurvey() {
 	for _, workstreamProvider := range r.registry.WorkstreamProviders() {
 		if _, ok := workstreamProvider.(FolderSurveyor); ok {
