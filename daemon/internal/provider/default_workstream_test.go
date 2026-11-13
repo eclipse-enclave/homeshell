@@ -407,8 +407,9 @@ func TestCreateAnswersWithTheStoredPlaceholderWhenTheCreateFinishedFirst(t *test
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if !strings.HasPrefix(placeholder.ID, PlaceholderIDPrefix) || !placeholder.InProjectFolder {
-		t.Errorf("Create = %+v, want the placeholder in the project folder", placeholder)
+	if !strings.HasPrefix(placeholder.ID, PlaceholderIDPrefix) || !placeholder.InProjectFolder ||
+		placeholder.Strategy != domain.StrategyLabel("in-place") {
+		t.Errorf("Create = %+v, want the placeholder in place, in the project folder", placeholder)
 	}
 }
 
