@@ -31,6 +31,60 @@ test('shows a toast when a session waits for input', async ({ page, request }) =
   await expect(toast).toBeVisible({ timeout: 40_000 });
 });
 
+test('clicking a toast goes to its session, even from settings', async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(60_000);
+  await setNotificationStyle(request, 'in-app');
+  await page.goto('/#/settings');
+
+  const region = page.getByRole('region', { name: 'Notifications' });
+  const open = region
+    .getByRole('button', { name: /is waiting for input/ })
+    .first();
+  await expect(open).toBeVisible({ timeout: 40_000 });
+
+  // The daemon titles a waiting toast "<session title> is waiting for input"
+  // and its body "<project> · <workstream>".
+  const [title, body] = (await open.innerText()).split('\n');
+  const sessionTitle = title.replace(/ is waiting for input$/, '');
+  const projectName = body.split(' · ')[0];
+  await open.click();
+
+  await expect(
+    page
+      .getByRole('navigation', { name: 'Projects' })
+      .locator('[aria-current="true"]'),
+  ).toContainText(projectName);
+  // A session row, not the workstream card holding it.
+  const focused = page.locator('li[data-nav-id]:focus');
+  await expect(focused).toContainText(sessionTitle);
+  await expect(region.getByRole('alert').filter({ hasText: title })).toHaveCount(0);
+});
+
+// Held by focus rather than the pointer: a newer demo toast can shift the
+// stack out from under a hovering pointer, which counts as leaving it. The
+// pointer hold is covered by the component's unit tests.
+test('a toast stays while it has focus', async ({ page, request }) => {
+  test.setTimeout(60_000);
+  await setNotificationStyle(request, 'in-app');
+  await page.goto('/');
+
+  const region = page.getByRole('region', { name: 'Notifications' });
+  const firstToast = region.getByRole('alert').first();
+  await expect(firstToast).toBeVisible({ timeout: 40_000 });
+  const title = (await firstToast
+    .getByText(/waiting for input|finished/i)
+    .textContent())!;
+  const thisToast = region.getByRole('alert').filter({ hasText: title });
+
+  await thisToast.getByRole('button', { name: 'Dismiss notification' }).focus();
+  // Past the 6 s a toast lives on its own.
+  await page.waitForTimeout(7_000);
+  await expect(thisToast).toBeVisible();
+});
+
 test('a notification toast can be dismissed', async ({ page, request }) => {
   test.setTimeout(60_000);
   await setNotificationStyle(request, 'in-app');

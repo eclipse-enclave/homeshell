@@ -28,6 +28,7 @@ import { ThemeToggle } from './theme-toggle';
 import { useSettings } from './settings/use-settings';
 import { useDaemonConfig } from './use-daemon-config';
 import { useDaemonState } from './use-daemon-state';
+import { notificationDestination } from './notification-destination';
 import { useNotifications } from './use-notifications';
 import { useProviders } from './use-providers';
 import { toggledTheme, useTheme } from './use-theme';
@@ -180,6 +181,14 @@ export function App() {
     navigate('home');
     handleSelect(projectId);
     focusInView({ itemId: itemId ?? firstWorkstreamId(projectId) });
+  };
+
+  const openNotification = (id: string) => {
+    const target = notifications.toasts.find((t) => t.id === id)?.target;
+    notifications.dismiss(id);
+    const destination =
+      target && notificationDestination(projects ?? [], target);
+    if (destination) goTo(destination.projectId, destination.itemId);
   };
 
   const openPalette = (query: string) =>
@@ -357,8 +366,14 @@ export function App() {
         />
       )}
       <NotificationToasts
-        items={notifications.toasts}
+        items={notifications.toasts.map((toast) => ({
+          ...toast,
+          openable: Boolean(toast.target),
+        }))}
         onDismiss={notifications.dismiss}
+        onOpen={openNotification}
+        onHold={notifications.hold}
+        onRelease={notifications.release}
       />
     </div>
   );
