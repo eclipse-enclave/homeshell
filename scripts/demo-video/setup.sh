@@ -10,16 +10,17 @@
 # Why an API key: a copy of the user's Claude login shares its rotating refresh token.
 set -euo pipefail
 
-root=${1:?demo root}
-projects=${2:?projects dir}
+# Absolute: the guards below, Claude Code's trusted folders and run.sh's cleanup match on them.
+root=$(realpath -m -- "${1:?demo root}")
+projects=$(realpath -m -- "${2:?projects dir}")
 here=$(cd "$(dirname "$0")" && pwd -P)
 repo=$(cd "$here/../.." && pwd -P)
-real_home=$HOME
+real_home=$(realpath -m -- "$HOME")
 real_config=${XDG_CONFIG_HOME:-$HOME/.config}
 real_runtime=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 home=$root/home
 
-case "$projects" in "$real_home"/*) echo "projects dir must be outside $real_home" >&2; exit 1 ;; esac
+case "$projects" in "$real_home" | "$real_home"/*) echo "projects dir must be outside $real_home" >&2; exit 1 ;; esac
 : "${ANTHROPIC_API_KEY:?the demo agents run on ANTHROPIC_API_KEY}"
 command -v podman >/dev/null || { echo "the demo's Enclave sessions need podman" >&2; exit 1; }
 

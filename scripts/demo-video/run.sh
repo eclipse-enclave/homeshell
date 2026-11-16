@@ -13,8 +13,9 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd -P)
 repo=$(cd "$here/../.." && pwd -P)
 gif=${1:-$repo/docs/assets/homeshell-demo.gif}
-root=${DEMO_ROOT:-/tmp/homeshell-demo}
-projects=${DEMO_PROJECTS:-/tmp/code}
+# Absolute, as setup.sh resolves them: cleanup matches processes and containers on these paths.
+root=$(realpath -m -- "${DEMO_ROOT:-/tmp/homeshell-demo}")
+projects=$(realpath -m -- "${DEMO_PROJECTS:-/tmp/code}")
 port=${DEMO_PORT:-8431}
 display=${DEMO_DISPLAY:-97}
 : "${ANTHROPIC_API_KEY:?the demo agents run on ANTHROPIC_API_KEY}"
