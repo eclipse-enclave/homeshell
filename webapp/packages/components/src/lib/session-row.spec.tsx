@@ -215,6 +215,19 @@ describe('SessionRow', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
   });
 
+  it('expands through its handle, and stays expanded when asked again', () => {
+    const ref = createRef<SessionRowHandle>();
+    renderRow({ session: session('waiting'), ref });
+    const toggle = screen.getByRole('button', {
+      name: /toggle session details/i,
+    });
+
+    act(() => ref.current!.expand());
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    act(() => ref.current!.expand());
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
   it('shows the input only when onPrompt is set and sends trimmed text', () => {
     const onPrompt = vi.fn();
     renderRow({ session: { ...session('running'), preview: 'x' }, onPrompt });

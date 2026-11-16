@@ -85,6 +85,29 @@ function Card(props: Partial<WorkstreamCardProps>) {
 }
 
 describe('WorkstreamCard', () => {
+  it('expands the one session row its handle names', () => {
+    const handle = createRef<WorkstreamCardHandle>();
+    render(
+      <Card
+        ref={handle}
+        workstream={workstream('waiting', [
+          { id: 's1', title: 'Plan', agent: 'Claude Code', state: 'running' },
+          { id: 's2', title: 'Build', agent: 'Claude Code', state: 'waiting' },
+        ])}
+      />,
+    );
+
+    act(() => handle.current?.expandSession('s2'));
+
+    const toggles = screen.getAllByRole('button', {
+      name: /toggle session details/i,
+    });
+    expect(toggles.map((t) => t.getAttribute('aria-expanded'))).toEqual([
+      'false',
+      'true',
+    ]);
+  });
+
   it("shows the provider and the kind beside a separate folder's path", () => {
     render(
       <Card

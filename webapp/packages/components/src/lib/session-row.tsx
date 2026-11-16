@@ -208,6 +208,8 @@ export interface SessionRowProps {
 export interface SessionRowHandle {
   /** What the row offers, as its buttons and its actions menu do. */
   actions: () => ItemAction[];
+  /** Opens the details panel (output, and input where the session takes it). */
+  expand: () => void;
 }
 
 /**
@@ -669,7 +671,13 @@ export function SessionRow({
     details,
     remove,
   ].filter((entry) => entry !== undefined);
-  useImperativeHandle(ref, () => ({ actions: () => actions }));
+  useImperativeHandle(ref, () => ({
+    actions: () => actions,
+    expand: () => {
+      if (seenable) onSeen?.();
+      setExpanded(true);
+    },
+  }));
   const actionsMenu = useActionsMenu(
     `Actions for session ${session.title}`,
     actions,

@@ -103,8 +103,9 @@ export interface ProjectViewHandle {
   /**
    * Focuses the card or row `itemId` names, else the one holding the list's tab
    * stop, else — with no workstreams — the button that creates the first.
+   * With `expand`, a session row it names is expanded too.
    */
-  focus: (itemId?: string) => void;
+  focus: (itemId?: string, options?: { expand?: boolean }) => void;
 }
 
 /** Whether a create was refused, rather than answered with what it made. */
@@ -233,7 +234,15 @@ export function ProjectView({
     return true;
   });
 
-  useImperativeHandle(ref, () => ({ focus: list.focus }));
+  useImperativeHandle(ref, () => ({
+    focus: (itemId, options) => {
+      // Only the card holding the session has a row by that ID to expand.
+      if (itemId && options?.expand) {
+        for (const card of cards.current.values()) card.expandSession(itemId);
+      }
+      list.focus(itemId);
+    },
+  }));
 
   useEffect(() => {
     setEditName(project.name);

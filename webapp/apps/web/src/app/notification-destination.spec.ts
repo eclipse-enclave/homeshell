@@ -36,6 +36,31 @@ describe('notificationDestination', () => {
     ).toEqual({ projectId: 'p1' });
   });
 
+  it('expands the session a waiting toast leads to, to answer it', () => {
+    expect(notificationDestination(projects, target, 'waiting')).toEqual({
+      projectId: 'p1',
+      itemId: 's2',
+      expand: true,
+    });
+  });
+
+  it('does not expand for a finished session', () => {
+    expect(notificationDestination(projects, target, 'finished')).toEqual({
+      projectId: 'p1',
+      itemId: 's2',
+    });
+  });
+
+  it('expands nothing when a waiting session is gone', () => {
+    expect(
+      notificationDestination(
+        projects,
+        { ...target, sessionId: 'gone' },
+        'waiting',
+      ),
+    ).toEqual({ projectId: 'p1', itemId: 'w1' });
+  });
+
   it('leads nowhere when the project is gone', () => {
     expect(
       notificationDestination(projects, { ...target, projectId: 'gone' }),

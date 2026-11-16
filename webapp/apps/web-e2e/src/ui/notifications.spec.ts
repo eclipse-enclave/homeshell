@@ -31,7 +31,7 @@ test('shows a toast when a session waits for input', async ({ page, request }) =
   await expect(toast).toBeVisible({ timeout: 40_000 });
 });
 
-test('clicking a toast goes to its session, even from settings', async ({
+test('clicking a waiting toast goes to its session, expanded, even from settings', async ({
   page,
   request,
 }) => {
@@ -60,6 +60,10 @@ test('clicking a toast goes to its session, even from settings', async ({
   // A session row, not the workstream card holding it.
   const focused = page.locator('li[data-nav-id]:focus');
   await expect(focused).toContainText(sessionTitle);
+  // Expanded, to show the output and take the answer.
+  await expect(
+    focused.getByRole('button', { name: 'Toggle session details' }),
+  ).toHaveAttribute('aria-expanded', 'true');
   await expect(region.getByRole('alert').filter({ hasText: title })).toHaveCount(0);
 });
 
