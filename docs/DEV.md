@@ -331,8 +331,9 @@ ANTHROPIC_API_KEY=... scripts/demo-video/run.sh
   few seconds with a badge. The container's start and waits for a notification to clear are cut.
 - **Re-takes:** agents differ from run to run, so look at the result. A take that times out
   prints the waiting session's last screen.
-- **Cleanup:** deletes the demo home, which holds the key, then stops the demo's daemon, bridges,
-  desktop and the containers of the demo projects, by exact match only.
+- **Cleanup:** deletes the demo home, which holds the key (also when `setup.sh` fails), then
+  stops the demo's daemon, bridges, desktop and the containers of the demo projects, by exact
+  match only.
 - **Wipes:** `DEMO_ROOT` and `DEMO_PROJECTS` are deleted at the start of a run. A non-empty folder
   without the `.homeshell-demo` mark a previous run left is refused.
 - Env: `DEMO_PROJECTS` (default `/tmp/code`), `DEMO_ROOT` (default `/tmp/homeshell-demo`),

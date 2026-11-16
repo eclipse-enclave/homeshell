@@ -36,6 +36,8 @@ rm -rf "$root" "$projects"
 mkdir -p "$home/.claude" "$home/.config/enclave/extensions/features" "$root/bin" "$root/run" "$root/data" \
   "$projects"
 touch "$root/$MARK" "$projects/$MARK"
+# The demo home gets the key's tail below; if setup fails, run.sh's cleanup is not armed yet.
+trap '[ $? = 0 ] || rm -rf "$home"' EXIT
 chmod 700 "$root/run"
 
 # -- Claude Code: the first-run screens already seen, and the API key approved -----------------
