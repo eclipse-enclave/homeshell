@@ -120,4 +120,39 @@ describe('useNotifications', () => {
     expect(result.current.toasts).toHaveLength(3);
     expect(result.current.toasts.map((t) => t.id)).toEqual(['n2', 'n3', 'n4']);
   });
+
+  it('never caps a held toast away, evicting the oldest one not held', () => {
+    const { result } = renderHook(() => useNotifications());
+    act(() => {
+      for (let i = 0; i < 3; i++) {
+        result.current.present(message({ id: `n${i}` }));
+      }
+    });
+    act(() => result.current.hold('n0'));
+
+    act(() => result.current.present(message({ id: 'n3' })));
+
+    expect(result.current.toasts.map((t) => t.id)).toEqual(['n0', 'n2', 'n3']);
+  });
+
+  it('shows a new toast past the cap while all the others are held', () => {
+    const { result } = renderHook(() => useNotifications());
+    act(() => {
+      for (let i = 0; i < 3; i++) {
+        result.current.present(message({ id: `n${i}` }));
+      }
+    });
+    act(() => {
+      for (let i = 0; i < 3; i++) result.current.hold(`n${i}`);
+    });
+
+    act(() => result.current.present(message({ id: 'n3' })));
+
+    expect(result.current.toasts.map((t) => t.id)).toEqual([
+      'n0',
+      'n1',
+      'n2',
+      'n3',
+    ]);
+  });
 });

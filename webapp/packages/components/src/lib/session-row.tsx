@@ -80,6 +80,9 @@ function EndedAgo({ endedAt }: { endedAt: string }) {
   );
 }
 
+/** How long the handle's expand waits for a send box to put focus in. */
+export const ANSWER_FOCUS_MS = 10_000;
+
 export interface SessionRowProps {
   session: Session;
   /**
@@ -281,22 +284,24 @@ export function SessionRow({
   // The handle's expand asks for focus in the send box. The box can show up a
   // render or more after the panel opens, so the ask waits for it, and lapses
   // once focus has gone somewhere other than the row: a late box must not pull
-  // focus from wherever the user went, or once the user toggles the panel. The
-  // count renders a repeat ask while already expanded.
-  const answerPending = useRef(false);
+  // focus from wherever the user went, or once the user toggles the panel, or
+  // after ANSWER_FOCUS_MS, for a box that takes that long or never comes. Held
+  // as the deadline, or null with no ask. The count renders a repeat ask while
+  // already expanded.
+  const answerPending = useRef<number | null>(null);
   const [, setAnswerRequest] = useState(0);
   const promptInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (!answerPending.current) return;
+    if (answerPending.current === null) return;
     // Not lapsed on a collapsed panel: an effect of a render from before the
     // expand can run between the ask and the render that opens the panel.
     const active = document.activeElement;
     const focusHere =
       !active || active === document.body || rowRef.current?.contains(active);
-    if (!focusHere) {
-      answerPending.current = false;
+    if (!focusHere || Date.now() >= answerPending.current) {
+      answerPending.current = null;
     } else if (promptInputRef.current) {
-      answerPending.current = false;
+      answerPending.current = null;
       promptInputRef.current.focus();
     }
   });
@@ -588,7 +593,7 @@ export function SessionRow({
   // overlay — looking at the session counts as seeing it.
   const toggleExpanded = () => {
     if (seenable) onSeen?.();
-    answerPending.current = false;
+    answerPending.current = null;
     setExpanded((open) => !open);
   };
   // Remembers what the panel was, for a double-click's rename to put back.
@@ -702,7 +707,7 @@ export function SessionRow({
     expand: () => {
       if (seenable) onSeen?.();
       setExpanded(true);
-      answerPending.current = true;
+      answerPending.current = Date.now() + ANSWER_FOCUS_MS;
       setAnswerRequest((count) => count + 1);
     },
   }));

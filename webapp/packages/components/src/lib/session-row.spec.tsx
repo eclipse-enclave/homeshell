@@ -12,7 +12,11 @@ import {
 import { createRef } from 'react';
 
 import { useMnemonics } from './mnemonic';
-import { SessionRow, type SessionRowHandle } from './session-row';
+import {
+  ANSWER_FOCUS_MS,
+  SessionRow,
+  type SessionRowHandle,
+} from './session-row';
 
 /** A session in `state`, marked ended where the daemon would mark it. */
 const session = (state: Session['state']): Session => ({
@@ -286,6 +290,27 @@ describe('SessionRow', () => {
     );
 
     expect(document.activeElement).toBe(document.body);
+  });
+
+  it('gives up on a send box that takes too long to show up', () => {
+    vi.useFakeTimers();
+    try {
+      const ref = createRef<SessionRowHandle>();
+      const { rerender } = renderRow({ session: session('waiting'), ref });
+      act(() => ref.current!.expand());
+      act(() => (document.activeElement as HTMLElement).blur());
+
+      act(() => vi.advanceTimersByTime(ANSWER_FOCUS_MS));
+      rerender(
+        <ul>
+          <SessionRow session={session('waiting')} onPrompt={vi.fn()} ref={ref} />
+        </ul>,
+      );
+
+      expect(document.activeElement).toBe(document.body);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('leaves focus where the user went before a late send box shows up', () => {

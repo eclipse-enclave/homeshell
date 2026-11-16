@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import styles from './notification-toasts.module.css';
 
@@ -17,9 +17,12 @@ export interface NotificationToastsProps {
   onDismiss: (id: string) => void;
   /** An openable toast's text was clicked. */
   onOpen?: (id: string) => void;
-  /** The pointer or focus entered a toast: keep it on screen. */
+  /**
+   * Keep a toast on screen: the pointer is over the stack, or focus is in the
+   * toast. Called once per toast until onRelease.
+   */
   onHold?: (id: string) => void;
-  /** The pointer or focus left a toast. */
+  /** A held toast is neither pointed at nor focused any more. */
   onRelease?: (id: string) => void;
 }
 
@@ -29,30 +32,61 @@ export interface NotificationToastsProps {
  * given and reports dismissals, opens and holds; the daemon authors the text
  * and the app decides when to show and hide each one, and where one leads.
  */
-export function NotificationToasts({
+export function NotificationToasts(props: NotificationToastsProps) {
+  if (props.items.length === 0) return null;
+  return <ToastStack {...props} />;
+}
+
+/**
+ * The stack itself, mounted only while it has toasts, so the pointer it last
+ * saw over it goes with it.
+ *
+ * The pointer anywhere over the stack holds every toast in it, ones that
+ * arrive meanwhile included, and focus holds the toast it is in. The newest
+ * toast goes on top: the stack is anchored to the bottom of the screen, so a
+ * new one grows it upwards and leaves the toast under the pointer where it is.
+ * Why not hold just the toast pointed at: anything that moves the stack would
+ * slide a different one under a pointer that has not moved.
+ */
+function ToastStack({
   items,
   onDismiss,
   onOpen,
   onHold,
   onRelease,
 }: NotificationToastsProps) {
-  // Per toast, whether the pointer and focus are in it: it is held while
-  // either is, and released only once both have left.
-  const holders = useRef(new Map<string, { pointer: boolean; focus: boolean }>());
-  const setHolder = (id: string, by: 'pointer' | 'focus', inside: boolean) => {
-    const before = holders.current.get(id) ?? { pointer: false, focus: false };
-    const after = { ...before, [by]: inside };
-    holders.current.set(id, after);
-    const wasHeld = before.pointer || before.focus;
-    const isHeld = after.pointer || after.focus;
-    if (isHeld && !wasHeld) onHold?.(id);
-    if (!isHeld && wasHeld) onRelease?.(id);
-  };
+  const [pointerInside, setPointerInside] = useState(false);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  // What onHold has been called for and onRelease not since.
+  const held = useRef(new Set<string>());
 
-  if (items.length === 0) return null;
+  useEffect(() => {
+    const ids = new Set(items.map((item) => item.id));
+    const wanted = new Set(
+      pointerInside ? ids : focusedId && ids.has(focusedId) ? [focusedId] : [],
+    );
+    for (const id of held.current) {
+      if (wanted.has(id)) continue;
+      held.current.delete(id);
+      // One already gone needs no letting go.
+      if (ids.has(id)) onRelease?.(id);
+    }
+    for (const id of wanted) {
+      if (held.current.has(id)) continue;
+      held.current.add(id);
+      onHold?.(id);
+    }
+  }, [items, pointerInside, focusedId, onHold, onRelease]);
+
   return (
-    <div className={styles.stack} role="region" aria-label="Notifications">
-      {items.map((item) => {
+    <div
+      className={styles.stack}
+      role="region"
+      aria-label="Notifications"
+      onPointerEnter={() => setPointerInside(true)}
+      onPointerLeave={() => setPointerInside(false)}
+    >
+      {[...items].reverse().map((item) => {
         const text = (
           <>
             <strong className={styles.title}>{item.title}</strong>
@@ -64,13 +98,11 @@ export function NotificationToasts({
             key={item.id}
             className={styles.toast}
             role="alert"
-            onPointerEnter={() => setHolder(item.id, 'pointer', true)}
-            onPointerLeave={() => setHolder(item.id, 'pointer', false)}
-            onFocus={() => setHolder(item.id, 'focus', true)}
+            onFocus={() => setFocusedId(item.id)}
             onBlur={(event) => {
               // Focus moving between the toast's own buttons stays inside it.
               if (event.currentTarget.contains(event.relatedTarget)) return;
-              setHolder(item.id, 'focus', false);
+              setFocusedId((current) => (current === item.id ? null : current));
             }}
           >
             <span className={styles.icon} aria-hidden="true">

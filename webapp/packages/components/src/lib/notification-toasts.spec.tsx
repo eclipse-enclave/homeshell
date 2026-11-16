@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { vi } from 'vitest';
 
 import { NotificationToasts } from './notification-toasts';
@@ -30,8 +30,9 @@ describe('NotificationToasts', () => {
     const buttons = screen.getAllByRole('button', {
       name: 'Dismiss notification',
     });
+    // The newest, on top.
     fireEvent.click(buttons[0]);
-    expect(onDismiss).toHaveBeenCalledWith('n1');
+    expect(onDismiss).toHaveBeenCalledWith('n2');
   });
 
   it('calls onOpen with the item id when an openable toast is clicked', () => {
@@ -58,7 +59,50 @@ describe('NotificationToasts', () => {
     ).toBeNull();
   });
 
-  it('holds a toast while it is pointed at or focused', () => {
+  it('shows the newest toast on top, so a new one leaves the rest in place', () => {
+    render(<NotificationToasts items={items} onDismiss={vi.fn()} />);
+    expect(
+      screen.getAllByRole('alert').map((alert) => alert.textContent),
+    ).toEqual([
+      expect.stringContaining('Verify'),
+      expect.stringContaining('Implement'),
+    ]);
+  });
+
+  it('holds every toast while the pointer is over the stack', () => {
+    const onHold = vi.fn();
+    const onRelease = vi.fn();
+    const { rerender } = render(
+      <NotificationToasts
+        items={items}
+        onDismiss={vi.fn()}
+        onHold={onHold}
+        onRelease={onRelease}
+      />,
+    );
+    const region = screen.getByRole('region', { name: 'Notifications' });
+
+    fireEvent.pointerEnter(region);
+    expect(onHold.mock.calls.flat().sort()).toEqual(['n1', 'n2']);
+
+    // One that arrives under the pointer is held too.
+    const third = { id: 'n3', title: 'Review finished', body: '' };
+    rerender(
+      <NotificationToasts
+        items={[...items, third]}
+        onDismiss={vi.fn()}
+        onHold={onHold}
+        onRelease={onRelease}
+      />,
+    );
+    expect(onHold).toHaveBeenLastCalledWith('n3');
+    expect(onRelease).not.toHaveBeenCalled();
+
+    fireEvent.pointerLeave(region);
+    expect(onRelease.mock.calls.flat().sort()).toEqual(['n1', 'n2', 'n3']);
+  });
+
+  it('holds just the toast that has focus', () => {
     const onHold = vi.fn();
     const onRelease = vi.fn();
     render(
@@ -69,23 +113,17 @@ describe('NotificationToasts', () => {
         onRelease={onRelease}
       />,
     );
-    const [first] = screen.getAllByRole('alert');
+    const dismiss = within(
+      screen.getAllByRole('alert')[1],
+    ).getByRole('button', { name: 'Dismiss notification' });
 
-    fireEvent.pointerEnter(first);
-    expect(onHold).toHaveBeenLastCalledWith('n1');
-    fireEvent.pointerLeave(first);
-    expect(onRelease).toHaveBeenLastCalledWith('n1');
-
-    const [dismiss] = screen.getAllByRole('button', {
-      name: 'Dismiss notification',
-    });
     fireEvent.focus(dismiss);
-    expect(onHold).toHaveBeenCalledTimes(2);
+    expect(onHold.mock.calls).toEqual([['n1']]);
     fireEvent.blur(dismiss);
-    expect(onRelease).toHaveBeenCalledTimes(2);
+    expect(onRelease.mock.calls).toEqual([['n1']]);
   });
 
-  it('keeps holding a focused toast when the pointer leaves it', () => {
+  it('keeps holding a focused toast when the pointer leaves the stack', () => {
     const onRelease = vi.fn();
     render(
       <NotificationToasts
@@ -95,18 +133,34 @@ describe('NotificationToasts', () => {
         onRelease={onRelease}
       />,
     );
-    const [first] = screen.getAllByRole('alert');
-    const [dismiss] = screen.getAllByRole('button', {
-      name: 'Dismiss notification',
-    });
+    const region = screen.getByRole('region', { name: 'Notifications' });
+    const dismiss = within(
+      screen.getAllByRole('alert')[1],
+    ).getByRole('button', { name: 'Dismiss notification' });
 
     fireEvent.focus(dismiss);
-    fireEvent.pointerEnter(first);
-    fireEvent.pointerLeave(first);
-    expect(onRelease).not.toHaveBeenCalled();
+    fireEvent.pointerEnter(region);
+    fireEvent.pointerLeave(region);
+    expect(onRelease.mock.calls).toEqual([['n2']]);
 
     fireEvent.blur(dismiss);
-    expect(onRelease).toHaveBeenCalledWith('n1');
+    expect(onRelease).toHaveBeenLastCalledWith('n1');
+  });
+
+  it('forgets the pointer once the stack empties, so a new toast is not held', () => {
+    const onHold = vi.fn();
+    const { rerender } = render(
+      <NotificationToasts items={items} onDismiss={vi.fn()} onHold={onHold} />,
+    );
+    fireEvent.pointerEnter(screen.getByRole('region', { name: 'Notifications' }));
+    rerender(<NotificationToasts items={[]} onDismiss={vi.fn()} onHold={onHold} />);
+    onHold.mockClear();
+
+    rerender(
+      <NotificationToasts items={[items[0]]} onDismiss={vi.fn()} onHold={onHold} />,
+    );
+
+    expect(onHold).not.toHaveBeenCalled();
   });
 
   it('exposes the stack as a labelled region', () => {

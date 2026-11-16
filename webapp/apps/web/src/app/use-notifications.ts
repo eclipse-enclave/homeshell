@@ -32,7 +32,10 @@ export interface UseNotifications {
   present: (message: NotificationMessage) => void;
   /** Dismiss a toast by id. */
   dismiss: (id: string) => void;
-  /** Keep a toast on screen while the user points at or focuses it. */
+  /**
+   * Keep a toast on screen while the user points at or focuses it: no timer
+   * dismisses it, and the stack cap does not evict it.
+   */
   hold: (id: string) => void;
   /** Let a held toast go: it gets a full lifetime again from now. */
   release: (id: string) => void;
@@ -44,6 +47,25 @@ const TOAST_TTL_MS = 6000;
 const MAX_TOASTS = 3;
 
 /**
+ * Trims a stack (newest last) to MAX_TOASTS by dropping its oldest toasts, but
+ * never a held one, nor the newest: the user may be about to click a held
+ * toast, and a burst of new ones must not take it from under them. The stack
+ * outgrows the cap while too many are held.
+ */
+function capToasts(
+  stack: NotificationToast[],
+  held: ReadonlySet<string>,
+): NotificationToast[] {
+  let excess = stack.length - MAX_TOASTS;
+  return stack.filter((toast, index) => {
+    const evictable =
+      excess > 0 && index < stack.length - 1 && !held.has(toast.id);
+    if (evictable) excess--;
+    return !evictable;
+  });
+}
+
+/**
  * Presents daemon-pushed in-app notifications (issue #66) as toasts and plays
  * their sound. Whether a notification arrives at all — and via which channel —
  * is decided by the daemon from the Notifications settings category; this hook
@@ -52,6 +74,7 @@ const MAX_TOASTS = 3;
 export function useNotifications(): UseNotifications {
   const [toasts, setToasts] = useState<NotificationToast[]>([]);
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const held = useRef(new Set<string>());
 
   const stopTimer = useCallback((id: string) => {
     const timer = timers.current.get(id);
@@ -65,12 +88,22 @@ export function useNotifications(): UseNotifications {
     (id: string) => {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
       stopTimer(id);
+      held.current.delete(id);
+    },
+    [stopTimer],
+  );
+
+  const hold = useCallback(
+    (id: string) => {
+      held.current.add(id);
+      stopTimer(id);
     },
     [stopTimer],
   );
 
   const release = useCallback(
     (id: string) => {
+      held.current.delete(id);
       stopTimer(id);
       timers.current.set(
         id,
@@ -95,11 +128,17 @@ export function useNotifications(): UseNotifications {
             }
           : undefined,
       };
-      setToasts((prev) => [...prev, toast].slice(-MAX_TOASTS));
+      setToasts((prev) => {
+        const next = capToasts([...prev, toast], held.current);
+        for (const gone of prev) {
+          if (!next.includes(gone)) stopTimer(gone.id);
+        }
+        return next;
+      });
       release(message.id);
       playNotificationSound(message.sound);
     },
-    [release],
+    [release, stopTimer],
   );
 
   useEffect(() => {
@@ -110,6 +149,5 @@ export function useNotifications(): UseNotifications {
     };
   }, []);
 
-  // Holding a toast is just stopping its auto-dismiss timer.
-  return { toasts, present, dismiss, hold: stopTimer, release };
+  return { toasts, present, dismiss, hold, release };
 }

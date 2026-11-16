@@ -239,9 +239,12 @@ export function ProjectView({
     focus: (itemId, options) => {
       list.focus(itemId);
       // After the row has focus, so a send box the expanded row offers takes
-      // it. Only the card holding the session has a row by that ID.
+      // it.
       if (itemId && options?.expand) {
-        for (const card of cards.current.values()) card.expandSession(itemId);
+        const holder = project.workstreams.find((workstream) =>
+          workstream.sessions.some((session) => session.id === itemId),
+        );
+        if (holder) cards.current.get(holder.id)?.expandSession(itemId);
       }
     },
   }));

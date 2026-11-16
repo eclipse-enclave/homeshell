@@ -8,12 +8,12 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
-import type { ReactElement } from 'react';
+import { createRef, type ReactElement } from 'react';
 import { vi } from 'vitest';
 
 import { registryProbe } from '../testing/contributes';
 import { CommandsProvider } from './keyboard/commands';
-import { ProjectView } from './project-view';
+import { ProjectView, type ProjectViewHandle } from './project-view';
 import { SettingsProvider } from './settings/use-settings';
 
 /** Gives the page Alt's letters, as the app does. */
@@ -1794,5 +1794,38 @@ describe('ProjectView restart with settings', () => {
     await renderLive(withCards(card('w1', 'x', [session('s1')])));
     act(() => screen.getAllByRole('listitem')[0].focus());
     expect(restartCommand()).toBeUndefined();
+  });
+});
+
+describe('ProjectView focus handle', () => {
+  it('expands the session row it names, in whichever card holds it', async () => {
+    stubCreates(() => ({}));
+    const ref = createRef<ProjectViewHandle>();
+    await act(async () => {
+      render(
+        <SettingsProvider>
+          <CommandsProvider>
+            <ProjectView
+              project={withCards(
+                card('w1', 'x', [session('s1')]),
+                worktree('w2', 'y', [session('s2')]),
+              )}
+              ref={ref}
+            />
+          </CommandsProvider>
+        </SettingsProvider>,
+      );
+    });
+    const toggleOf = (sessionId: string) =>
+      within(
+        screen.getAllByRole('listitem').find((row) =>
+          row.textContent?.includes(sessionId),
+        )!,
+      ).getByRole('button', { name: /toggle session details/i });
+
+    act(() => ref.current!.focus('s2', { expand: true }));
+
+    expect(toggleOf('s2').getAttribute('aria-expanded')).toBe('true');
+    expect(toggleOf('s1').getAttribute('aria-expanded')).toBe('false');
   });
 });

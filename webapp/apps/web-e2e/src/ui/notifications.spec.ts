@@ -70,9 +70,8 @@ test('clicking a waiting toast goes to its session, expanded, even from settings
   await expect(region.getByRole('alert').filter({ hasText: title })).toHaveCount(0);
 });
 
-// Held by focus rather than the pointer: a newer demo toast can shift the
-// stack out from under a hovering pointer, which counts as leaving it. The
-// pointer hold is covered by the component's unit tests.
+// The demo moves a session on every few seconds, so newer toasts arrive while
+// these wait, past the 6 s a toast lives on its own.
 test('a toast stays while it has focus', async ({ page, request }) => {
   test.setTimeout(60_000);
   await setNotificationStyle(request, 'in-app');
@@ -90,6 +89,32 @@ test('a toast stays while it has focus', async ({ page, request }) => {
   // Past the 6 s a toast lives on its own.
   await page.waitForTimeout(7_000);
   await expect(thisToast).toBeVisible();
+});
+
+test('a pointed-at toast stays put while newer ones arrive', async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(60_000);
+  await setNotificationStyle(request, 'in-app');
+  await page.goto('/');
+
+  const region = page.getByRole('region', { name: 'Notifications' });
+  const firstToast = region.getByRole('alert').first();
+  await expect(firstToast).toBeVisible({ timeout: 40_000 });
+  const title = (await firstToast
+    .getByText(/waiting for input|finished/i)
+    .textContent())!;
+  const thisToast = region.getByRole('alert').filter({ hasText: title });
+
+  await thisToast.hover();
+  // Past the toast's slide-in.
+  await page.waitForTimeout(500);
+  const before = await thisToast.boundingBox();
+  await page.waitForTimeout(7_000);
+
+  await expect(thisToast).toBeVisible();
+  expect(await thisToast.boundingBox()).toEqual(before);
 });
 
 test('a notification toast can be dismissed', async ({ page, request }) => {
