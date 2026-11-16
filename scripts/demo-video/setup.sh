@@ -10,13 +10,13 @@
 # Why an API key: a copy of the user's Claude login shares its rotating refresh token.
 set -euo pipefail
 
-# Absolute: the guards below, Claude Code's trusted folders and run.sh's cleanup match on them.
+# Canonical: the guards below, Claude Code's trusted folders and run.sh's cleanup match on them.
 root=$(realpath -m -- "${1:?demo root}")
 projects=$(realpath -m -- "${2:?projects dir}")
 here=$(cd "$(dirname "$0")" && pwd -P)
 repo=$(cd "$here/../.." && pwd -P)
 real_home=$(realpath -m -- "$HOME")
-real_config=${XDG_CONFIG_HOME:-$HOME/.config}
+real_config=${XDG_CONFIG_HOME:-$real_home/.config}
 real_runtime=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 home=$root/home
 
@@ -36,7 +36,7 @@ rm -rf "$root" "$projects"
 mkdir -p "$home/.claude" "$home/.config/enclave/extensions/features" "$root/bin" "$root/run" "$root/data" \
   "$projects"
 touch "$root/$MARK" "$projects/$MARK"
-# The demo home gets the key's tail below; if setup fails, run.sh's cleanup is not armed yet.
+# The demo home gets the key's tail below; if setup fails, nothing else would remove it.
 trap '[ $? = 0 ] || rm -rf "$home"' EXIT
 chmod 700 "$root/run"
 
