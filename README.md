@@ -5,7 +5,9 @@ agent session, whether it runs on your machine or in an Eclipse Enclave containe
 them all in one web UI or desktop window: what each agent is doing, which ones wait for you, and
 a way to answer them.
 
-![HomeShell starting an agent session and answering one that waits for input](docs/assets/homeshell-demo.gif)
+![HomeShell with agents at work in four projects: a new worktree gets an Enclave session that is
+briefed in a terminal, another agent's question is answered, the finished feature is reviewed in its
+folder, and an old conversation is continued](docs/assets/homeshell-demo.gif)
 
 Docs: start at the [docs index](docs/README.md).
 
