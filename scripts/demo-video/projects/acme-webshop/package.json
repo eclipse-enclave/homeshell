@@ -1,0 +1,8 @@
+{
+  "name": "acme-webshop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}
