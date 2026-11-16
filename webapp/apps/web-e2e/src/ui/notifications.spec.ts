@@ -57,13 +57,16 @@ test('clicking a waiting toast goes to its session, expanded, even from settings
       .getByRole('navigation', { name: 'Projects' })
       .locator('[aria-current="true"]'),
   ).toContainText(projectName);
-  // A session row, not the workstream card holding it.
-  const focused = page.locator('li[data-nav-id]:focus');
-  await expect(focused).toContainText(sessionTitle);
-  // Expanded, to show the output and take the answer.
+  // The session row, not the workstream card holding it, expanded with focus
+  // in its send box, ready for the answer.
+  const row = page.locator('li[data-nav-id]:focus-within');
+  await expect(row).toContainText(sessionTitle);
   await expect(
-    focused.getByRole('button', { name: 'Toggle session details' }),
+    row.getByRole('button', { name: 'Toggle session details' }),
   ).toHaveAttribute('aria-expanded', 'true');
+  await expect(
+    row.getByRole('textbox', { name: 'Send text to session' }),
+  ).toBeFocused();
   await expect(region.getByRole('alert').filter({ hasText: title })).toHaveCount(0);
 });
 
