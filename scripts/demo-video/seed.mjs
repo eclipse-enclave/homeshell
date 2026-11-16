@@ -2,7 +2,7 @@
 // and real Claude Code sessions, some finished or ended, some still at work when it returns.
 //
 // Usage: node scripts/demo-video/seed.mjs <base-url> <projects-dir>
-// Env: DEMO_TERMINAL, the gnome-terminal line Open runs (see run.sh).
+// Env: DEMO_TERMINAL, the gnome-terminal line Open runs (see take.sh).
 import { join } from 'node:path';
 import {
   addWorktree,
