@@ -31,13 +31,6 @@ for dir in "$root" "$projects"; do
     exit 1
   fi
 done
-for dir in "$projects"/*/; do
-  [ -d "$dir/.git" ] || continue
-  git -C "$dir" worktree list --porcelain | sed -n "s/^worktree //p" | tail -n +2 |
-    while IFS= read -r tree; do
-      case "$tree" in "$projects"/*) rm -rf "$tree" ;; esac
-    done
-done
 rm -rf "$root" "$projects"
 mkdir -p "$home/.claude" "$home/.config/enclave/extensions/features" "$root/bin" "$root/run" "$root/data" \
   "$projects"
