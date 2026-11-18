@@ -133,7 +133,6 @@ func TestSandboxFlagsForAllNetwork(t *testing.T) {
 	tests := []struct {
 		name       string
 		configured bool
-		qemu       bool
 		choice     sandboxChoice
 		want       []string
 	}{
@@ -151,17 +150,12 @@ func TestSandboxFlagsForAllNetwork(t *testing.T) {
 			want:   []string{"--allow-all-network"}},
 		{name: "nor while the config allows it", configured: true,
 			choice: sandboxChoice{AllowDomains: []string{"cdn.example.com"}}},
-		{name: "the QEMU backend ignores a restriction, and the domains it would reject", configured: true, qemu: true,
-			choice: sandboxChoice{AllowAllNetwork: ptr(false), AllowDomains: []string{"cdn.example.com"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			base := testBase()
 			if tt.configured {
 				base.Config["allow_all_network"] = option(`true`, "project")
-			}
-			if tt.qemu {
-				base.Config["backend"] = option(`"qemu"`, "global")
 			}
 			if got := sandboxFlags(tt.choice, base); !slices.Equal(got, tt.want) {
 				t.Errorf("sandboxFlags = %q; want %q", got, tt.want)

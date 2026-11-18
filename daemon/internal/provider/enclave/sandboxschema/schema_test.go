@@ -206,22 +206,15 @@ func TestSchemaWithoutFeatures(t *testing.T) {
 
 func TestSchemaAllowAllNetwork(t *testing.T) {
 	tests := []struct {
-		name         string
-		config       map[string]ConfigOption
-		wantDefault  bool
-		wantSource   string
-		wantReadOnly bool
+		name        string
+		config      map[string]ConfigOption
+		wantDefault bool
+		wantSource  string
 	}{
 		{name: "restricted by default", wantDefault: false, wantSource: "Enclave defaults"},
 		{name: "allowed by Enclave's project config",
 			config:      map[string]ConfigOption{"allow_all_network": option(`true`, "project")},
 			wantDefault: true, wantSource: "Enclave project config"},
-		{name: "forced by the QEMU backend",
-			config: map[string]ConfigOption{
-				"allow_all_network": option(`true`, "default"),
-				"backend":           option(`"qemu"`, "global"),
-			},
-			wantDefault: true, wantSource: "Enclave global config", wantReadOnly: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -238,15 +231,9 @@ func TestSchemaAllowAllNetwork(t *testing.T) {
 				t.Errorf("allowAllNetwork default = %v from %v; want %v from %v",
 					field["default"], field["x-source"], tt.wantDefault, tt.wantSource)
 			}
-			if readOnly, _ := field["readOnly"].(bool); readOnly != tt.wantReadOnly {
-				t.Errorf("allowAllNetwork readOnly = %v; want %v", readOnly, tt.wantReadOnly)
-			}
 			description, _ := field["description"].(string)
 			if !strings.Contains(description, "real ones") {
 				t.Errorf("allowAllNetwork description = %q; want it to warn that the agent sees real tokens", description)
-			}
-			if tt.wantReadOnly && !strings.Contains(description, "QEMU") {
-				t.Errorf("allowAllNetwork description = %q; want it to say the QEMU backend forces it", description)
 			}
 			if got := props["allowDomains"]["x-disabled-when"]; !equalJSON(got, map[string]any{"allowAllNetwork": true}) {
 				t.Errorf("allowDomains x-disabled-when = %v; want it disabled while all network is allowed", got)

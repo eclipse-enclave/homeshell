@@ -217,7 +217,7 @@ func Schema(base Base) json.RawMessage {
 
 	props = props.add("allowAllNetwork", allowAllNetworkProp(config))
 
-	// Without the gateway there is no allowlist to extend, so the domains are
+	// Unrestricted mode has no allowlist to extend, so the domains are
 	// greyed out while all network is allowed, and kept for when it no longer is.
 	props = props.add("allowDomains", withInherited(map[string]any{
 		"type":            "array",
@@ -255,26 +255,18 @@ func Schema(base Base) json.RawMessage {
 // allowAllNetworkProp is the checkbox that turns Enclave's network restrictions
 // off for a session (`--allow-all-network`), defaulting to what Enclave's config
 // says. A config that allows all network can still be overridden for one session
-// (`--allow-all-network=false`); the QEMU backend cannot, as it has no restricted
-// network, so there the checkbox is locked on. Enclave's network policy mode is
-// not in `enclave config --json`, so a global "unrestricted" mode goes unseen.
+// (`--allow-all-network=false`). Enclave's network policy mode, global or
+// project, is not asked for yet (`enclave network print --json` would report
+// it), and the flag cannot override an "unrestricted" mode.
 func allowAllNetworkProp(config EffectiveConfig) map[string]any {
-	const consequence = "The container can reach any host. Enclave also stops shielding your agent tokens, " +
-		"so the agent sees the real ones."
-	prop := map[string]any{
-		"type":        "boolean",
-		"title":       "Allow all network access",
-		"description": consequence,
-		"default":     config.Bool("allow_all_network"),
-		"x-source":    sourceLabel(config["allow_all_network"].Source),
+	return map[string]any{
+		"type":  "boolean",
+		"title": "Allow all network access",
+		"description": "The container can reach any host. Enclave also stops shielding your agent tokens, " +
+			"so the agent sees the real ones.",
+		"default":  config.Bool("allow_all_network"),
+		"x-source": sourceLabel(config["allow_all_network"].Source),
 	}
-	if config.String("backend") == "qemu" {
-		prop["description"] = "Enclave's QEMU backend always allows all network access. " + consequence
-		prop["default"] = true
-		prop["readOnly"] = true
-		prop["x-source"] = sourceLabel(config["backend"].Source)
-	}
-	return prop
 }
 
 // retiredSettings are settings the group no longer offers. They are accepted on

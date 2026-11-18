@@ -246,10 +246,10 @@ container is Enclave's to manage.
   refused (`409`) and stops nothing; the next inventory check adopts the new session.
 - **Allow all network access** in the Container settings passes `--allow-all-network`, or
   `--allow-all-network=false` to restrict a session whose Enclave config allows all network. It
-  defaults to the config's `allow_all_network`; with the QEMU backend it is locked on, as Enclave
-  forces it there. While it is on, Extra allowed domains is greyed out and not passed. Enclave's
-  network policy mode (`enclave network set-mode`) is not in `enclave config --json`, so a session
-  under an `unrestricted` mode runs unrestricted whatever the checkbox says.
+  defaults to the config's `allow_all_network`. While it is on, Extra allowed domains is greyed out
+  and not passed. HomeShell does not yet ask `enclave network print --json` for the network policy
+  mode (`enclave network set-mode`), so a session under an `unrestricted` mode runs unrestricted
+  whatever the checkbox says; the flag cannot override that mode.
 - **CLI session settings:** a CLI session has no recorded launch config (a session HomeShell started
   that is started again in a terminal under its name drops its own), so its restart or Continue
   starts with the options Enclave recorded for the container, as far as the create form models

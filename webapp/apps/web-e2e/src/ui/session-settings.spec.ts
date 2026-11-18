@@ -213,6 +213,12 @@ test('allowing all network greys out the extra domains and keeps them', async ({
   await expect(domains).toHaveAttribute('aria-disabled', 'true');
   expect(Number(await boxOpacity())).toBeLessThan(1);
   await expect(form.getByText('api.example.com')).toBeVisible();
+  // The box's dimming is the only one, so the chip's × stays legible.
+  const chipRemove = form.getByRole('button', {
+    name: 'Delete api.example.com',
+  });
+  await expect(chipRemove).toHaveAttribute('aria-disabled', 'true');
+  expect(await styleOf(chipRemove, 'opacity')).toBe('1');
   await expect(form.getByTestId('group-summary')).toHaveText(
     'Allow all network access · Extra allowed domains +1',
   );

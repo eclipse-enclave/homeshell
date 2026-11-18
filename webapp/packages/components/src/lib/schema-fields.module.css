@@ -266,6 +266,11 @@
   cursor: not-allowed;
 }
 
+/* The box's dimming is the only one: a chip × would otherwise fade twice. */
+.chipBox:has(> input[aria-disabled='true']) .chipRemove {
+  opacity: 1;
+}
+
 .chipBox:focus-within {
   outline: 1px solid var(--hs-accent, #2dd4bf);
   outline-offset: -1px;

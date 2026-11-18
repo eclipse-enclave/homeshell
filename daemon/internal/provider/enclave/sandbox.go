@@ -212,12 +212,9 @@ func sandboxFlags(choice sandboxChoice, base sandboxschema.Base) []string {
 	flags = append(flags, extendList("--bridge-port", config.List("bridge_ports"), bridge)...)
 	// Boolean flags take an explicit value, and the command line beats Enclave's
 	// config, so a session can also restrict what the config allows. With all
-	// network allowed there is no allowlist for the domains to extend. The QEMU
-	// backend always allows all network and rejects `--allow-domain`, so there a
-	// recorded restriction is dropped too.
-	qemu := config.String("backend") == "qemu"
-	allowAllNetwork := config.Bool("allow_all_network") || qemu
-	if !qemu && choice.AllowAllNetwork != nil && *choice.AllowAllNetwork != allowAllNetwork {
+	// network allowed there is no allowlist for the domains to extend.
+	allowAllNetwork := config.Bool("allow_all_network")
+	if choice.AllowAllNetwork != nil && *choice.AllowAllNetwork != allowAllNetwork {
 		allowAllNetwork = *choice.AllowAllNetwork
 		if allowAllNetwork {
 			flags = append(flags, "--allow-all-network")
