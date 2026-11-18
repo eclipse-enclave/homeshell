@@ -6,6 +6,7 @@ import {
 } from '@playwright/test';
 import { expect, test } from '../fixtures';
 import { pollFor, sessionsOf } from '../api/workstream-helpers';
+import { styleOf } from './contrast';
 import { loadApp } from './keyboard-helpers';
 import {
   selectProject,
@@ -201,12 +202,16 @@ test('allowing all network greys out the extra domains and keeps them', async ({
   const allowAll = form.getByRole('checkbox', {
     name: 'Allow all network access',
   });
+  // The box around the domains and their chips, not just the input in it.
+  const boxOpacity = () => styleOf(domains.locator('..'), 'opacity');
   await expect(allowAll).not.toBeChecked();
   await expect(allowAll).toHaveAccessibleDescription(
     /the agent sees the real ones/,
   );
+  expect(await boxOpacity()).toBe('1');
   await allowAll.check();
   await expect(domains).toHaveAttribute('aria-disabled', 'true');
+  expect(Number(await boxOpacity())).toBeLessThan(1);
   await expect(form.getByText('api.example.com')).toBeVisible();
   await expect(form.getByTestId('group-summary')).toHaveText(
     'Allow all network access · Extra allowed domains +1',
