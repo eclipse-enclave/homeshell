@@ -6,6 +6,7 @@ import {
   defaultsOf,
   fieldsOf,
   isDefault,
+  isDisabledBy,
   itemNounOf,
   kindOf,
   pathHolds,
@@ -328,5 +329,31 @@ describe('changedPaths', () => {
     expect(changedPaths('group', { 'a/b': 1 }, { 'a/b': 2 })).toEqual([
       'group/a~1b',
     ]);
+  });
+});
+
+describe('isDisabledBy', () => {
+  const domains: SchemaProp = {
+    type: 'array',
+    items: { type: 'string' },
+    'x-disabled-when': { allowAllNetwork: true },
+  };
+
+  it('holds while every sibling it names has the given value', () => {
+    expect(isDisabledBy(domains, { allowAllNetwork: true })).toBe(true);
+    expect(isDisabledBy(domains, { allowAllNetwork: false })).toBe(false);
+    expect(isDisabledBy(domains, {})).toBe(false);
+    const both: SchemaProp = {
+      'x-disabled-when': { a: true, b: 'x' },
+    };
+    expect(isDisabledBy(both, { a: true, b: 'x' })).toBe(true);
+    expect(isDisabledBy(both, { a: true, b: 'y' })).toBe(false);
+  });
+
+  it('never holds without a rule, or with an empty one', () => {
+    expect(isDisabledBy({ type: 'string' }, { allowAllNetwork: true })).toBe(
+      false,
+    );
+    expect(isDisabledBy({ 'x-disabled-when': {} }, {})).toBe(false);
   });
 });

@@ -244,11 +244,18 @@ container is Enclave's to manage.
   Why: the default container stays free for the next `enclave` start in a terminal. A restart or
   Continue of an ended session whose container runs again (a new `enclave` start in a terminal) is
   refused (`409`) and stops nothing; the next inventory check adopts the new session.
+- **Allow all network access** in the Container settings passes `--allow-all-network`, or
+  `--allow-all-network=false` to restrict a session whose Enclave config allows all network. It
+  defaults to the config's `allow_all_network`; with the QEMU backend it is locked on, as Enclave
+  forces it there. While it is on, Extra allowed domains is greyed out and not passed. Enclave's
+  network policy mode (`enclave network set-mode`) is not in `enclave config --json`, so a session
+  under an `unrestricted` mode runs unrestricted whatever the checkbox says.
 - **CLI session settings:** a CLI session has no recorded launch config (a session HomeShell started
   that is started again in a terminal under its name drops its own), so its restart or Continue
   starts with the options Enclave recorded for the container, as far as the create form models
-  them (features, directories, ports, bridge ports, domains, host config). They become its launch
-  config, so [drift](ARCHITECTURE.md#enclave-sessions) and the settings editor apply from then on.
+  them (features, directories, ports, bridge ports, all network, domains, host config). They
+  become its launch config, so [drift](ARCHITECTURE.md#enclave-sessions) and the settings editor
+  apply from then on.
   Other options and the tool's arguments restart as Enclave resolves them now (GAP 11).
 - **CLI gaps** that limit it are in `provider/enclave/gaps.go`: no container event stream, `stop`
   also removes, no `start`, no published-port URL (so no web-IDE link), no `logs`, no shell

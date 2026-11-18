@@ -1,7 +1,8 @@
 // Package sandboxschema builds the create-form group for an Enclave container's
-// sandbox settings — features, mounts, ports, domains, host config — from what
-// Enclave resolves for a tool, with Enclave's values as the defaults. It is free
-// of the Enclave provider so the fake provider's demo offers the same form.
+// sandbox settings — features, mounts, ports, network, domains, host config —
+// from what Enclave resolves for a tool, with Enclave's values as the defaults.
+// It is free of the Enclave provider so the fake provider's demo offers the same
+// form.
 //
 // Two properties of Enclave's flags shape the form: a list flag replaces the
 // configured list rather than adding to it (enclave#99), and no flag empties one.
@@ -214,17 +215,18 @@ func Schema(base Base) json.RawMessage {
 		"default":     []int{},
 	}, inheritedBridge, listSource(config, "bridge_ports")))
 
-	domainsDescription := "Domains the container may reach, in addition to Enclave's allowlist for the agent and its features."
-	if config.Bool("allow_all_network") {
-		domainsDescription = "Enclave's config allows all network access for this project, so extra domains change nothing."
-	}
+	props = props.add("allowAllNetwork", allowAllNetworkProp(config))
+
+	// Without the gateway there is no allowlist to extend, so the domains are
+	// greyed out while all network is allowed, and kept for when it no longer is.
 	props = props.add("allowDomains", withInherited(map[string]any{
-		"type":        "array",
-		"title":       "Extra allowed domains",
-		"description": domainsDescription,
-		"uniqueItems": true,
-		"items":       map[string]any{"type": "string", "pattern": domainNamePattern, "maxLength": 253},
-		"default":     []string{},
+		"type":            "array",
+		"title":           "Extra allowed domains",
+		"description":     "Domains the container may reach, in addition to Enclave's allowlist for the agent and its features.",
+		"uniqueItems":     true,
+		"items":           map[string]any{"type": "string", "pattern": domainNamePattern, "maxLength": 253},
+		"default":         []string{},
+		"x-disabled-when": map[string]any{"allowAllNetwork": true},
 	}, config.List("allow_domains"), listSource(config, "allow_domains")))
 
 	props = props.add("hostConfig", map[string]any{
@@ -248,6 +250,31 @@ func Schema(base Base) json.RawMessage {
 		panic(fmt.Sprintf("encoding the sandbox schema: %v", err))
 	}
 	return out
+}
+
+// allowAllNetworkProp is the checkbox that turns Enclave's network restrictions
+// off for a session (`--allow-all-network`), defaulting to what Enclave's config
+// says. A config that allows all network can still be overridden for one session
+// (`--allow-all-network=false`); the QEMU backend cannot, as it has no restricted
+// network, so there the checkbox is locked on. Enclave's network policy mode is
+// not in `enclave config --json`, so a global "unrestricted" mode goes unseen.
+func allowAllNetworkProp(config EffectiveConfig) map[string]any {
+	const consequence = "The container can reach any host. Enclave also stops shielding your agent tokens, " +
+		"so the agent sees the real ones."
+	prop := map[string]any{
+		"type":        "boolean",
+		"title":       "Allow all network access",
+		"description": consequence,
+		"default":     config.Bool("allow_all_network"),
+		"x-source":    sourceLabel(config["allow_all_network"].Source),
+	}
+	if config.String("backend") == "qemu" {
+		prop["description"] = "Enclave's QEMU backend always allows all network access. " + consequence
+		prop["default"] = true
+		prop["readOnly"] = true
+		prop["x-source"] = sourceLabel(config["backend"].Source)
+	}
+	return prop
 }
 
 // retiredSettings are settings the group no longer offers. They are accepted on

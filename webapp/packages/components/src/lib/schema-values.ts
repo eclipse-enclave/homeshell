@@ -59,6 +59,11 @@ export interface SchemaProp extends Schema {
   'x-source'?: string;
   /** Values already in effect from elsewhere; not part of the field's value. */
   'x-inherited'?: SchemaInherited;
+  /**
+   * Of a group's field: the sibling values that make it take no input, such as
+   * domains to allow while all network is allowed (see `isDisabledBy`).
+   */
+  'x-disabled-when'?: Record<string, unknown>;
 }
 
 export type ConfigValue =
@@ -125,6 +130,25 @@ export function fieldsOf(schema: unknown): Field[] {
 /** Whether a field is shown locked at its default: a read-only boolean. */
 export function isLocked(prop: SchemaProp): boolean {
   return prop.type === 'boolean' && prop.readOnly === true;
+}
+
+/**
+ * Whether a group's field is greyed out by its siblings: every sibling its
+ * `x-disabled-when` names holds the value given there. The provider states the
+ * rule; the form only compares values. Its value stays as it was, for when the
+ * rule no longer holds.
+ */
+export function isDisabledBy(
+  prop: SchemaProp,
+  siblings: Readonly<Record<string, unknown>>,
+): boolean {
+  const rule = prop['x-disabled-when'];
+  if (!isObject(rule)) return false;
+  const conditions = Object.entries(rule);
+  return (
+    conditions.length > 0 &&
+    conditions.every(([key, value]) => sameValue(siblings[key], value))
+  );
 }
 
 /**

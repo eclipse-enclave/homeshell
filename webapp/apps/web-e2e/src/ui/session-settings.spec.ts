@@ -185,6 +185,42 @@ test('the container group summarizes its changes and sends them nested', async (
   });
 });
 
+test('allowing all network greys out the extra domains and keeps them', async ({
+  page,
+  request,
+}) => {
+  const { card, projectId, workstreamId } = await emptyCard(page, request);
+  const form = await openSandboxedForm(page, card);
+  await form.getByRole('button', { name: /^Container / }).click();
+  const domains = form.getByRole('textbox', {
+    name: 'Add to Extra allowed domains',
+  });
+  await domains.fill('api.example.com');
+  await domains.press('Enter');
+
+  const allowAll = form.getByRole('checkbox', {
+    name: 'Allow all network access',
+  });
+  await expect(allowAll).not.toBeChecked();
+  await expect(allowAll).toHaveAccessibleDescription(
+    /the agent sees the real ones/,
+  );
+  await allowAll.check();
+  await expect(domains).toHaveAttribute('aria-disabled', 'true');
+  await expect(form.getByText('api.example.com')).toBeVisible();
+  await expect(form.getByTestId('group-summary')).toHaveText(
+    'Allow all network access · Extra allowed domains +1',
+  );
+
+  await form.getByRole('button', { name: 'Start session' }).click();
+  await expect(form).toHaveCount(0);
+  const { launched } = await launchConfigOf(request, projectId, workstreamId);
+  expect(launched.config).toEqual({
+    model: 'sonnet',
+    enclave: { allowAllNetwork: true, allowDomains: ['api.example.com'] },
+  });
+});
+
 test('a session started on the defaults records an empty group', async ({
   page,
   request,

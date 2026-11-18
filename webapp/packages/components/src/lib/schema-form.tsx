@@ -18,6 +18,7 @@ import {
   defaultsOf,
   fieldsOf,
   isDefault,
+  isDisabledBy,
   isLocked,
   kindOf,
   pathHolds,
@@ -41,7 +42,9 @@ export * from './schema-values';
  * items) or a list of chips (anything else). Conditional keywords
  * (if/then/allOf) are intentionally not interpreted here: providers keep
  * disjoint shapes as separate schemas so the client never has to evaluate
- * schema logic (domain logic lives in the daemon).
+ * schema logic (domain logic lives in the daemon). The one dependency between
+ * fields is a group field's `x-disabled-when`: sibling values, stated by the
+ * provider, that grey the field out (see `isDisabledBy`).
  *
  * Optionality: a field with a schema `default` starts at that value; a *required*
  * enum with no default starts at its first option; an *optional* enum with no
@@ -455,6 +458,7 @@ function SchemaGroup({
         {fields.map(({ key, prop: child, required }) => {
           const modified = !isDefault(child, values[key], required);
           const childTitle = child.title ?? key;
+          const childDisabled = disabled || isDisabledBy(child, values);
           return (
             <div
               key={key}
@@ -468,7 +472,7 @@ function SchemaGroup({
                 prop={child}
                 required={required}
                 value={values[key]}
-                disabled={disabled}
+                disabled={childDisabled}
                 errors={errors}
                 groupsOpen
                 onChange={(next) => onChange({ ...values, [key]: next })}
@@ -478,14 +482,14 @@ function SchemaGroup({
                   type="button"
                   className={groupStyles.reset}
                   onClick={() => {
-                    if (!disabled) {
+                    if (!childDisabled) {
                       onChange({
                         ...values,
                         [key]: defaultOf(child, required),
                       });
                     }
                   }}
-                  aria-disabled={disabled}
+                  aria-disabled={childDisabled}
                   aria-label={`Reset ${childTitle} to its default`}
                   title="Changed from the default. Reset it."
                 >

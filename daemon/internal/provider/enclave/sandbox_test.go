@@ -126,6 +126,50 @@ func TestSandboxFlagsAgainstAConfigThatTurnsThingsOn(t *testing.T) {
 	}
 }
 
+// A session can allow all network, or turn off what Enclave's config allows, and
+// while all network is allowed the domains, which nothing would enforce, are not
+// passed.
+func TestSandboxFlagsForAllNetwork(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured bool
+		qemu       bool
+		choice     sandboxChoice
+		want       []string
+	}{
+		{name: "allowed for one session",
+			choice: sandboxChoice{AllowAllNetwork: ptr(true)}, want: []string{"--allow-all-network"}},
+		{name: "restricted as configured", choice: sandboxChoice{AllowAllNetwork: ptr(false)}},
+		{name: "allowed as configured", configured: true, choice: sandboxChoice{AllowAllNetwork: ptr(true)}},
+		{name: "restricted for one session against the config", configured: true,
+			choice: sandboxChoice{AllowAllNetwork: ptr(false)}, want: []string{"--allow-all-network=false"}},
+		{name: "restricted for one session keeps the extra domains", configured: true,
+			choice: sandboxChoice{AllowAllNetwork: ptr(false), AllowDomains: []string{"cdn.example.com"}},
+			want:   []string{"--allow-all-network=false", "--allow-domain", "api.example.com", "--allow-domain", "cdn.example.com"}},
+		{name: "extra domains are not passed while allowed",
+			choice: sandboxChoice{AllowAllNetwork: ptr(true), AllowDomains: []string{"cdn.example.com"}},
+			want:   []string{"--allow-all-network"}},
+		{name: "nor while the config allows it", configured: true,
+			choice: sandboxChoice{AllowDomains: []string{"cdn.example.com"}}},
+		{name: "the QEMU backend ignores a restriction, and the domains it would reject", configured: true, qemu: true,
+			choice: sandboxChoice{AllowAllNetwork: ptr(false), AllowDomains: []string{"cdn.example.com"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := testBase()
+			if tt.configured {
+				base.Config["allow_all_network"] = option(`true`, "project")
+			}
+			if tt.qemu {
+				base.Config["backend"] = option(`"qemu"`, "global")
+			}
+			if got := sandboxFlags(tt.choice, base); !slices.Equal(got, tt.want) {
+				t.Errorf("sandboxFlags = %q; want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // The features Enclave resolves for the tool produce no flag, in any order.
 func TestSandboxFlagsAgainstTheToolsFeatureSelection(t *testing.T) {
 	base := testBase()
@@ -145,9 +189,10 @@ func TestSandboxOf(t *testing.T) {
 	if _, ok := sandboxOf(json.RawMessage(`{"model":"opus"}`)); ok {
 		t.Error("a config without the group: want no sandbox")
 	}
-	choice, ok := sandboxOf(json.RawMessage(`{"enclave":{"features":["devtools"],"bridgePorts":[5432],"hostConfig":true}}`))
+	choice, ok := sandboxOf(json.RawMessage(`{"enclave":{"features":["devtools"],"bridgePorts":[5432],"allowAllNetwork":true,"hostConfig":true}}`))
 	if !ok || choice.Features == nil || !slices.Equal(*choice.Features, []string{"devtools"}) ||
-		!slices.Equal(choice.BridgePorts, []int{5432}) || choice.HostConfig == nil || !*choice.HostConfig {
+		!slices.Equal(choice.BridgePorts, []int{5432}) || choice.HostConfig == nil || !*choice.HostConfig ||
+		choice.AllowAllNetwork == nil || !*choice.AllowAllNetwork {
 		t.Errorf("sandboxOf = %+v, %v", choice, ok)
 	}
 }
@@ -469,6 +514,9 @@ func TestSandboxChoiceFromOptions(t *testing.T) {
 		{name: "host config passed through", running: map[string]string{"host_config": `"passthrough"`},
 			want: sandboxChoice{HostConfig: ptr(true)}},
 		{name: "host config as configured", running: map[string]string{"host_config": `"none"`}},
+		{name: "all network allowed", running: map[string]string{"allow_all_network": `true`},
+			want: sandboxChoice{AllowAllNetwork: ptr(true)}},
+		{name: "network restricted as configured", running: map[string]string{"allow_all_network": `false`}},
 		{name: "options the form does not model", running: map[string]string{"yolo": `true`, "backend": `"auto"`}},
 	}
 	for _, tt := range tests {
@@ -488,6 +536,9 @@ func TestSandboxChoiceFromOptions(t *testing.T) {
 func TestSandboxChoiceConfigHasNoNulls(t *testing.T) {
 	if got := (sandboxChoice{AllowDomains: []string{"y.org"}}).config(); string(got) != `{"enclave":{"allowDomains":["y.org"]}}` {
 		t.Errorf("config = %s", got)
+	}
+	if got := (sandboxChoice{AllowAllNetwork: ptr(false)}).config(); string(got) != `{"enclave":{"allowAllNetwork":false}}` {
+		t.Errorf("config = %s; want a restricted network kept, not dropped as unset", got)
 	}
 	if got := (sandboxChoice{}).config(); string(got) != `{}` {
 		t.Errorf("empty config = %s; want {}", got)

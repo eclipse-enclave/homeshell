@@ -527,6 +527,66 @@ describe('SchemaField group', () => {
   });
 });
 
+describe('SchemaField group with a field another one disables', () => {
+  const network: SchemaProp = {
+    type: 'object',
+    title: 'Container',
+    properties: {
+      allowAllNetwork: {
+        type: 'boolean',
+        title: 'Allow all network access',
+        default: false,
+      },
+      allowDomains: {
+        type: 'array',
+        title: 'Extra allowed domains',
+        items: { type: 'string' },
+        default: [],
+        'x-disabled-when': { allowAllNetwork: true },
+      },
+    },
+  };
+
+  it('greys the field out while the rule holds, keeping its value', () => {
+    const onValue = vi.fn();
+    render(
+      <Harness
+        prop={network}
+        groupsOpen
+        initial={{ allowAllNetwork: false, allowDomains: ['cdn.example.com'] }}
+        onValue={onValue}
+      />,
+    );
+    const input = screen.getByRole('textbox', {
+      name: 'Add to Extra allowed domains',
+    });
+    expect(input.getAttribute('aria-disabled')).not.toBe('true');
+
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Allow all network access' }),
+    );
+    expect(input.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Delete cdn.example.com' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Reset Extra allowed domains to its default',
+      }),
+    );
+    expect(onValue).toHaveBeenLastCalledWith({
+      allowAllNetwork: true,
+      allowDomains: ['cdn.example.com'],
+    });
+
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Allow all network access' }),
+    );
+    expect(input.getAttribute('aria-disabled')).not.toBe('true');
+    expect(screen.getByText('cdn.example.com')).toBeTruthy();
+  });
+});
+
 describe('firstField', () => {
   it('passes over the fields of a collapsed group', () => {
     render(<Harness prop={container} />);
