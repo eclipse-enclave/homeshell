@@ -55,6 +55,10 @@ settings and environment variables are in
 
 ## First use
 
+0. **Optional, but recommended: install [Eclipse Enclave][enclave].** HomeShell works without it,
+   but with it each agent runs in its own container, at full autonomy without confirmation
+   prompts and with its network traffic filtered. Pick Eclipse Enclave as the provider when you
+   start a session; sessions you start with `enclave` in a terminal show up too.
 1. **Add a project:** pick a directory with your code. It comes with a workstream that works in
    that folder, on the branch checked out there.
 2. **Start a session** in it: pick an agent. Its state (running, waiting, idle) and a preview of
@@ -63,6 +67,8 @@ settings and environment variables are in
 4. **Work in parallel:** create more workstreams, each in a new git worktree or copy.
 
 The words used here are defined in [CONTEXT.md](CONTEXT.md).
+
+[enclave]: https://enclave.eclipse.dev/docs/getting-started/
 
 ## Contributing
 
