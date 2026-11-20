@@ -103,8 +103,10 @@ export interface ProjectViewHandle {
   /**
    * Focuses the card or row `itemId` names, else the one holding the list's tab
    * stop, else — with no workstreams — the button that creates the first.
+   * With `expand`, a session row it names is expanded too, with focus in its
+   * send box when it has one.
    */
-  focus: (itemId?: string) => void;
+  focus: (itemId?: string, options?: { expand?: boolean }) => void;
 }
 
 /** Whether a create was refused, rather than answered with what it made. */
@@ -233,7 +235,19 @@ export function ProjectView({
     return true;
   });
 
-  useImperativeHandle(ref, () => ({ focus: list.focus }));
+  useImperativeHandle(ref, () => ({
+    focus: (itemId, options) => {
+      list.focus(itemId);
+      // After the row has focus, so a send box the expanded row offers takes
+      // it.
+      if (itemId && options?.expand) {
+        const holder = project.workstreams.find((workstream) =>
+          workstream.sessions.some((session) => session.id === itemId),
+        );
+        if (holder) cards.current.get(holder.id)?.expandSession(itemId);
+      }
+    },
+  }));
 
   useEffect(() => {
     setEditName(project.name);

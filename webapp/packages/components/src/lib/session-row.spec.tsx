@@ -12,7 +12,11 @@ import {
 import { createRef } from 'react';
 
 import { useMnemonics } from './mnemonic';
-import { SessionRow, type SessionRowHandle } from './session-row';
+import {
+  ANSWER_FOCUS_MS,
+  SessionRow,
+  type SessionRowHandle,
+} from './session-row';
 
 /** A session in `state`, marked ended where the daemon would mark it. */
 const session = (state: Session['state']): Session => ({
@@ -213,6 +217,126 @@ describe('SessionRow', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('expands through its handle, and stays expanded when asked again', () => {
+    const ref = createRef<SessionRowHandle>();
+    renderRow({ session: session('waiting'), ref });
+    const toggle = screen.getByRole('button', {
+      name: /toggle session details/i,
+    });
+
+    act(() => ref.current!.expand());
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    act(() => ref.current!.expand());
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('expanding through its handle puts focus in the send box', () => {
+    const ref = createRef<SessionRowHandle>();
+    renderRow({ session: session('waiting'), onPrompt: vi.fn(), ref });
+
+    act(() => ref.current!.expand());
+
+    expect(document.activeElement).toBe(
+      screen.getByRole('textbox', { name: 'Send text to session' }),
+    );
+  });
+
+  it('puts focus in the send box when asked again while expanded', () => {
+    const ref = createRef<SessionRowHandle>();
+    renderRow({ session: session('waiting'), onPrompt: vi.fn(), ref });
+    act(() => ref.current!.expand());
+    act(() => (document.activeElement as HTMLElement).blur());
+
+    act(() => ref.current!.expand());
+
+    expect(document.activeElement).toBe(
+      screen.getByRole('textbox', { name: 'Send text to session' }),
+    );
+  });
+
+  it('puts focus in a send box that shows up after the expand', () => {
+    const ref = createRef<SessionRowHandle>();
+    const { rerender } = renderRow({ session: session('waiting'), ref });
+    act(() => ref.current!.expand());
+
+    rerender(
+      <ul>
+        <SessionRow session={session('waiting')} onPrompt={vi.fn()} ref={ref} />
+      </ul>,
+    );
+
+    expect(document.activeElement).toBe(
+      screen.getByRole('textbox', { name: 'Send text to session' }),
+    );
+  });
+
+  it('drops the ask for the send box once the user toggles the panel', () => {
+    const ref = createRef<SessionRowHandle>();
+    const { rerender } = renderRow({ session: session('waiting'), ref });
+    act(() => ref.current!.expand());
+    const toggle = screen.getByRole('button', {
+      name: /toggle session details/i,
+    });
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    act(() => (document.activeElement as HTMLElement).blur());
+
+    rerender(
+      <ul>
+        <SessionRow session={session('waiting')} onPrompt={vi.fn()} ref={ref} />
+      </ul>,
+    );
+
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('gives up on a send box that takes too long to show up', () => {
+    vi.useFakeTimers();
+    try {
+      const ref = createRef<SessionRowHandle>();
+      const { rerender } = renderRow({ session: session('waiting'), ref });
+      act(() => ref.current!.expand());
+      act(() => (document.activeElement as HTMLElement).blur());
+
+      act(() => vi.advanceTimersByTime(ANSWER_FOCUS_MS));
+      rerender(
+        <ul>
+          <SessionRow session={session('waiting')} onPrompt={vi.fn()} ref={ref} />
+        </ul>,
+      );
+
+      expect(document.activeElement).toBe(document.body);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves focus where the user went before a late send box shows up', () => {
+    const ref = createRef<SessionRowHandle>();
+    const { rerender } = render(
+      <>
+        <button type="button">Elsewhere</button>
+        <ul>
+          <SessionRow session={session('waiting')} ref={ref} />
+        </ul>
+      </>,
+    );
+    act(() => ref.current!.expand());
+    const elsewhere = screen.getByRole('button', { name: 'Elsewhere' });
+    act(() => elsewhere.focus());
+
+    rerender(
+      <>
+        <button type="button">Elsewhere</button>
+        <ul>
+          <SessionRow session={session('waiting')} onPrompt={vi.fn()} ref={ref} />
+        </ul>
+      </>,
+    );
+
+    expect(document.activeElement).toBe(elsewhere);
   });
 
   it('shows the input only when onPrompt is set and sends trimmed text', () => {

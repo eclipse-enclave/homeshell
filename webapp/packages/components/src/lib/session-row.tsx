@@ -80,6 +80,9 @@ function EndedAgo({ endedAt }: { endedAt: string }) {
   );
 }
 
+/** How long the handle's expand waits for a send box to put focus in. */
+export const ANSWER_FOCUS_MS = 10_000;
+
 export interface SessionRowProps {
   session: Session;
   /**
@@ -208,6 +211,11 @@ export interface SessionRowProps {
 export interface SessionRowHandle {
   /** What the row offers, as its buttons and its actions menu do. */
   actions: () => ItemAction[];
+  /**
+   * Opens the details panel and puts focus in its send box, to answer the
+   * session. Where the session takes no input, focus is left where it is.
+   */
+  expand: () => void;
 }
 
 /**
@@ -273,6 +281,30 @@ export function SessionRow({
   // Whether the panel was open before the latest single click on the header
   // toggled it, for a double-click that turns out to be a rename to put back.
   const expandedBeforeClick = useRef<boolean | null>(null);
+  // The handle's expand asks for focus in the send box. The box can show up a
+  // render or more after the panel opens, so the ask waits for it, and lapses
+  // once focus has gone somewhere other than the row: a late box must not pull
+  // focus from wherever the user went, or once the user toggles the panel, or
+  // after ANSWER_FOCUS_MS, for a box that takes that long or never comes. Held
+  // as the deadline, or null with no ask. The count renders a repeat ask while
+  // already expanded.
+  const answerPending = useRef<number | null>(null);
+  const [, setAnswerRequest] = useState(0);
+  const promptInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (answerPending.current === null) return;
+    // Not lapsed on a collapsed panel: an effect of a render from before the
+    // expand can run between the ask and the render that opens the panel.
+    const active = document.activeElement;
+    const focusHere =
+      !active || active === document.body || rowRef.current?.contains(active);
+    if (!focusHere || Date.now() >= answerPending.current) {
+      answerPending.current = null;
+    } else if (promptInputRef.current) {
+      answerPending.current = null;
+      promptInputRef.current.focus();
+    }
+  });
   const [draft, setDraft] = useState('');
   const shown = displayState ?? session.state;
   const hasRuntime = hasSessionRuntime(session.state);
@@ -561,6 +593,7 @@ export function SessionRow({
   // overlay — looking at the session counts as seeing it.
   const toggleExpanded = () => {
     if (seenable) onSeen?.();
+    answerPending.current = null;
     setExpanded((open) => !open);
   };
   // Remembers what the panel was, for a double-click's rename to put back.
@@ -669,7 +702,15 @@ export function SessionRow({
     details,
     remove,
   ].filter((entry) => entry !== undefined);
-  useImperativeHandle(ref, () => ({ actions: () => actions }));
+  useImperativeHandle(ref, () => ({
+    actions: () => actions,
+    expand: () => {
+      if (seenable) onSeen?.();
+      setExpanded(true);
+      answerPending.current = Date.now() + ANSWER_FOCUS_MS;
+      setAnswerRequest((count) => count + 1);
+    },
+  }));
   const actionsMenu = useActionsMenu(
     `Actions for session ${session.title}`,
     actions,
@@ -998,6 +1039,7 @@ export function SessionRow({
             <>
               <form className={styles.promptForm} onSubmit={submitPrompt}>
                 <input
+                  ref={promptInputRef}
                   type="text"
                   className={styles.promptInput}
                   placeholder="Send text to the session…"

@@ -31,6 +31,92 @@ test('shows a toast when a session waits for input', async ({ page, request }) =
   await expect(toast).toBeVisible({ timeout: 40_000 });
 });
 
+test('clicking a waiting toast goes to its session, expanded, even from settings', async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(60_000);
+  await setNotificationStyle(request, 'in-app');
+  await page.goto('/#/settings');
+
+  const region = page.getByRole('region', { name: 'Notifications' });
+  const open = region
+    .getByRole('button', { name: /is waiting for input/ })
+    .first();
+  await expect(open).toBeVisible({ timeout: 40_000 });
+
+  // The daemon titles a waiting toast "<session title> is waiting for input"
+  // and its body "<project> · <workstream>".
+  const [title, body] = (await open.innerText()).split('\n');
+  const sessionTitle = title.replace(/ is waiting for input$/, '');
+  const projectName = body.split(' · ')[0];
+  await open.click();
+
+  await expect(
+    page
+      .getByRole('navigation', { name: 'Projects' })
+      .locator('[aria-current="true"]'),
+  ).toContainText(projectName);
+  // The session row, not the workstream card holding it, expanded with focus
+  // in its send box, ready for the answer.
+  const row = page.locator('li[data-nav-id]:focus-within');
+  await expect(row).toContainText(sessionTitle);
+  await expect(
+    row.getByRole('button', { name: 'Toggle session details' }),
+  ).toHaveAttribute('aria-expanded', 'true');
+  await expect(
+    row.getByRole('textbox', { name: 'Send text to session' }),
+  ).toBeFocused();
+  await expect(region.getByRole('alert').filter({ hasText: title })).toHaveCount(0);
+});
+
+// The demo moves a session on every few seconds, so newer toasts arrive while
+// these wait, past the 6 s a toast lives on its own.
+test('a toast stays while it has focus', async ({ page, request }) => {
+  test.setTimeout(60_000);
+  await setNotificationStyle(request, 'in-app');
+  await page.goto('/');
+
+  const region = page.getByRole('region', { name: 'Notifications' });
+  const firstToast = region.getByRole('alert').first();
+  await expect(firstToast).toBeVisible({ timeout: 40_000 });
+  const title = (await firstToast
+    .getByText(/waiting for input|finished/i)
+    .textContent())!;
+  const thisToast = region.getByRole('alert').filter({ hasText: title });
+
+  await thisToast.getByRole('button', { name: 'Dismiss notification' }).focus();
+  // Past the 6 s a toast lives on its own.
+  await page.waitForTimeout(7_000);
+  await expect(thisToast).toBeVisible();
+});
+
+test('a pointed-at toast stays put while newer ones arrive', async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(60_000);
+  await setNotificationStyle(request, 'in-app');
+  await page.goto('/');
+
+  const region = page.getByRole('region', { name: 'Notifications' });
+  const firstToast = region.getByRole('alert').first();
+  await expect(firstToast).toBeVisible({ timeout: 40_000 });
+  const title = (await firstToast
+    .getByText(/waiting for input|finished/i)
+    .textContent())!;
+  const thisToast = region.getByRole('alert').filter({ hasText: title });
+
+  await thisToast.hover();
+  // Past the toast's slide-in.
+  await page.waitForTimeout(500);
+  const before = await thisToast.boundingBox();
+  await page.waitForTimeout(7_000);
+
+  await expect(thisToast).toBeVisible();
+  expect(await thisToast.boundingBox()).toEqual(before);
+});
+
 test('a notification toast can be dismissed', async ({ page, request }) => {
   test.setTimeout(60_000);
   await setNotificationStyle(request, 'in-app');

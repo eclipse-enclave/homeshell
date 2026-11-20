@@ -153,6 +153,8 @@ export interface WorkstreamCardHandle {
    * actions menu do. Empty for an ID that is neither.
    */
   actions: (itemId: string) => ItemAction[];
+  /** Expands the session row with this ID; nothing for another ID. */
+  expandSession: (sessionId: string) => void;
 }
 
 /**
@@ -444,6 +446,7 @@ export function WorkstreamCard({
       itemId === workstream.id
         ? actions
         : (rows.current.get(itemId)?.actions() ?? []),
+    expandSession: (sessionId) => rows.current.get(sessionId)?.expand(),
   }));
   const actionsMenu = useActionsMenu(
     `Actions for workstream ${workstream.name}`,

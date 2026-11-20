@@ -8,6 +8,15 @@ export interface NotificationToast {
   title: string;
   body: string;
   kind: string;
+  /** The session the toast is about, to go to on click; none for a test. */
+  target?: NotificationTarget;
+}
+
+/** Where a toast leads: its session, with the workstream and project holding it. */
+export interface NotificationTarget {
+  projectId: string;
+  workstreamId: string;
+  sessionId: string;
 }
 
 export interface UseNotifications {
@@ -23,12 +32,38 @@ export interface UseNotifications {
   present: (message: NotificationMessage) => void;
   /** Dismiss a toast by id. */
   dismiss: (id: string) => void;
+  /**
+   * Keep a toast on screen while the user points at or focuses it: no timer
+   * dismisses it, and the stack cap does not evict it.
+   */
+  hold: (id: string) => void;
+  /** Let a held toast go: it gets a full lifetime again from now. */
+  release: (id: string) => void;
 }
 
 /** How long a toast stays before auto-dismissing. */
 const TOAST_TTL_MS = 6000;
 /** Cap the visible stack so a burst (e.g. the demo simulator) can't fill the screen. */
 const MAX_TOASTS = 3;
+
+/**
+ * Trims a stack (newest last) to MAX_TOASTS by dropping its oldest toasts, but
+ * never a held one, nor the newest: the user may be about to click a held
+ * toast, and a burst of new ones must not take it from under them. The stack
+ * outgrows the cap while too many are held.
+ */
+function capToasts(
+  stack: NotificationToast[],
+  held: ReadonlySet<string>,
+): NotificationToast[] {
+  let excess = stack.length - MAX_TOASTS;
+  return stack.filter((toast, index) => {
+    const evictable =
+      excess > 0 && index < stack.length - 1 && !held.has(toast.id);
+    if (evictable) excess--;
+    return !evictable;
+  });
+}
 
 /**
  * Presents daemon-pushed in-app notifications (issue #66) as toasts and plays
@@ -39,15 +74,44 @@ const MAX_TOASTS = 3;
 export function useNotifications(): UseNotifications {
   const [toasts, setToasts] = useState<NotificationToast[]>([]);
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const held = useRef(new Set<string>());
 
-  const dismiss = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+  const stopTimer = useCallback((id: string) => {
     const timer = timers.current.get(id);
     if (timer) {
       clearTimeout(timer);
       timers.current.delete(id);
     }
   }, []);
+
+  const dismiss = useCallback(
+    (id: string) => {
+      setToasts((prev) => prev.filter((toast) => toast.id !== id));
+      stopTimer(id);
+      held.current.delete(id);
+    },
+    [stopTimer],
+  );
+
+  const hold = useCallback(
+    (id: string) => {
+      held.current.add(id);
+      stopTimer(id);
+    },
+    [stopTimer],
+  );
+
+  const release = useCallback(
+    (id: string) => {
+      held.current.delete(id);
+      stopTimer(id);
+      timers.current.set(
+        id,
+        setTimeout(() => dismiss(id), TOAST_TTL_MS),
+      );
+    },
+    [stopTimer, dismiss],
+  );
 
   const present = useCallback(
     (message: NotificationMessage) => {
@@ -56,15 +120,25 @@ export function useNotifications(): UseNotifications {
         title: message.title,
         body: message.body,
         kind: message.kind,
+        target: message.projectId
+          ? {
+              projectId: message.projectId,
+              workstreamId: message.workstreamId,
+              sessionId: message.sessionId,
+            }
+          : undefined,
       };
-      setToasts((prev) => [...prev, toast].slice(-MAX_TOASTS));
-      timers.current.set(
-        message.id,
-        setTimeout(() => dismiss(message.id), TOAST_TTL_MS),
-      );
+      setToasts((prev) => {
+        const next = capToasts([...prev, toast], held.current);
+        for (const gone of prev) {
+          if (!next.includes(gone)) stopTimer(gone.id);
+        }
+        return next;
+      });
+      release(message.id);
       playNotificationSound(message.sound);
     },
-    [dismiss],
+    [release, stopTimer],
   );
 
   useEffect(() => {
@@ -75,5 +149,5 @@ export function useNotifications(): UseNotifications {
     };
   }, []);
 
-  return { toasts, present, dismiss };
+  return { toasts, present, dismiss, hold, release };
 }

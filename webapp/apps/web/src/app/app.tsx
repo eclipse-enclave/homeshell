@@ -28,6 +28,7 @@ import { ThemeToggle } from './theme-toggle';
 import { useSettings } from './settings/use-settings';
 import { useDaemonConfig } from './use-daemon-config';
 import { useDaemonState } from './use-daemon-state';
+import { notificationDestination } from './notification-destination';
 import { useNotifications } from './use-notifications';
 import { useProviders } from './use-providers';
 import { toggledTheme, useTheme } from './use-theme';
@@ -148,11 +149,13 @@ export function App() {
 
   // Something in the project view to focus once the render showing it has
   // committed (see ProjectViewHandle).
-  const focusInView = usePendingFocus((target: { itemId?: string }) => {
-    if (!viewRef.current) return false;
-    viewRef.current.focus(target.itemId);
-    return true;
-  });
+  const focusInView = usePendingFocus(
+    (target: { itemId?: string; expand?: boolean }) => {
+      if (!viewRef.current) return false;
+      viewRef.current.focus(target.itemId, { expand: target.expand });
+      return true;
+    },
+  );
 
   // The selected project's sidebar entry, focused once a project just added
   // is listed and selected, or one just removed has left the list: Add
@@ -176,10 +179,21 @@ export function App() {
   const firstWorkstreamId = (projectId: string) =>
     projects?.find((project) => project.id === projectId)?.workstreams[0]?.id;
 
-  const goTo = (projectId: string, itemId?: string) => {
+  const goTo = (projectId: string, itemId?: string, expand?: boolean) => {
     navigate('home');
     handleSelect(projectId);
-    focusInView({ itemId: itemId ?? firstWorkstreamId(projectId) });
+    focusInView({ itemId: itemId ?? firstWorkstreamId(projectId), expand });
+  };
+
+  const openNotification = (id: string) => {
+    const toast = notifications.toasts.find((t) => t.id === id);
+    notifications.dismiss(id);
+    const destination =
+      toast?.target &&
+      notificationDestination(projects ?? [], toast.target, toast.kind);
+    if (destination) {
+      goTo(destination.projectId, destination.itemId, destination.expand);
+    }
   };
 
   const openPalette = (query: string) =>
@@ -357,8 +371,14 @@ export function App() {
         />
       )}
       <NotificationToasts
-        items={notifications.toasts}
+        items={notifications.toasts.map((toast) => ({
+          ...toast,
+          openable: Boolean(toast.target),
+        }))}
         onDismiss={notifications.dismiss}
+        onOpen={openNotification}
+        onHold={notifications.hold}
+        onRelease={notifications.release}
       />
     </div>
   );
