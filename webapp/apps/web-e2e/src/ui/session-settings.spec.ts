@@ -6,6 +6,7 @@ import {
 } from '@playwright/test';
 import { expect, test } from '../fixtures';
 import { pollFor, sessionsOf } from '../api/workstream-helpers';
+import { styleOf } from './contrast';
 import { loadApp } from './keyboard-helpers';
 import {
   selectProject,
@@ -182,6 +183,52 @@ test('the container group summarizes its changes and sends them nested', async (
         allowDomains: ['api.example.com'],
       },
     },
+  });
+});
+
+test('allowing all network greys out the extra domains and keeps them', async ({
+  page,
+  request,
+}) => {
+  const { card, projectId, workstreamId } = await emptyCard(page, request);
+  const form = await openSandboxedForm(page, card);
+  await form.getByRole('button', { name: /^Container / }).click();
+  const domains = form.getByRole('textbox', {
+    name: 'Add to Extra allowed domains',
+  });
+  await domains.fill('api.example.com');
+  await domains.press('Enter');
+
+  const allowAll = form.getByRole('checkbox', {
+    name: 'Allow all network access',
+  });
+  // The box around the domains and their chips, not just the input in it.
+  const boxOpacity = () => styleOf(domains.locator('..'), 'opacity');
+  await expect(allowAll).not.toBeChecked();
+  await expect(allowAll).toHaveAccessibleDescription(
+    /the agent sees the real ones/,
+  );
+  expect(await boxOpacity()).toBe('1');
+  await allowAll.check();
+  await expect(domains).toHaveAttribute('aria-disabled', 'true');
+  expect(Number(await boxOpacity())).toBeLessThan(1);
+  await expect(form.getByText('api.example.com')).toBeVisible();
+  // The box's dimming is the only one, so the chip's × stays legible.
+  const chipRemove = form.getByRole('button', {
+    name: 'Delete api.example.com',
+  });
+  await expect(chipRemove).toHaveAttribute('aria-disabled', 'true');
+  expect(await styleOf(chipRemove, 'opacity')).toBe('1');
+  await expect(form.getByTestId('group-summary')).toHaveText(
+    'Allow all network access · Extra allowed domains +1',
+  );
+
+  await form.getByRole('button', { name: 'Start session' }).click();
+  await expect(form).toHaveCount(0);
+  const { launched } = await launchConfigOf(request, projectId, workstreamId);
+  expect(launched.config).toEqual({
+    model: 'sonnet',
+    enclave: { allowAllNetwork: true, allowDomains: ['api.example.com'] },
   });
 });
 

@@ -441,7 +441,8 @@ the agent's PTY and serves screen snapshots on a unix socket; the wire format is
   (`provider/enclave/restart.go` `completeReplacements`). Cancelled, as by a shutdown, the restart
   stops the new container, so the session is left to end and be continued.
 - **Outdated settings.** Every 30 s (`provider/enclave/drift.go`) the provider compares each
-  session's options with what Enclave's config now resolves.
+  session's options with what Enclave's config now resolves. `allow_domains` is skipped while both
+  allow all network: unrestricted mode has no allowlist for it to change.
 - **Sandbox settings** come from Enclave's config and features, cached briefly
   (`provider/enclave/sandbox.go`); HomeShell passes them through.
 - **CLI sessions.** The same check adopts sessions started with the `enclave` CLI

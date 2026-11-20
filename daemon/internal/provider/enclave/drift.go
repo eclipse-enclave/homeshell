@@ -129,12 +129,17 @@ func (p *Provider) outdatedSettings(ctx context.Context, container Container, to
 // changedOptions names the options whose running value differs from current,
 // sorted. An option either side does not report is unknown rather than changed,
 // and so is one Enclave reports as null: it could not resolve it, as `features`
-// when the features cannot be listed.
+// when the features cannot be listed. `allow_domains` is not compared when both
+// sides allow all network: unrestricted mode has no allowlist for it to change.
 func changedOptions(running map[string]json.RawMessage, current sandboxschema.EffectiveConfig) []string {
+	unrestricted := sameJSON(running["allow_all_network"], []byte("true")) && current.Bool("allow_all_network")
 	var changed []string
 	for name, value := range running {
 		option, ok := current[name]
 		if !ok || isNull(value) || isNull(option.Value) {
+			continue
+		}
+		if name == "allow_domains" && unrestricted {
 			continue
 		}
 		if !sameJSON(value, option.Value) {

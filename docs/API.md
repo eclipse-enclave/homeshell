@@ -320,6 +320,12 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
 - **Schemas** list the session types each session provider offers in this workstream; `schema`
   is a JSON Schema the UI renders as the create form. Read per request, so catalog edits apply
   at once.
+- **Form keywords** beyond JSON Schema, which the UI reads but never works out itself:
+  - `x-source`: where a field's default comes from, shown while the field holds it.
+  - `x-inherited`: `{values, source}` a list already gets from elsewhere, shown locked and not part
+    of its value.
+  - `x-disabled-when`: on a field in a group, `{sibling: value, …}`. The field is greyed out while
+    every named sibling holds its value, and keeps what it holds for when it no longer does.
 - **Placeholders** carry `placeholder: true`: the daemon's own row for a session create in
   flight, or one that failed. Deleting one cancels its create. A session restarting is `starting`
   too, but carries no flag.

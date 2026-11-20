@@ -110,6 +110,69 @@ test.describe('session restart API', () => {
     );
   });
 
+  test('the container group offers all network access, which disables the domains', async ({
+    request,
+  }) => {
+    const projectId = await createProject(request, 'hs-restart-e2e-');
+    const wsId = await createWorkstream(request, projectId, 'restart');
+    const [group] = await (
+      await request.get(
+        `/api/projects/${projectId}/workstreams/${wsId}/session-schemas`,
+      )
+    ).json();
+    const container = group.options.find(
+      (candidate: { id: string }) => candidate.id === 'sandboxed',
+    ).schema.properties.enclave;
+    const names = Object.keys(container.properties);
+    expect(names.indexOf('allowAllNetwork')).toBe(
+      names.indexOf('allowDomains') - 1,
+    );
+    expect(container.properties.allowAllNetwork).toMatchObject({
+      type: 'boolean',
+      title: 'Allow all network access',
+      default: false,
+    });
+    expect(container.properties.allowDomains['x-disabled-when']).toEqual({
+      allowAllNetwork: true,
+    });
+  });
+
+  test('a session allowed all network keeps it across a restart, until turned off', async ({
+    request,
+  }) => {
+    const allowed = {
+      ...created,
+      enclave: { ...created.enclave, allowAllNetwork: true },
+    };
+    const sessionPath = await sandboxedSession(request, allowed);
+    expect((await awaitLaunchConfig(request, sessionPath)).config).toEqual(
+      allowed,
+    );
+
+    let res = await request.post(`${sessionPath}/restart`, {
+      data: { config: allowed, fresh: false },
+    });
+    expect(res.status()).toBe(202);
+    expect((await awaitLaunchConfig(request, sessionPath)).config).toEqual(
+      allowed,
+    );
+
+    // Turned off, it is Enclave's default again, so it is not recorded.
+    res = await request.post(`${sessionPath}/restart`, {
+      data: {
+        config: {
+          ...created,
+          enclave: { ...created.enclave, allowAllNetwork: false },
+        },
+        fresh: false,
+      },
+    });
+    expect(res.status()).toBe(202);
+    expect((await awaitLaunchConfig(request, sessionPath)).config).toEqual(
+      created,
+    );
+  });
+
   test('the providers report which can restart a session', async ({
     request,
   }) => {

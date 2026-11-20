@@ -132,7 +132,7 @@ func TestSchema(t *testing.T) {
 	group := Schema(testBase())
 	names, props := schemaProps(t, group)
 
-	wantOrder := []string{"features", "dirs", "ports", "bridgePorts", "allowDomains", "hostConfig"}
+	wantOrder := []string{"features", "dirs", "ports", "bridgePorts", "allowAllNetwork", "allowDomains", "hostConfig"}
 	if !slices.Equal(names, wantOrder) {
 		t.Errorf("field order = %q; want %q", names, wantOrder)
 	}
@@ -170,7 +170,7 @@ func TestSchema(t *testing.T) {
 
 	// The group must be a schema the daemon can validate a submitted config with.
 	schema := with(t, nil, group)
-	if err := provider.ValidateConfig(schema, json.RawMessage(`{"enclave":{"features":["playwright"],"dirs":[{"path":"/x","readonly":true}],"ports":["3000","0:3000","8080:80","127.0.0.1:8080:80","[::1]:8080:80","*:8080:80","65535"],"bridgePorts":[6379],"allowDomains":["cdn.example.com","API.Example.COM"],"hostConfig":true}}`)); err != nil {
+	if err := provider.ValidateConfig(schema, json.RawMessage(`{"enclave":{"features":["playwright"],"dirs":[{"path":"/x","readonly":true}],"ports":["3000","0:3000","8080:80","127.0.0.1:8080:80","[::1]:8080:80","*:8080:80","65535"],"bridgePorts":[6379],"allowAllNetwork":true,"allowDomains":["cdn.example.com","API.Example.COM"],"hostConfig":true}}`)); err != nil {
 		t.Errorf("a valid sandbox config was refused: %v", err)
 	}
 	for name, config := range map[string]string{
@@ -187,6 +187,7 @@ func TestSchema(t *testing.T) {
 		"a domain with a port":      `{"enclave":{"allowDomains":["example.com:443"]}}`,
 		"a dir with no path":        `{"enclave":{"dirs":[{"readonly":true}]}}`,
 		"a setting the group lacks": `{"enclave":{"yolo":true}}`,
+		"all network as a string":   `{"enclave":{"allowAllNetwork":"yes"}}`,
 	} {
 		if err := provider.ValidateConfig(schema, json.RawMessage(config)); err == nil {
 			t.Errorf("%s was accepted", name)
@@ -194,16 +195,50 @@ func TestSchema(t *testing.T) {
 	}
 }
 
-func TestSchemaWithoutFeaturesAndWithAllNetwork(t *testing.T) {
+func TestSchemaWithoutFeatures(t *testing.T) {
 	base := testBase()
 	base.Features = nil
-	base.Config["allow_all_network"] = option(`true`, "global")
 	_, props := schemaProps(t, Schema(base))
 	if _, ok := props["features"]; ok {
 		t.Error("an Enclave listing no features still gets a features field")
 	}
-	if !strings.Contains(props["allowDomains"]["description"].(string), "allows all network access") {
-		t.Errorf("allowDomains description = %q; want it to say extra domains change nothing", props["allowDomains"]["description"])
+}
+
+func TestSchemaAllowAllNetwork(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      map[string]ConfigOption
+		wantDefault bool
+		wantSource  string
+	}{
+		{name: "restricted by default", wantDefault: false, wantSource: "Enclave defaults"},
+		{name: "allowed by Enclave's project config",
+			config:      map[string]ConfigOption{"allow_all_network": option(`true`, "project")},
+			wantDefault: true, wantSource: "Enclave project config"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := testBase()
+			for name, value := range tt.config {
+				base.Config[name] = value
+			}
+			_, props := schemaProps(t, Schema(base))
+			field := props["allowAllNetwork"]
+			if field["type"] != "boolean" || field["title"] != "Allow all network access" {
+				t.Errorf("allowAllNetwork = %v; want a checkbox titled for what it does", field)
+			}
+			if field["default"] != tt.wantDefault || field["x-source"] != tt.wantSource {
+				t.Errorf("allowAllNetwork default = %v from %v; want %v from %v",
+					field["default"], field["x-source"], tt.wantDefault, tt.wantSource)
+			}
+			description, _ := field["description"].(string)
+			if !strings.Contains(description, "real ones") {
+				t.Errorf("allowAllNetwork description = %q; want it to warn that the agent sees real tokens", description)
+			}
+			if got := props["allowDomains"]["x-disabled-when"]; !equalJSON(got, map[string]any{"allowAllNetwork": true}) {
+				t.Errorf("allowDomains x-disabled-when = %v; want it disabled while all network is allowed", got)
+			}
+		})
 	}
 }
 

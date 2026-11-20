@@ -128,12 +128,13 @@ func (p *Provider) sandboxBase(ctx context.Context, dir, tool string) (sandboxsc
 // sandboxChoice is the sandbox group as a create form submits it. A field left
 // out means "Enclave's default".
 type sandboxChoice struct {
-	Features     *[]string           `json:"features,omitempty"`
-	Dirs         []sandboxschema.Dir `json:"dirs,omitempty"`
-	Ports        []string            `json:"ports,omitempty"`
-	BridgePorts  []int               `json:"bridgePorts,omitempty"`
-	AllowDomains []string            `json:"allowDomains,omitempty"`
-	HostConfig   *bool               `json:"hostConfig,omitempty"`
+	Features        *[]string           `json:"features,omitempty"`
+	Dirs            []sandboxschema.Dir `json:"dirs,omitempty"`
+	Ports           []string            `json:"ports,omitempty"`
+	BridgePorts     []int               `json:"bridgePorts,omitempty"`
+	AllowAllNetwork *bool               `json:"allowAllNetwork,omitempty"`
+	AllowDomains    []string            `json:"allowDomains,omitempty"`
+	HostConfig      *bool               `json:"hostConfig,omitempty"`
 }
 
 // unavailableSandboxSchema stands in for the sandbox group when Enclave could not
@@ -146,7 +147,8 @@ var unavailableSandboxSchema = json.RawMessage(`{"type":"object","title":"Contai
 // Enclave.
 func (choice sandboxChoice) isEmpty() bool {
 	return choice.Features == nil && len(choice.Dirs) == 0 && len(choice.Ports) == 0 &&
-		len(choice.BridgePorts) == 0 && len(choice.AllowDomains) == 0 && choice.HostConfig == nil
+		len(choice.BridgePorts) == 0 && choice.AllowAllNetwork == nil && len(choice.AllowDomains) == 0 &&
+		choice.HostConfig == nil
 }
 
 // sandboxOf reads the sandbox group out of a session config.
@@ -208,7 +210,21 @@ func sandboxFlags(choice sandboxChoice, base sandboxschema.Base) []string {
 		bridge[i] = strconv.Itoa(port)
 	}
 	flags = append(flags, extendList("--bridge-port", config.List("bridge_ports"), bridge)...)
-	flags = append(flags, extendList("--allow-domain", config.List("allow_domains"), choice.AllowDomains)...)
+	// Boolean flags take an explicit value, and the command line beats Enclave's
+	// config, so a session can also restrict what the config allows. With all
+	// network allowed there is no allowlist for the domains to extend.
+	allowAllNetwork := config.Bool("allow_all_network")
+	if choice.AllowAllNetwork != nil && *choice.AllowAllNetwork != allowAllNetwork {
+		allowAllNetwork = *choice.AllowAllNetwork
+		if allowAllNetwork {
+			flags = append(flags, "--allow-all-network")
+		} else {
+			flags = append(flags, "--allow-all-network=false")
+		}
+	}
+	if !allowAllNetwork {
+		flags = append(flags, extendList("--allow-domain", config.List("allow_domains"), choice.AllowDomains)...)
+	}
 
 	if choice.HostConfig != nil && *choice.HostConfig != (config.String("host_config") == "passthrough") {
 		value := "none"
@@ -276,6 +292,11 @@ func sandboxChoiceFromOptions(running map[string]json.RawMessage, base sandboxsc
 	for _, port := range listed("bridge_ports") {
 		if number, err := strconv.Atoi(port); err == nil {
 			choice.BridgePorts = append(choice.BridgePorts, number)
+		}
+	}
+	if allowAllNetwork, ok := decode[bool](running, "allow_all_network"); ok {
+		if allowAllNetwork != base.Bool("allow_all_network") {
+			choice.AllowAllNetwork = &allowAllNetwork
 		}
 	}
 	choice.AllowDomains = listed("allow_domains")

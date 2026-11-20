@@ -36,6 +36,43 @@ func TestChangedOptions(t *testing.T) {
 	}
 }
 
+// A session started with extra domains under all network was passed them, but
+// the domains change nothing while both sides allow all network.
+func TestChangedOptionsAllowDomainsUnderAllNetwork(t *testing.T) {
+	tests := []struct {
+		name            string
+		running, config string
+		want            []string
+	}{
+		{name: "both allow all network", running: `true`, config: `true`, want: nil},
+		{name: "only the session allows all network", running: `true`, config: `false`,
+			want: []string{"allow_all_network", "allow_domains"}},
+		{name: "only the config allows all network", running: `false`, config: `true`,
+			want: []string{"allow_all_network", "allow_domains"}},
+		{name: "neither allows all network", running: `false`, config: `false`, want: []string{"allow_domains"}},
+		// Unknown on the session's side is not taken as allowed, so the domains are compared.
+		{name: "the session does not report it", running: "", config: `true`, want: []string{"allow_domains"}},
+		{name: "the session reports null", running: `null`, config: `true`, want: []string{"allow_domains"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			current := sandboxschema.EffectiveConfig{
+				"allow_all_network": option(tt.config, "project"),
+				"allow_domains":     option(`[]`, "default"),
+			}
+			running := map[string]json.RawMessage{
+				"allow_domains": json.RawMessage(`["api.example.com"]`),
+			}
+			if tt.running != "" {
+				running["allow_all_network"] = json.RawMessage(tt.running)
+			}
+			if got := changedOptions(running, current); !slices.Equal(got, tt.want) {
+				t.Errorf("changedOptions = %q; want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // driftProvider is sandboxProvider listing one container of its workstream,
 // running with options, whose launch HomeShell recorded when launch is set.
 func driftProvider(t *testing.T, options map[string]json.RawMessage, launch *domain.LaunchConfig) (*Provider, *fakeCLI) {

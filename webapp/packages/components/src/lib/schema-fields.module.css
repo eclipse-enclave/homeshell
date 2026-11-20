@@ -255,8 +255,20 @@
   cursor: text;
 }
 
-.chipBox:hover:not(:focus-within) {
+.chipBox:hover:not(:focus-within, :has(> input[aria-disabled='true'])) {
   border-color: var(--hs-text-muted, #8494a7);
+}
+
+/* While the list takes no input, the box and its values look it, as a
+ * locked row does, and stay legible. */
+.chipBox:has(> input[aria-disabled='true']) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* The box's dimming is the only one: a chip × would otherwise fade twice. */
+.chipBox:has(> input[aria-disabled='true']) .chipRemove {
+  opacity: 1;
 }
 
 .chipBox:focus-within {
