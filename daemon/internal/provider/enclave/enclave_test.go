@@ -140,6 +140,29 @@ type fakeCLI struct {
 	// session name, so a continue under a name without one fails, as the agent finds nothing to continue.
 	// A run that starts fresh gives its container one.
 	conversations map[string]bool
+	// imagePath is what ImportImage returns, importErr fails it, onImport runs
+	// inside it, and imports records each call.
+	imagePath string
+	importErr error
+	onImport  func(importCall)
+	imports   []importCall
+}
+
+// importCall records a fakeCLI.ImportImage call.
+type importCall struct {
+	dir, container string
+	image          []byte
+}
+
+func (f *fakeCLI) ImportImage(_ context.Context, dir, container string, image []byte) (string, error) {
+	call := importCall{dir: dir, container: container, image: image}
+	f.mu.Lock()
+	f.imports = append(f.imports, call)
+	f.mu.Unlock()
+	if f.onImport != nil {
+		f.onImport(call)
+	}
+	return f.imagePath, f.importErr
 }
 
 // runCall records a fakeCLI.Run call, so a test can assert on the flags the

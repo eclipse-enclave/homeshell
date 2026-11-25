@@ -255,6 +255,7 @@ func (p *Provider) bringUp(ctx context.Context, restarting restartProjection, pr
 		// Hidden until the restart ends (replace), or completed on load after a crash (completeReplacements).
 		record.Replaces, record.ReplacingFrom = container, container
 	}
+	p.rememberLaunchedImageInbox(ctx, target, restarting.workingDir, opts)
 	if err := p.registerBridge(ctx, record); err != nil {
 		if restarting.renames() {
 			// A record kept for a failed cleanup would be a second failed row beside the session's.

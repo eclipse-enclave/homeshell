@@ -227,6 +227,7 @@ export interface ListedSession {
     stopWarning?: string;
     takeOverWarning?: string;
     note?: string;
+    attachImage?: boolean;
   };
 }
 

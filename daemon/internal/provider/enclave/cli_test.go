@@ -1080,3 +1080,98 @@ func TestRunFailureNamesTheVerb(t *testing.T) {
 		t.Errorf("Run() error = %v; want it to name `enclave continue`", err)
 	}
 }
+
+// ImportImage imports the image on stdin into the session's image inbox, from
+// the directory given, and returns `.path` of the `--json` envelope.
+func TestImportImageReadsThePathFromTheEnvelope(t *testing.T) {
+	cli := writeStubEnclave(t, `
+[ "$*" = "img import --session enclave-codex-0123456789ab-hs-1 --json -" ] || { echo "unexpected args: $*" >&2; exit 9; }
+[ "$PWD" = "$EXPECT_DIR" ] || { echo "ran in $PWD" >&2; exit 8; }
+[ "$(cat)" = "image bytes" ] || { echo "stdin was not the image" >&2; exit 7; }
+echo 'ok: Imported host image for /src/app' >&2
+echo '{"schemaVersion":"1","kind":"image-import","path":"/mnt/host-images/20261125T120000Z-0a1b2c3d.png","project":{"dir":"/src/app","hash":"e9671acd2448"},"session":{"name":"enclave-codex-0123456789ab-hs-1","sessionName":"hs-1"}}'
+`)
+	dir := t.TempDir()
+	t.Setenv("EXPECT_DIR", dir)
+	got, err := cli.ImportImage(context.Background(), dir, "enclave-codex-0123456789ab-hs-1", []byte("image bytes"))
+	if err != nil {
+		t.Fatalf("ImportImage: %v", err)
+	}
+	if got != "/mnt/host-images/20261125T120000Z-0a1b2c3d.png" {
+		t.Errorf("ImportImage = %q; want the envelope's path", got)
+	}
+}
+
+func TestParseImageImport(t *testing.T) {
+	tests := []struct {
+		name    string
+		out     string
+		want    string
+		wantErr string
+	}{
+		{name: "path", out: `{"schemaVersion":"1","kind":"image-import","path":"/mnt/host-images/a.jpg","session":null}`, want: "/mnt/host-images/a.jpg"},
+		{name: "fields added later are ignored", out: `{"schemaVersion":"1","kind":"image-import","path":"/mnt/host-images/a.png","newField":1}`, want: "/mnt/host-images/a.png"},
+		{name: "no path", out: `{"schemaVersion":"1","kind":"image-import"}`, wantErr: "no image path"},
+		{name: "blank path", out: `{"schemaVersion":"1","kind":"image-import","path":"  "}`, wantErr: "no image path"},
+		{name: "another kind", out: `{"schemaVersion":"1","kind":"config","path":"/mnt/host-images/a.png"}`, wantErr: "update Enclave"},
+		{name: "another version", out: `{"schemaVersion":"2","kind":"image-import","path":"/mnt/host-images/a.png"}`, wantErr: "update Enclave"},
+		{name: "not versioned", out: `{"path":"/mnt/host-images/a.png"}`, wantErr: "not versioned"},
+		{name: "plain path line", out: "/mnt/host-images/a.png\n", wantErr: "parsing its JSON"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseImageImport([]byte(tt.out))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("parseImageImport = %q, %v; want an error containing %q", got, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("parseImageImport = %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}
+
+// A failed import prints nothing on stdout; its `error:` line on stderr is the
+// error, as Enclave words it, and other stderr lines are left out.
+func TestImportImageReportsEnclavesError(t *testing.T) {
+	tests := []struct {
+		name   string
+		script string
+		want   string
+		absent string
+	}{
+		{
+			name: "error line",
+			script: `cat >/dev/null
+echo 'ok: looking up the session' >&2
+echo 'error: session "x" (enclave-codex-0123456789ab-x) has no image inbox; restart it with --image-inbox' >&2
+exit 1
+`,
+			want:   `session "x" (enclave-codex-0123456789ab-x) has no image inbox; restart it with --image-inbox`,
+			absent: "ok:",
+		},
+		{
+			name:   "no error line",
+			script: "cat >/dev/null\necho 'panic: something odd' >&2\nexit 2\n",
+			want:   "enclave img import: exit status 2",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cli := writeStubEnclave(t, tt.script)
+			_, err := cli.ImportImage(context.Background(), t.TempDir(), "x", []byte("image"))
+			if err == nil {
+				t.Fatal("ImportImage on a failed import: want an error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error = %q; want it to contain %q", err, tt.want)
+			}
+			if tt.absent != "" && strings.Contains(err.Error(), tt.absent) {
+				t.Errorf("error = %q; want no %q line in it", err, tt.absent)
+			}
+		})
+	}
+}

@@ -94,12 +94,13 @@ func (p *Provider) listInventory(ctx context.Context) inventory {
 }
 
 // checkInventory lists the containers once and works out from that what changed, reporting whether it did: the
-// CLI sessions to adopt or end, and the sessions out of date.
+// CLI sessions to adopt or end, the sessions out of date, and which may have the image inbox.
 func (p *Provider) checkInventory(ctx context.Context) bool {
 	listed := p.listInventory(ctx)
 	adopted := p.adoptListed(ctx, listed)
 	outdated := p.outdatedFrom(ctx, listed)
-	return adopted || outdated
+	imageInboxes := p.imageInboxesFrom(listed)
+	return adopted || outdated || imageInboxes
 }
 
 // inventoryInterval is how often the watch loop checks.

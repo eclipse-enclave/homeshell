@@ -159,7 +159,7 @@ Session-provider capabilities:
 | Max concurrent sessions | unlimited | unlimited | 3 in the demo |
 | Detects waiting | ✓ | | |
 | Prompt and keys | ✓ | ✓ | ✓ |
-| Attach images | | | ✓ |
+| Attach images | | ✓ (with the image inbox) | ✓ |
 | Stop and start | ✓ | ✓ (start is a restart) | ✓ |
 | Restart with new settings | | ✓ | ✓ |
 | Watcher | ✓ | ✓ | ✓ |
@@ -257,6 +257,23 @@ container is Enclave's to manage.
   It is offered only when the installed `enclave` has the inbox, as the
   [contract check](ARCHITECTURE.md#enclave-sessions) tells. The qemu backend is not modelled: Enclave
   refuses the flag there, and its error shows on the failed session.
+- **Attach images:** a session declares `attachImage` when all of these hold:
+  - the installed `enclave` has the image inbox (the contract check above);
+  - HomeShell runs a bridge to it and it is live, so not a foreground CLI session;
+  - its recorded image inbox is on or unknown: `options.image_inbox` true in `enclave ps --json`,
+    or no `options` at all. `options` without `image_inbox`, or with it false, means no inbox. Why
+    unknown counts: Enclave omits `options` when it cannot read a session's provenance, yet finds
+    its inbox by a container label. Until an inventory check lists it, a session HomeShell starts
+    or restarts has what its run resolved: the flag passed, else Enclave's config.
+- **Attach delivery:** HomeShell runs `enclave img import --session <container> --json -` in the
+  session's working directory with the image on stdin, reads the path from the envelope's `.path`
+  (`kind: "image-import"`, checked like the other JSON contracts), then types the path and one
+  space into the agent's input, without Enter. A failed import's `error:` line on stderr is the
+  `500` message, as Enclave words it.
+- **One attach per project at a time,** import and delivery together (`provider/enclave/image.go`).
+  Why: the inbox is shared by the project's sessions, and a native paste takes its newest image.
+  An `enclave img import` run in a terminal at the same moment is not covered; its image can land
+  between HomeShell's import and delivery.
 - **CLI session settings:** a CLI session has no recorded launch config (a session HomeShell started
   that is started again in a terminal under its name drops its own), so its restart or Continue
   starts with the options Enclave recorded for the container, as far as the create form models

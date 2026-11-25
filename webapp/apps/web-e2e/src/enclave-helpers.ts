@@ -177,6 +177,8 @@ export function cliContainer(
     background: boolean;
     tool?: string;
     options?: Record<string, unknown>;
+    /** Whether the container has the image inbox when it records no options (Enclave's container label). */
+    imageInboxLabel?: boolean;
     /** The project folder Enclave reports, when `dir` is a worktree of it. */
     projectDir?: string;
   },

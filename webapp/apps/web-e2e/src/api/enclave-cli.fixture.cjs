@@ -119,6 +119,57 @@ async function listSessions() {
   console.log(JSON.stringify(containers));
 }
 
+// `enclave img import --session <container> --json -` (enclave#230): the image
+// on stdin goes into the session's project inbox. A container has the inbox when
+// its recorded options say so; without options, as its label says
+// (`imageInboxLabel`), the way Enclave finds the inbox of a session whose
+// provenance it cannot read. On failure stdout stays empty and stderr carries
+// an `error:` line.
+async function importImage() {
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  const image = Buffer.concat(chunks);
+  const name = flag('--session');
+  const container = readContainer(name);
+  const fail = (message) => {
+    console.error('ok: looking up the session');
+    console.error(`error: ${message}`);
+    process.exit(1);
+  };
+  if (!args.includes('--json') || !args.includes('-'))
+    fail('the fixture imports only `--json -`');
+  if (!container || container.status !== 'running')
+    fail(`no running session matches "${name}"`);
+  const hasInbox = container.options
+    ? container.options.image_inbox === true
+    : container.imageInboxLabel === true;
+  if (!hasInbox)
+    fail(
+      `session "${container.session}" (${name}) has no image inbox; restart it with --image-inbox`,
+    );
+  let extension;
+  if (image.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')))
+    extension = 'png';
+  else if (image.subarray(0, 3).equals(Buffer.from('ffd8ff', 'hex')))
+    extension = 'jpg';
+  else fail('stdin is not a PNG or JPEG image');
+  const imports = fs.existsSync(fixturePath('imports'))
+    ? fs.readFileSync(fixturePath('imports'), 'utf8').split('\n').length
+    : 1;
+  const file = `20261125T120000Z-${String(imports).padStart(8, '0')}.${extension}`;
+  fs.appendFileSync(fixturePath('imports'), `${file}\n`);
+  console.error(`ok: Imported host image for ${container.dir}`);
+  console.log(
+    JSON.stringify({
+      schemaVersion: '1',
+      kind: 'image-import',
+      path: `/mnt/host-images/${file}`,
+      project: { dir: container.projectDir ?? container.dir, hash: '0123456789ab' },
+      session: { name, sessionName: container.session ?? '' },
+    }),
+  );
+}
+
 async function stopSession(name) {
   if (fs.existsSync(fixturePath(`block-stop-${name}`))) {
     fs.writeFileSync(fixturePath(`stop-blocked-${name}`), '');
@@ -150,6 +201,8 @@ async function attachSession(name) {
   process.stdin.setRawMode(true);
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (chunk) => {
+    // The agent's input, byte for byte, for a test to read what was typed.
+    fs.appendFileSync(fixturePath(`input-${name}`), chunk);
     const container = readContainer(name);
     if (!container || container.status !== 'running') return;
     if (chunk.includes('\x1b[A')) {
@@ -233,6 +286,10 @@ async function main() {
       break;
     case 'attach':
       await attachSession(args[1]);
+      break;
+    case 'img':
+      if (args[1] !== 'import') throw new Error(`unsupported operation: img ${args[1]}`);
+      await importImage();
       break;
     default:
       throw new Error(`unsupported operation: ${args[0]}`);

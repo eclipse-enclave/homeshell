@@ -427,6 +427,9 @@ the agent's PTY and serves screen snapshots on a unix socket; the wire format is
   contract (`provider/enclave/cli.go` `checkContract`), including one where `--pass-env +NAME`
   does not add to the configured list. The same `config --json` answer tells whether it has the
   image inbox (`image_inbox` reported), kept per binary like the verdict.
+- An attached image goes in through `enclave img import`, and its path is typed through the bridge
+  as raw input, without the Enter a prompt adds (`BridgeRuntime.SendRaw`); see
+  [PROVIDERS.md](PROVIDERS.md#eclipse-enclave).
 - A session's environment variables go in as `--pass-env +NAME`, never as a list. Why: a list
   replaces the user's configured `pass_env`, and Enclave's `no_api_key` and ephemeral gates apply
   only to configured entries.

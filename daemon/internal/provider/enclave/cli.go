@@ -80,6 +80,12 @@ type CLI interface {
 	// list --json`. Which of them a session gets is its `features` option, from
 	// Config.
 	Features(ctx context.Context, projectDir string) ([]sandboxschema.Feature, error)
+
+	// ImportImage imports image into the image inbox of the session's project,
+	// via `enclave img import --session <container> --json -` run in dir, and
+	// returns the image's path inside the container. A failed import's error is
+	// Enclave's own `error:` message.
+	ImportImage(ctx context.Context, dir, container string, image []byte) (string, error)
 }
 
 // RunOpts are the options passed to `enclave run`.
@@ -735,6 +741,63 @@ func (c *realCLI) Features(ctx context.Context, projectDir string) ([]sandboxsch
 		return nil, err
 	}
 	return doc.Extensions, nil
+}
+
+func (c *realCLI) ImportImage(ctx context.Context, dir, container string, image []byte) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, cmdTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, c.binary(), "img", "import", "--session", container, "--json", "-")
+	cmd.Dir = dir
+	cmd.Stdin = bytes.NewReader(image)
+	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("%s img import: %w", binaryName, ctx.Err())
+	}
+	if err != nil {
+		if message := enclaveError(err); message != "" {
+			return "", errors.New(message)
+		}
+		return "", fmt.Errorf("%s img import: %w%s", binaryName, err, stderrOf(err))
+	}
+	return parseImageImport(out)
+}
+
+// enclaveError is the message of the `error: ...` line a failed Enclave command
+// wrote to stderr, without its prefix; "" when there is none. Enclave's other
+// stderr lines (`ok: ...`) are informational.
+func enclaveError(err error) string {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return ""
+	}
+	for line := range strings.Lines(string(exitErr.Stderr)) {
+		if message, ok := strings.CutPrefix(strings.TrimSpace(line), "error:"); ok {
+			if message = strings.TrimSpace(message); message != "" {
+				return message
+			}
+		}
+	}
+	return ""
+}
+
+// parseImageImport reads the image's container path from the envelope `enclave
+// img import --json` prints.
+func parseImageImport(out []byte) (string, error) {
+	var doc struct {
+		envelope
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		return "", fmt.Errorf("%s img import: parsing its JSON: %w", binaryName, err)
+	}
+	if err := doc.check("img import", "image-import"); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(doc.Path) == "" {
+		return "", fmt.Errorf("%s img import: no image path in its output", binaryName)
+	}
+	return doc.Path, nil
 }
 
 func (c *realCLI) Stop(ctx context.Context, containerName string) error {
