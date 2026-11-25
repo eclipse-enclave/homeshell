@@ -213,6 +213,16 @@ a background one and runs it as its own; a foreground one runs in the user's ter
 The container an Enclave session runs in, together with its settings, which Enclave owns and
 HomeShell only passes through.
 
+**Image inbox**:
+Enclave's per-project folder of host images, mounted read-only into the sandbox of every session
+of that project that has it turned on. Enclave owns it; HomeShell only imports into it.
+_Avoid_: image folder, screenshot dir
+
+**Attach (an image)**:
+Getting a host image to a session's agent: imported into its image inbox, then handed over by
+native paste or as the image's path in the agent's input, without submitting it.
+_Avoid_: upload, share (for the action)
+
 ### Releases
 
 **Release channel**:
