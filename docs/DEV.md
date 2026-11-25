@@ -478,6 +478,13 @@ pull requests never exercise them.
 - `bash scripts/release.test.sh` (part of `make test`) checks version derivation, asset naming
   and the manifest check against throwaway repositories.
 
+### App icon
+
+- `packaging/homeshell.svg` is the source. `make icon` renders it to
+  `packaging/linux/homeshell.png` with `rsvg-convert` (Homebrew or distro `librsvg`); commit both.
+- The `.deb`/`.rpm` install that PNG, and `packaging/macos/build-icns.sh` scales it to every
+  `.icns` size for `make dmg`. Why it is committed: the release builds then need no SVG renderer.
+
 ### Shipping a new binary
 
 A binary in `make build` is not yet in any artifact. Add it to every path that assembles one:

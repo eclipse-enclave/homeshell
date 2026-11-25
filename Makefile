@@ -25,7 +25,7 @@ DESKTOP_BIN := $(BIN_DIR)/homeshell-desktop
 WEB_DIST  := webapp/apps/web/dist
 EMBED_DIR := daemon/internal/webui/dist
 
-.PHONY: all help setup check-tools build build-webapp embed build-daemon build-desktop check-webview check-desktop-linkage archive deb deb-quick rpm dmg run run-local run-desktop run-desktop-local dev dev-local dev-demo dev-daemon dev-update dev-update-build dev-update-server dev-update-daemon dev-webapp test test-docs-lint test-release-scripts test-e2e check-dev-targets print-dev-token lint docs-lint fmt clean
+.PHONY: all help setup check-tools build build-webapp embed build-daemon build-desktop check-webview check-desktop-linkage archive deb deb-quick rpm dmg icon run run-local run-desktop run-desktop-local dev dev-local dev-demo dev-daemon dev-update dev-update-build dev-update-server dev-update-daemon dev-webapp test test-docs-lint test-release-scripts test-e2e check-dev-targets print-dev-token lint docs-lint fmt clean
 
 all: build
 
@@ -139,6 +139,10 @@ run-local: build
 # collision rather than an attach when a repo-local daemon is already up.
 HOMESHELL_HOME_DIR ?=
 HOMESHELL_ADDR     ?=
+
+## icon         render packaging/homeshell.svg to packaging/linux/homeshell.png (needs rsvg-convert)
+icon:
+	rsvg-convert -w 512 -h 512 packaging/homeshell.svg -o packaging/linux/homeshell.png
 
 ## archive      build the standalone dist/homeshell-<os>-<arch>.tar.gz (web UI embedded)
 ##              Usage: make archive [GOOS=linux GOARCH=arm64] [BUILD_CHANNEL=rolling]
