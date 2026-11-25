@@ -68,7 +68,7 @@ var sessionOptions = []provider.SessionSchemaOption{
 
 // sandboxedSchema is the "sandboxed" option's create form: a model, and the
 // Enclave provider's sandbox group over a demo Enclave config that lists a
-// directory and a port of its own.
+// directory and a port of its own, from an Enclave that has the image inbox.
 var sandboxedSchema = must(sandboxschema.With(
 	json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"model":{"type":"string","enum":["opus","sonnet"],"default":"sonnet","title":"Model"}}}`),
 	sandboxschema.Schema(sandboxschema.Base{
@@ -77,7 +77,9 @@ var sandboxedSchema = must(sandboxschema.With(
 			"add_readonly_dirs": {Value: json.RawMessage(`["/home/demo/shared"]`), Source: "global"},
 			"ports":             {Value: json.RawMessage(`["3000"]`), Source: "project"},
 			"host_config":       {Value: json.RawMessage(`"none"`), Source: "default"},
+			"image_inbox":       {Value: json.RawMessage(`false`), Source: "default"},
 		},
+		ImageInbox: true,
 		Features: []sandboxschema.Feature{
 			{Name: "devtools", Description: "Core development tools (vim, htop, ripgrep, etc.)"},
 			{Name: "node-dev", Description: "Node.js development tools (typescript, eslint, prettier, etc.)"},

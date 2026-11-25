@@ -88,7 +88,9 @@ func seededModels(t *testing.T, agent string) []string {
 // --- fake CLI for tests ---
 
 type fakeCLI struct {
-	available  bool
+	available bool
+	// imageInbox is whether this Enclave has the image inbox (CLI.ImageInbox).
+	imageInbox bool
 	containers map[string][]Container // project dir → containers
 	all        map[string][]Container // project dir → `ps --all` containers
 
@@ -163,6 +165,8 @@ func (f *fakeCLI) ExecOutput(_ context.Context, _, _, tool string, argv []string
 	}
 	return []byte(f.execOutput[tool]), nil
 }
+
+func (f *fakeCLI) ImageInbox() bool { return f.imageInbox }
 
 func (f *fakeCLI) Available(context.Context) (bool, error) {
 	if !f.available {

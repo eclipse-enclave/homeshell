@@ -125,6 +125,62 @@ func TestAvailableFindsEnclaveOnPath(t *testing.T) {
 	}
 }
 
+// The image inbox is detected from the contract check's own `config --json`:
+// an Enclave that resolves `image_inbox` has it (enclave#230), one that does
+// not is still available, without it. No further process is run to tell.
+func TestAvailableDetectsTheImageInbox(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{"an Enclave before the image inbox", configEnvelope, false},
+		{"an Enclave with it off", `{"schemaVersion":"1","kind":"config","options":{"pass_env":{"value":["HOMESHELL_CONTRACT_PROBE"]},"image_inbox":{"value":false,"source":"default"}}}`, true},
+		{"an Enclave with it on", `{"schemaVersion":"1","kind":"config","options":{"pass_env":{"value":["HOMESHELL_CONTRACT_PROBE"]},"image_inbox":{"value":true,"source":"global"}}}`, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			calls := filepath.Join(t.TempDir(), "calls")
+			script := "#!/bin/sh\necho x >> '" + calls + "'\necho '" + tt.output + "'\n"
+			if err := os.WriteFile(filepath.Join(dir, "enclave"), []byte(script), 0o755); err != nil {
+				t.Fatalf("writing stub binary: %v", err)
+			}
+			t.Setenv("PATH", dir)
+			cli := &realCLI{}
+			if cli.ImageInbox() {
+				t.Error("ImageInbox() = true before Enclave was asked")
+			}
+			if ok, err := cli.Available(context.Background()); !ok || err != nil {
+				t.Fatalf("Available() = %v, %v; want true, <nil>", ok, err)
+			}
+			if got := cli.ImageInbox(); got != tt.want {
+				t.Errorf("ImageInbox() = %v; want %v", got, tt.want)
+			}
+			if out, _ := os.ReadFile(calls); strings.Count(string(out), "x") != 1 {
+				t.Errorf("enclave ran %d times; want only the contract check", strings.Count(string(out), "x"))
+			}
+		})
+	}
+}
+
+// An Enclave refused by the contract check has no image inbox, whatever it says.
+func TestImageInboxNeedsTheContract(t *testing.T) {
+	dir := t.TempDir()
+	output := `{"schemaVersion":"1","kind":"config","options":{"pass_env":{"value":["+HOMESHELL_CONTRACT_PROBE"]},"image_inbox":{"value":true}}}`
+	if err := os.WriteFile(filepath.Join(dir, "enclave"), []byte("#!/bin/sh\necho '"+output+"'\n"), 0o755); err != nil {
+		t.Fatalf("writing stub binary: %v", err)
+	}
+	t.Setenv("PATH", dir)
+	cli := &realCLI{}
+	if ok, _ := cli.Available(context.Background()); ok {
+		t.Fatal("Available() = true for an Enclave before --pass-env +NAME")
+	}
+	if cli.ImageInbox() {
+		t.Error("ImageInbox() = true for an Enclave the contract check refused")
+	}
+}
+
 // TestAvailableRefusesEnclaveBeforeVersionedJSON: an Enclave from before
 // enclave#164 prints `config --json` without an envelope, so it is unavailable
 // with a reason naming the fix. Updating it in place makes it available without

@@ -425,7 +425,8 @@ the agent's PTY and serves screen snapshots on a unix socket; the wire format is
   around `enclave attach <container>`. State, input and open all go through that bridge.
 - The `enclave` CLI's JSON output is versioned; the provider refuses an Enclave too old for its
   contract (`provider/enclave/cli.go` `checkContract`), including one where `--pass-env +NAME`
-  does not add to the configured list.
+  does not add to the configured list. The same `config --json` answer tells whether it has the
+  image inbox (`image_inbox` reported), kept per binary like the verdict.
 - A session's environment variables go in as `--pass-env +NAME`, never as a list. Why: a list
   replaces the user's configured `pass_env`, and Enclave's `no_api_key` and ephemeral gates apply
   only to configured entries.

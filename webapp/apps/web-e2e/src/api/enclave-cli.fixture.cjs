@@ -14,6 +14,18 @@ function flag(name, fallback = '') {
   return index < 0 ? fallback : args[index + 1];
 }
 
+// The image inbox as Enclave resolves it for this run (enclave#230): the
+// configured value (`image-inbox-on`), unless `--image-inbox[=false]` overrides
+// it. Undefined for an Enclave before the inbox (`no-image-inbox`).
+function imageInbox() {
+  if (fs.existsSync(fixturePath('no-image-inbox'))) return undefined;
+  if (args.includes('--image-inbox')) return { value: true, source: 'cli' };
+  if (args.includes('--image-inbox=false'))
+    return { value: false, source: 'cli' };
+  const configured = fs.existsSync(fixturePath('image-inbox-on'));
+  return { value: configured, source: configured ? 'global' : 'default' };
+}
+
 function readContainer(name) {
   try {
     return JSON.parse(fs.readFileSync(containerPath(name), 'utf8'));
@@ -55,6 +67,7 @@ async function runSession() {
     );
   }
   fs.writeFileSync(conversation, '');
+  const inbox = imageInbox();
   saveContainer({
     name,
     session,
@@ -63,6 +76,8 @@ async function runSession() {
     background: true,
     text: 'Ready',
     generation: Date.now(),
+    // The options Enclave records for the container, as far as this peer models them.
+    ...(inbox ? { options: { image_inbox: inbox.value } } : {}),
   });
   fs.writeFileSync(fixturePath(`gateway-${name}`), '');
   fs.rmSync(fixturePath(`attached-${name}`), { force: true });
@@ -191,15 +206,13 @@ async function main() {
           ? [literal ? args[i + 1] : args[i + 1].replace(/^\+/, '')]
           : [],
       );
+      const options = {};
+      if (passEnv.length)
+        options.pass_env = { kind: 'string_slice', value: passEnv };
+      const inbox = imageInbox();
+      if (inbox) options.image_inbox = { kind: 'bool', ...inbox };
       console.log(
-        JSON.stringify({
-          schemaVersion: '1',
-          kind: 'config',
-          options: passEnv.length
-            ? { pass_env: { kind: 'string_slice', value: passEnv } }
-            : {},
-          valid: true,
-        }),
+        JSON.stringify({ schemaVersion: '1', kind: 'config', options, valid: true }),
       );
       break;
     }

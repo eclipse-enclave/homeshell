@@ -252,12 +252,17 @@ container is Enclave's to manage.
   and not passed. HomeShell does not yet ask `enclave network print --json` for the network policy
   mode (`enclave network set-mode`), so a session under an `unrestricted` mode runs unrestricted
   whatever the checkbox says; the flag cannot override that mode.
+- **Image inbox** in the Container settings passes `--image-inbox`, or `--image-inbox=false` to turn
+  it off for a session whose Enclave config turns it on. It defaults to the config's `image_inbox`.
+  It is offered only when the installed `enclave` has the inbox, as the
+  [contract check](ARCHITECTURE.md#enclave-sessions) tells. The qemu backend is not modelled: Enclave
+  refuses the flag there, and its error shows on the failed session.
 - **CLI session settings:** a CLI session has no recorded launch config (a session HomeShell started
   that is started again in a terminal under its name drops its own), so its restart or Continue
   starts with the options Enclave recorded for the container, as far as the create form models
-  them (features, directories, ports, bridge ports, all network, domains, host config). They
-  become its launch config, so [drift](ARCHITECTURE.md#enclave-sessions) and the settings editor
-  apply from then on.
+  them (features, directories, ports, bridge ports, all network, domains, host config, image
+  inbox). They become its launch config, so [drift](ARCHITECTURE.md#enclave-sessions) and the
+  settings editor apply from then on.
   Other options and the tool's arguments restart as Enclave resolves them now (GAP 11).
 - **CLI gaps** that limit it are in `provider/enclave/gaps.go`: no container event stream, `stop`
   also removes, no `start`, no published-port URL (so no web-IDE link), no `logs`, no shell

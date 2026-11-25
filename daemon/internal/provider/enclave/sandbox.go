@@ -122,7 +122,7 @@ func (p *Provider) sandboxBase(ctx context.Context, dir, tool string) (sandboxsc
 	if err != nil {
 		return sandboxschema.Base{}, err
 	}
-	return sandboxschema.Base{Config: config.Options, Features: features}, nil
+	return sandboxschema.Base{Config: config.Options, Features: features, ImageInbox: p.cli.ImageInbox()}, nil
 }
 
 // sandboxChoice is the sandbox group as a create form submits it. A field left
@@ -135,6 +135,7 @@ type sandboxChoice struct {
 	AllowAllNetwork *bool               `json:"allowAllNetwork,omitempty"`
 	AllowDomains    []string            `json:"allowDomains,omitempty"`
 	HostConfig      *bool               `json:"hostConfig,omitempty"`
+	ImageInbox      *bool               `json:"imageInbox,omitempty"`
 }
 
 // unavailableSandboxSchema stands in for the sandbox group when Enclave could not
@@ -148,7 +149,7 @@ var unavailableSandboxSchema = json.RawMessage(`{"type":"object","title":"Contai
 func (choice sandboxChoice) isEmpty() bool {
 	return choice.Features == nil && len(choice.Dirs) == 0 && len(choice.Ports) == 0 &&
 		len(choice.BridgePorts) == 0 && choice.AllowAllNetwork == nil && len(choice.AllowDomains) == 0 &&
-		choice.HostConfig == nil
+		choice.HostConfig == nil && choice.ImageInbox == nil
 }
 
 // sandboxOf reads the sandbox group out of a session config.
@@ -233,6 +234,14 @@ func sandboxFlags(choice sandboxChoice, base sandboxschema.Base) []string {
 		}
 		flags = append(flags, "--host-config", value)
 	}
+
+	if choice.ImageInbox != nil && *choice.ImageInbox != config.Bool("image_inbox") {
+		if *choice.ImageInbox {
+			flags = append(flags, "--image-inbox")
+		} else {
+			flags = append(flags, "--image-inbox=false")
+		}
+	}
 	return flags
 }
 
@@ -304,6 +313,9 @@ func sandboxChoiceFromOptions(running map[string]json.RawMessage, base sandboxsc
 		if passthrough := hostConfig == "passthrough"; passthrough != (base.String("host_config") == "passthrough") {
 			choice.HostConfig = &passthrough
 		}
+	}
+	if imageInbox, ok := decode[bool](running, "image_inbox"); ok && imageInbox != base.Bool("image_inbox") {
+		choice.ImageInbox = &imageInbox
 	}
 	return choice
 }

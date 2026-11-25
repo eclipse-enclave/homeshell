@@ -164,6 +164,36 @@ func TestSandboxFlagsForAllNetwork(t *testing.T) {
 	}
 }
 
+// A session can turn the image inbox on, or off against Enclave's config; at the
+// configured value no flag is passed.
+func TestSandboxFlagsForImageInbox(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured bool
+		choice     sandboxChoice
+		want       []string
+	}{
+		{name: "left to Enclave", choice: sandboxChoice{}},
+		{name: "on for one session", choice: sandboxChoice{ImageInbox: ptr(true)}, want: []string{"--image-inbox"}},
+		{name: "off as configured", choice: sandboxChoice{ImageInbox: ptr(false)}},
+		{name: "on as configured", configured: true, choice: sandboxChoice{ImageInbox: ptr(true)}},
+		{name: "off for one session against the config", configured: true,
+			choice: sandboxChoice{ImageInbox: ptr(false)}, want: []string{"--image-inbox=false"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := testBase()
+			base.ImageInbox = true
+			if tt.configured {
+				base.Config["image_inbox"] = option(`true`, "global")
+			}
+			if got := sandboxFlags(tt.choice, base); !slices.Equal(got, tt.want) {
+				t.Errorf("sandboxFlags = %q; want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // The features Enclave resolves for the tool produce no flag, in any order.
 func TestSandboxFlagsAgainstTheToolsFeatureSelection(t *testing.T) {
 	base := testBase()
@@ -183,10 +213,10 @@ func TestSandboxOf(t *testing.T) {
 	if _, ok := sandboxOf(json.RawMessage(`{"model":"opus"}`)); ok {
 		t.Error("a config without the group: want no sandbox")
 	}
-	choice, ok := sandboxOf(json.RawMessage(`{"enclave":{"features":["devtools"],"bridgePorts":[5432],"allowAllNetwork":true,"hostConfig":true}}`))
+	choice, ok := sandboxOf(json.RawMessage(`{"enclave":{"features":["devtools"],"bridgePorts":[5432],"allowAllNetwork":true,"hostConfig":true,"imageInbox":true}}`))
 	if !ok || choice.Features == nil || !slices.Equal(*choice.Features, []string{"devtools"}) ||
 		!slices.Equal(choice.BridgePorts, []int{5432}) || choice.HostConfig == nil || !*choice.HostConfig ||
-		choice.AllowAllNetwork == nil || !*choice.AllowAllNetwork {
+		choice.AllowAllNetwork == nil || !*choice.AllowAllNetwork || choice.ImageInbox == nil || !*choice.ImageInbox {
 		t.Errorf("sandboxOf = %+v, %v", choice, ok)
 	}
 }
@@ -320,6 +350,40 @@ func TestSessionSchemasCarryTheSandboxGroup(t *testing.T) {
 	}
 	if cli.configCalls != calls {
 		t.Errorf("enclave config asked %d more times; want the answer remembered", cli.configCalls-calls)
+	}
+}
+
+// The image inbox is offered only by an Enclave that has it, which the contract
+// check tells, so the form never offers a flag the installed Enclave refuses.
+func TestSessionSchemasOfferTheImageInboxOnlyWhenEnclaveHasIt(t *testing.T) {
+	for _, supported := range []bool{false, true} {
+		cli := &fakeCLI{available: true, tools: []string{"codex"}, imageInbox: supported}
+		p := sandboxProvider(t, cli)
+		options, err := p.SessionSchemas(context.Background(), provider.WorkstreamRef{ProjectID: "proj-1", WorkstreamID: "ws1"})
+		if err != nil {
+			t.Fatalf("SessionSchemas: %v", err)
+		}
+		_, props := schemaProps(t, options[0].Schema)
+		fields, _ := props[sandboxschema.Key]["properties"].(map[string]any)
+		if _, offered := fields["imageInbox"]; offered != supported {
+			t.Errorf("with the image inbox supported %v, imageInbox offered = %v", supported, offered)
+		}
+	}
+}
+
+// A session recorded with the image inbox is refused, field by field, by an
+// Enclave without it, rather than started with a flag that Enclave rejects.
+func TestSandboxFlagsForRefusesTheImageInboxWithoutIt(t *testing.T) {
+	cli := &fakeCLI{available: true}
+	p := sandboxProvider(t, cli)
+	_, err := p.sandboxFlagsFor(context.Background(), "/tmp/project/wt", "codex", json.RawMessage(`{"enclave":{"imageInbox":true}}`))
+	if provider.FieldErrors(err) == nil {
+		t.Errorf("sandboxFlagsFor = %v; want the setting refused as a field", err)
+	}
+	cli.imageInbox = true
+	flags, err := p.sandboxFlagsFor(context.Background(), "/tmp/project/wt", "codex", json.RawMessage(`{"enclave":{"imageInbox":true}}`))
+	if err != nil || !slices.Equal(flags, []string{"--image-inbox"}) {
+		t.Errorf("with the image inbox, sandboxFlagsFor = %q, %v; want --image-inbox", flags, err)
 	}
 }
 
@@ -511,6 +575,9 @@ func TestSandboxChoiceFromOptions(t *testing.T) {
 		{name: "all network allowed", running: map[string]string{"allow_all_network": `true`},
 			want: sandboxChoice{AllowAllNetwork: ptr(true)}},
 		{name: "network restricted as configured", running: map[string]string{"allow_all_network": `false`}},
+		{name: "image inbox on", running: map[string]string{"image_inbox": `true`},
+			want: sandboxChoice{ImageInbox: ptr(true)}},
+		{name: "image inbox off as configured", running: map[string]string{"image_inbox": `false`}},
 		{name: "options the form does not model", running: map[string]string{"yolo": `true`, "backend": `"auto"`}},
 	}
 	for _, tt := range tests {
@@ -533,6 +600,9 @@ func TestSandboxChoiceConfigHasNoNulls(t *testing.T) {
 	}
 	if got := (sandboxChoice{AllowAllNetwork: ptr(false)}).config(); string(got) != `{"enclave":{"allowAllNetwork":false}}` {
 		t.Errorf("config = %s; want a restricted network kept, not dropped as unset", got)
+	}
+	if got := (sandboxChoice{ImageInbox: ptr(false)}).config(); string(got) != `{"enclave":{"imageInbox":false}}` {
+		t.Errorf("config = %s; want an image inbox turned off kept, not dropped as unset", got)
 	}
 	if got := (sandboxChoice{}).config(); string(got) != `{}` {
 		t.Errorf("empty config = %s; want {}", got)

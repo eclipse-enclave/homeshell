@@ -36,6 +36,11 @@ type CLI interface {
 	// Available reports whether the enclave binary can be found.
 	Available(ctx context.Context) (bool, error)
 
+	// ImageInbox reports whether the binary Available last checked has the image
+	// inbox (`--image-inbox` and `img import`), as its contract check found. It
+	// runs nothing; false before Available has passed.
+	ImageInbox() bool
+
 	// ListSessions returns the running containers via `enclave ps --json`. A
 	// failed call is an error, so a caller can tell "not listed" from "could not
 	// list".
@@ -249,6 +254,8 @@ type binaryIdentity struct {
 type contractCheck struct {
 	binary binaryIdentity
 	err    error
+	// imageInbox is whether a binary that passed has the image inbox.
+	imageInbox bool
 	// failed marks a call that failed, which says nothing about the contract, and
 	// at when it was made.
 	failed bool
@@ -261,8 +268,10 @@ type contractCheck struct {
 // to do instead. It also refuses one from before `--pass-env +NAME`
 // (eclipse-enclave/enclave#181), which SessionFlags relies on. Asked of
 // `config --json --pass-env +<probe>` in the temp directory, which needs no
-// Docker and is in no repository. The verdict is kept until the binary changes,
-// so updating Enclave needs no daemon restart. A call that fails is no verdict:
+// Docker and is in no repository. The same answer tells whether the binary has
+// the image inbox (enclave#230): it resolves `image_inbox` (ImageInbox). The
+// verdict is kept until the binary changes, so updating Enclave needs no daemon
+// restart. A call that fails is no verdict:
 // it is reused only for failedAnswerTTL, as Enclave's other failed answers are.
 func (c *realCLI) checkContract(ctx context.Context, path string) error {
 	info, err := os.Stat(path)
@@ -298,8 +307,15 @@ func (c *realCLI) checkContract(ctx context.Context, path string) error {
 	} else if err = doc.check("config --json", "config"); err == nil && !slices.Contains(doc.Options.List("pass_env"), passEnvProbe) {
 		err = fmt.Errorf("%s config --json: --pass-env +NAME does not add to the configured list; update Enclave", binaryName)
 	}
-	c.checked = contractCheck{binary: binary, err: err}
+	_, imageInbox := doc.Options["image_inbox"]
+	c.checked = contractCheck{binary: binary, err: err, imageInbox: err == nil && imageInbox}
 	return err
+}
+
+func (c *realCLI) ImageInbox() bool {
+	c.checkMu.Lock()
+	defer c.checkMu.Unlock()
+	return c.checked.imageInbox
 }
 
 // passEnvProbe is the variable checkContract adds with `--pass-env +NAME`.
