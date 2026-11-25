@@ -99,12 +99,20 @@ const ONLY_IMAGES = 'Only PNG or JPEG images can be attached';
 const STILL_ATTACHING = 'Still attaching the previous images';
 
 /**
- * The files a paste into the send box attaches: all its files when one is an
- * image and the clipboard holds no plain text, otherwise none, and the paste
- * stays ordinary text. Why: copying from a web page often puts an image beside
- * the text, and pasting that text must never upload something unexpectedly.
+ * What the row tells a user whose paste listed files but handed none over.
+ * WebKitGTK, the Linux desktop app's webview, does this with every image.
  */
-function pastedImages(data: DataTransfer | null): File[] {
+const PASTE_UNREADABLE =
+  "Pasting images doesn't work here: drop the image on the row or use Attach image";
+
+/**
+ * What a paste into the send box attaches: all its files when one is an image
+ * and the clipboard holds no plain text, otherwise none, and the paste stays
+ * ordinary text. Why: copying from a web page often puts an image beside the
+ * text, and pasting that text must never upload something unexpectedly.
+ * 'unreadable' when, with no text, it lists files but hands none over.
+ */
+function pastedImages(data: DataTransfer | null): File[] | 'unreadable' {
   if (!data || data.getData('text/plain') !== '') return [];
   let files = Array.from(data.files ?? []);
   // Some webviews list a pasted image only among the clipboard's items.
@@ -113,6 +121,9 @@ function pastedImages(data: DataTransfer | null): File[] {
       .filter((item) => item.kind === 'file')
       .map((item) => item.getAsFile())
       .filter((file): file is File => file !== null);
+  }
+  if (files.length === 0 && Array.from(data.types).includes('Files')) {
+    return 'unreadable';
   }
   return files.some((file) => file.type.startsWith('image/')) ? files : [];
 }
@@ -616,14 +627,19 @@ export function SessionRow({
 
   const handlePromptPaste = (event: ClipboardEvent) => {
     if (!attachable) return;
-    const files = pastedImages(event.clipboardData);
-    if (files.length === 0) return;
+    const pasted = pastedImages(event.clipboardData);
+    if (pasted === 'unreadable') {
+      event.preventDefault();
+      onAttachError?.(PASTE_UNREADABLE);
+      return;
+    }
+    if (pasted.length === 0) return;
     event.preventDefault();
     if (attachBlocked) {
       onAttachError?.(attachBlocked);
       return;
     }
-    void attachFiles(files);
+    void attachFiles(pasted);
   };
 
   // Files dragged over the row: 'ready' to attach them, 'refused' when the

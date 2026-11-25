@@ -2200,6 +2200,31 @@ describe('SessionRow: pasting and dropping images', () => {
       );
     });
 
+    it('says how else to attach when the clipboard lists files it does not hand over', () => {
+      // WebKitGTK, the Linux desktop app's webview: an image paste reports the
+      // type Files, but neither files nor items hold it.
+      const { onAttachImage, onAttachError } = renderAttachable();
+      const data = { ...clipboard([]), types: ['Files'] };
+
+      const notPrevented = fireEvent.paste(promptBox(), { clipboardData: data });
+
+      expect(notPrevented).toBe(false);
+      expect(onAttachImage).not.toHaveBeenCalled();
+      expect(onAttachError).toHaveBeenCalledWith(
+        "Pasting images doesn't work here: drop the image on the row or use Attach image",
+      );
+    });
+
+    it('stays quiet about unreadable files when the paste carries text', () => {
+      const { onAttachError } = renderAttachable();
+      const data = { ...clipboard([], 'some text'), types: ['Files', 'text/plain'] };
+
+      const notPrevented = fireEvent.paste(promptBox(), { clipboardData: data });
+
+      expect(notPrevented).toBe(true);
+      expect(onAttachError).not.toHaveBeenCalled();
+    });
+
     it('refuses an image format the session does not take, saying so', () => {
       const { onAttachImage, onAttachError } = renderAttachable();
 
