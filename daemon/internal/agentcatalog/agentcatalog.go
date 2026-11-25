@@ -37,13 +37,15 @@ const FileName = "agents.json"
 // schemaVersion is the catalog file's schema. Bump it when a release must
 // change existing files (new default agents or models, a backfilled field),
 // and add the step to upgrades.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // upgrades holds, per schema version, the step that brings a file from the
 // version before it. A step names what it adds (appendDefaultAgents,
 // appendDefaultModels) rather than diffing against Defaults, so an older
 // default the user deleted stays deleted.
-var upgrades = map[int]func(File) File{}
+var upgrades = map[int]func(File) File{
+	2: fillDefaultImagePaste,
+}
 
 // Model is one offered model: the agent it belongs to and the model ID handed to
 // that agent.
@@ -200,6 +202,22 @@ func appendDefaultModels(file File, modelIDs ...string) File {
 	return file
 }
 
+// fillDefaultImagePaste is schema 2, which introduced ImagePaste: it gives the
+// shipped agents that paste images natively the formats they paste, unless the
+// agent already lists some. Named here rather than read from Defaults, so a later
+// default does not reach files through this step. Any other agent, such as one
+// the user added, keeps pasting none.
+func fillDefaultImagePaste(file File) File {
+	both := []string{agentspec.ImagePNG, agentspec.ImageJPEG}
+	formats := map[string][]string{"claude": both, "pi": both, "opencode": {agentspec.ImagePNG}}
+	for i, agent := range file.Agents {
+		if len(agent.ImagePaste) == 0 && formats[agent.ID] != nil {
+			file.Agents[i].ImagePaste = slices.Clone(formats[agent.ID])
+		}
+	}
+	return file
+}
+
 // validateFile applies the rules the edit methods enforce one row at a time to a
 // whole file, for one that was edited by hand.
 func validateFile(file File) error {
@@ -251,7 +269,8 @@ func validateFile(file File) error {
 
 // normalize gives every collection a non-nil value and drops empty choice lists,
 // so a file read from disk serves the same JSON the API promises: an array for
-// settings (never null) and null for free-text choices.
+// settings (never null), and null for free-text choices and for an agent that
+// pastes no images.
 func normalize(file File) File {
 	if file.Agents == nil {
 		file.Agents = []agentspec.Agent{}
@@ -271,6 +290,9 @@ func normalizeAgent(agent agentspec.Agent) agentspec.Agent {
 	}
 	if len(agent.ListModels) == 0 {
 		agent.ListModels = nil
+	}
+	if len(agent.ImagePaste) == 0 {
+		agent.ImagePaste = nil
 	}
 	for i := range agent.Settings {
 		if len(agent.Settings[i].Choices) == 0 {
@@ -320,6 +342,7 @@ func cloneFile(file File) File {
 // handed cannot reach into the catalog.
 func cloneAgent(agent agentspec.Agent) agentspec.Agent {
 	agent.ListModels = slices.Clone(agent.ListModels)
+	agent.ImagePaste = slices.Clone(agent.ImagePaste)
 	settings := make([]agentspec.Setting, 0, len(agent.Settings))
 	for _, setting := range agent.Settings {
 		setting.Choices = slices.Clone(setting.Choices)
@@ -649,6 +672,12 @@ func validateAgent(agent agentspec.Agent) error {
 	}
 	if strings.TrimSpace(agent.Display) == "" {
 		return fmt.Errorf("%w: agent %q needs a display name", ErrInvalid, agent.ID)
+	}
+	for _, format := range agent.ImagePaste {
+		if !slices.Contains(agentspec.ImageFormats, format) {
+			return fmt.Errorf("%w: agent %q lists image format %q; the formats are %s",
+				ErrInvalid, agent.ID, format, strings.Join(agentspec.ImageFormats, ", "))
+		}
 	}
 	return nil
 }

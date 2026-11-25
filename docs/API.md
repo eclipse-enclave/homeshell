@@ -427,7 +427,8 @@ part of `/settings`.
 - `PATCH` keeps fields it does not mention. An agent's ID and a row's agent are fixed.
 - Deleting an agent deletes its settings and models.
 - `404` for a missing row, `409` for a taken ID or a duplicate field, `400` for a row the daemon
-  could not act on, `503` without a catalog.
+  could not act on (including an unknown [`imagePaste`](CONFIGURATION.md#sessions--agents) format),
+  `503` without a catalog.
 - Nothing is checked against the agent's CLI. Why: the agent is the authority on its own flags
   and models, and a wrong value fails at launch with the agent's own message.
 

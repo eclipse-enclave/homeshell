@@ -170,6 +170,11 @@ async function importImage() {
   );
 }
 
+function extraTools() {
+  if (!fs.existsSync(fixturePath('tools'))) return [];
+  return fs.readFileSync(fixturePath('tools'), 'utf8').split('\n').filter(Boolean);
+}
+
 async function stopSession(name) {
   if (fs.existsSync(fixturePath(`block-stop-${name}`))) {
     fs.writeFileSync(fixturePath(`stop-blocked-${name}`), '');
@@ -246,7 +251,12 @@ async function main() {
         JSON.stringify({
           schemaVersion: '1',
           kind: 'tool',
-          extensions: [{ name: 'codex', displayName: 'Codex', enabled: true }],
+          // Codex, and the tools a test lists in `tools`, one per line.
+          extensions: ['codex', ...extraTools()].map((name) => ({
+            name,
+            displayName: name === 'codex' ? 'Codex' : name,
+            enabled: true,
+          })),
         }),
       );
       break;

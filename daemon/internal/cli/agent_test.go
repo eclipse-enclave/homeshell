@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -182,6 +183,28 @@ func TestAgentSetSendsOnlyTheFlagsThatWereGiven(t *testing.T) {
 	for _, unset := range []string{"binary", "transcript", "resumeFlag", "sessionIdFlag", "listModels", "id"} {
 		if _, present := body[unset]; present {
 			t.Errorf("body = %v, want no %q: the caller did not name it", body, unset)
+		}
+	}
+}
+
+// The image formats an agent pastes natively travel as a list; an empty one clears it.
+func TestAgentSetSendsImagePaste(t *testing.T) {
+	for _, tt := range []struct {
+		value string
+		want  []any
+	}{
+		{"png jpeg", []any{"png", "jpeg"}},
+		{"", []any{}},
+	} {
+		stub := newStubDaemon(t, map[string]stubResponse{
+			"PATCH /api/agents/claude": {http.StatusOK, `{"id":"claude"}`},
+		})
+		if code, _, stderr := runClient(agentSet(), "claude", "--image-paste", tt.value); code != exitOK {
+			t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
+		}
+		body := decodeBody(t, stub, "PATCH", "/api/agents/claude")
+		if got, ok := body["imagePaste"].([]any); !ok || !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("--image-paste %q: body imagePaste = %#v, want %#v", tt.value, body["imagePaste"], tt.want)
 		}
 	}
 }

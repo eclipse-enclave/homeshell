@@ -92,6 +92,19 @@ last time":
 The agents themselves are configured in the [agent catalog](API.md#agent-catalog), edited with
 [`homeshell agent`](#agent).
 
+An agent's `imagePaste` lists the image formats (`png`, `jpeg`) it takes as a native attachment
+when sent `Ctrl+V`; an [attached image](PROVIDERS.md#eclipse-enclave) in any other format reaches it as
+its path.
+
+| Agent | `imagePaste` default |
+|---|---|
+| Claude Code, Pi | `png`, `jpeg` |
+| OpenCode | `png` |
+| Others, and agents you add | none |
+
+An `agents.json` from before the field gets these defaults on its first load; a list already
+there is kept.
+
 ### Providers
 
 | Key | Default | Effect |
@@ -286,6 +299,7 @@ Edits the agent catalog. Field meanings are in [API.md](API.md#agent-catalog).
 | `add`, `set` | `--resume-flag` | Flag that resumes that session; empty means no resume |
 | `add`, `set` | `--list-models` | Arguments that make the agent print its models |
 | `add`, `set` | `--transcript` | The agent writes a Claude-format transcript |
+| `add`, `set` | `--image-paste` | Image formats it pastes natively, e.g. `"png jpeg"`; empty for none |
 | `setting-list`, `model-list` | `--agent` | Only this agent's rows |
 | `setting-add` | `--agent` | Agent the setting belongs to. Required |
 | `setting-add`, `setting-set` | `--field` | Property name in the create form |

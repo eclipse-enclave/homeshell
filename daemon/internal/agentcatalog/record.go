@@ -27,6 +27,7 @@ type agentRecord struct {
 	ResumeFlag    string          `json:"resumeFlag"`
 	Transcript    bool            `json:"transcript"`
 	ListModels    []string        `json:"listModels"`
+	ImagePaste    []string        `json:"imagePaste"`
 	Settings      []settingRecord `json:"settings"`
 }
 
@@ -58,7 +59,7 @@ func recordFile(file File) fileRecord {
 		storedAgent := agentRecord{
 			ID: agent.ID, Binary: agent.Binary, RuleSetID: agent.RuleSetID, EnclaveTool: agent.EnclaveTool,
 			Display: agent.Display, SessionIDFlag: agent.SessionIDFlag, ResumeFlag: agent.ResumeFlag,
-			Transcript: agent.Transcript, ListModels: agent.ListModels, Settings: make([]settingRecord, 0, len(agent.Settings)),
+			Transcript: agent.Transcript, ListModels: agent.ListModels, ImagePaste: agent.ImagePaste, Settings: make([]settingRecord, 0, len(agent.Settings)),
 		}
 		for _, setting := range agent.Settings {
 			storedAgent.Settings = append(storedAgent.Settings, settingRecord{
@@ -81,7 +82,7 @@ func (record fileRecord) file() File {
 		agent := agentspec.Agent{
 			ID: storedAgent.ID, Binary: storedAgent.Binary, RuleSetID: storedAgent.RuleSetID, EnclaveTool: storedAgent.EnclaveTool,
 			Display: storedAgent.Display, SessionIDFlag: storedAgent.SessionIDFlag, ResumeFlag: storedAgent.ResumeFlag,
-			Transcript: storedAgent.Transcript, ListModels: storedAgent.ListModels, Settings: make([]agentspec.Setting, 0, len(storedAgent.Settings)),
+			Transcript: storedAgent.Transcript, ListModels: storedAgent.ListModels, ImagePaste: storedAgent.ImagePaste, Settings: make([]agentspec.Setting, 0, len(storedAgent.Settings)),
 		}
 		for _, storedSetting := range storedAgent.Settings {
 			agent.Settings = append(agent.Settings, agentspec.Setting{

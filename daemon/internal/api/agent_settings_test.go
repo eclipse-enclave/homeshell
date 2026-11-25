@@ -349,3 +349,34 @@ func TestAgentRowsReportUnavailableWithoutPersistence(t *testing.T) {
 		}
 	}
 }
+
+// Which image formats an agent pastes natively is the user's to change: a PATCH sets
+// or clears the list, and a format nothing can paste is refused.
+func TestUpdateAgentImagePaste(t *testing.T) {
+	server := agentRowsServer(t)
+	imagePaste := func() []string {
+		for _, agent := range listAgents(t, server) {
+			if agent.ID == "codex" {
+				return agent.ImagePaste
+			}
+		}
+		t.Fatal("codex is not in the listing")
+		return nil
+	}
+
+	if res := send(t, http.MethodPatch, server.URL+"/api/agents/codex", `{"imagePaste":["png"]}`); res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	if got := imagePaste(); !slices.Equal(got, []string{"png"}) {
+		t.Errorf("imagePaste = %v, want [png]", got)
+	}
+	if res := send(t, http.MethodPatch, server.URL+"/api/agents/codex", `{"imagePaste":["gif"]}`); res.StatusCode != http.StatusBadRequest {
+		t.Errorf("status for gif = %d, want 400", res.StatusCode)
+	}
+	if res := send(t, http.MethodPatch, server.URL+"/api/agents/codex", `{"imagePaste":[]}`); res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	if got := imagePaste(); len(got) != 0 {
+		t.Errorf("imagePaste = %v, want it cleared", got)
+	}
+}

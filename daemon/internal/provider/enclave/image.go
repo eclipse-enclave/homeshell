@@ -12,8 +12,8 @@ import (
 )
 
 // Attaching an image: Enclave imports it into the image inbox of the session's project (`enclave img import`),
-// which every session of that project with the inbox on mounts read-only; HomeShell then types the image's path
-// into the agent's input, without submitting it.
+// which every session of that project with the inbox on mounts read-only; HomeShell then hands it to the agent,
+// without submitting it: by native paste when the agent pastes the image's format, else as its path.
 
 var _ provider.ImageAttacher = (*Provider)(nil)
 
@@ -119,9 +119,14 @@ func (p *Provider) imageInboxesFrom(found inventory) bool {
 	return changed
 }
 
-// AttachImage imports the image into the image inbox of the session's project and types its path, followed by a
-// space, into the agent's input without submitting it (implements provider.ImageAttacher). Attaches in one
-// project run one at a time, import and delivery together. Enclave's error is returned as it words it.
+// pasteKey is Ctrl+V. In the sandbox it pastes the project inbox's newest image during Enclave's paste window,
+// which an import opens.
+const pasteKey = "\x16"
+
+// AttachImage imports the image into the image inbox of the session's project and hands it to the agent without
+// submitting it (implements provider.ImageAttacher): Ctrl+V when the agent's catalog entry lists the image's
+// format (agentspec.Agent.ImagePaste), else the image's path followed by a space. Attaches in one project run one
+// at a time, import and delivery together. Enclave's error is returned as it words it.
 func (p *Provider) AttachImage(ctx context.Context, ref provider.SessionRef, image provider.Image) (string, error) {
 	record, err := p.liveBridgeRecord(ref.SessionID)
 	if err != nil {
@@ -147,8 +152,12 @@ func (p *Provider) AttachImage(ctx context.Context, ref provider.SessionRef, ima
 	if err != nil {
 		return "", err
 	}
-	if err := p.bridges.runtime.SendRaw(ctx, record.target(), path+" "); err != nil {
-		return "", fmt.Errorf("typing the image's path into the agent's input: %w", err)
+	input, handing := path+" ", "typing the image's path into"
+	if agent, described := p.agentFor(record.Container.Tool); described && agent.PastesImage(image.MediaType) {
+		input, handing = pasteKey, "pasting the image into"
+	}
+	if err := p.bridges.runtime.SendRaw(ctx, record.target(), input); err != nil {
+		return "", fmt.Errorf("%s the agent's input: %w", handing, err)
 	}
 	return path, nil
 }

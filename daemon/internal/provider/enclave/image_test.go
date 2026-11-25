@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eclipsesource/homeshell/daemon/internal/agentcatalog"
 	"github.com/eclipsesource/homeshell/daemon/internal/domain"
 	"github.com/eclipsesource/homeshell/daemon/internal/provider"
 	"github.com/eclipsesource/homeshell/daemon/internal/provider/enclave/sandboxschema"
@@ -201,6 +202,63 @@ func TestAttachImageTypesThePathWithoutSubmitting(t *testing.T) {
 	}
 	if !slices.Equal(bridge.raw, []string{cli.imagePath + " "}) || bridge.input != "" || bridge.key != "" {
 		t.Errorf("typed raw %q, input %q, key %q; want only the path and a space", bridge.raw, bridge.input, bridge.key)
+	}
+}
+
+// An agent that lists the image's format in the catalog is sent Ctrl+V right after the import, for a native
+// attachment; any other gets the path and a space. Neither is submitted.
+func TestAttachImageDelivery(t *testing.T) {
+	jpeg := provider.Image{MediaType: "image/jpeg", Data: []byte("\xff\xd8\xffimage")}
+	tests := []struct {
+		name       string
+		imagePaste []string
+		image      provider.Image
+		paste      bool
+	}{
+		{name: "PNG to an agent that pastes PNG and JPEG", imagePaste: []string{"png", "jpeg"}, image: testPNG, paste: true},
+		{name: "JPEG to an agent that pastes PNG and JPEG", imagePaste: []string{"png", "jpeg"}, image: jpeg, paste: true},
+		{name: "PNG to an agent that pastes PNG", imagePaste: []string{"png"}, image: testPNG, paste: true},
+		{name: "JPEG to an agent that pastes PNG", imagePaste: []string{"png"}, image: jpeg, paste: false},
+		{name: "an agent that pastes none", imagePaste: nil, image: testPNG, paste: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, cli, bridge, _, ref := imageSession(t)
+			file := agentcatalog.Defaults()
+			for i := range file.Agents {
+				if file.Agents[i].ID == "codex" {
+					file.Agents[i].ImagePaste = tt.imagePaste
+				}
+			}
+			p.SetAgentSpecs(agentcatalog.NewMemory(file))
+			path, err := p.AttachImage(context.Background(), ref, tt.image)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := path + " "
+			if tt.paste {
+				want = "\x16"
+			}
+			if !slices.Equal(bridge.raw, []string{want}) || bridge.input != "" || bridge.key != "" {
+				t.Errorf("typed raw %q, input %q, key %q; want only %q", bridge.raw, bridge.input, bridge.key, want)
+			}
+			if len(cli.imports) != 1 {
+				t.Errorf("%d imports, want 1", len(cli.imports))
+			}
+		})
+	}
+}
+
+// A session whose tool no agent in the catalog describes gets the path.
+func TestAttachImageToAnUndescribedToolTypesThePath(t *testing.T) {
+	p, _, bridge, _, ref := imageSession(t)
+	p.SetAgentSpecs(agentcatalog.NewMemory(agentcatalog.File{SchemaVersion: 2}))
+	path, err := p.AttachImage(context.Background(), ref, testPNG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(bridge.raw, []string{path + " "}) {
+		t.Errorf("typed raw %q, want the path and a space", bridge.raw)
 	}
 }
 

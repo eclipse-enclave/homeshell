@@ -382,3 +382,26 @@ func collectKeys(decoder *json.Decoder, into *[]string) error {
 	_, err := decoder.Token() // the closing brace
 	return err
 }
+
+// An agent pastes an image natively when it lists the image's format.
+func TestPastesImage(t *testing.T) {
+	tests := []struct {
+		name       string
+		imagePaste []string
+		mediaType  string
+		want       bool
+	}{
+		{name: "listed", imagePaste: []string{ImagePNG, ImageJPEG}, mediaType: "image/jpeg", want: true},
+		{name: "another format listed", imagePaste: []string{ImagePNG}, mediaType: "image/jpeg", want: false},
+		{name: "none listed", imagePaste: nil, mediaType: "image/png", want: false},
+		{name: "not an image media type", imagePaste: []string{ImagePNG}, mediaType: "png", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			agent := Agent{ID: "a", ImagePaste: tt.imagePaste}
+			if got := agent.PastesImage(tt.mediaType); got != tt.want {
+				t.Errorf("PastesImage(%q) with %v = %v, want %v", tt.mediaType, tt.imagePaste, got, tt.want)
+			}
+		})
+	}
+}

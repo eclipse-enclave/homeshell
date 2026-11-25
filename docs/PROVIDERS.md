@@ -267,9 +267,15 @@ container is Enclave's to manage.
     or restarts has what its run resolved: the flag passed, else Enclave's config.
 - **Attach delivery:** HomeShell runs `enclave img import --session <container> --json -` in the
   session's working directory with the image on stdin, reads the path from the envelope's `.path`
-  (`kind: "image-import"`, checked like the other JSON contracts), then types the path and one
-  space into the agent's input, without Enter. A failed import's `error:` line on stderr is the
-  `500` message, as Enclave words it.
+  (`kind: "image-import"`, checked like the other JSON contracts), then hands the image to the
+  agent without Enter:
+  - **Native paste** when the agent's [`imagePaste`](CONFIGURATION.md#sessions--agents) lists the
+    image's format: HomeShell sends `Ctrl+V` (`\x16`) right after the import, and the agent pastes
+    the inbox's newest image as an attachment.
+  - **Path** otherwise, and for a tool no catalog agent describes: the path and one space are
+    typed into the agent's input. For example, a JPEG to OpenCode, or any image to Codex.
+
+  A failed import's `error:` line on stderr is the `500` message, as Enclave words it.
 - **One attach per project at a time,** import and delivery together (`provider/enclave/image.go`).
   Why: the inbox is shared by the project's sessions, and a native paste takes its newest image.
   An `enclave img import` run in a terminal at the same moment is not covered; its image can land

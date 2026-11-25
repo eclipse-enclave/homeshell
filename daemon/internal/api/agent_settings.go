@@ -69,6 +69,7 @@ type agentBody struct {
 	ResumeFlag    *string   `json:"resumeFlag"`
 	Transcript    *bool     `json:"transcript"`
 	ListModels    *[]string `json:"listModels"`
+	ImagePaste    *[]string `json:"imagePaste"`
 }
 
 // agentSettingBody is the request shape for one launch knob, every field optional for
@@ -133,6 +134,7 @@ func createAgentHandler(d Deps) http.HandlerFunc {
 			SessionIDFlag: trimmed(body.SessionIDFlag),
 			ResumeFlag:    trimmed(body.ResumeFlag),
 			ListModels:    stringsOf(body.ListModels),
+			ImagePaste:    stringsOf(body.ImagePaste),
 		}
 		if body.Transcript != nil {
 			agent.Transcript = *body.Transcript
@@ -229,6 +231,9 @@ func applyAgentBody(agent *agentspec.Agent, body agentBody) map[string]string {
 	}
 	if body.ListModels != nil {
 		agent.ListModels = stringsOf(body.ListModels)
+	}
+	if body.ImagePaste != nil {
+		agent.ImagePaste = stringsOf(body.ImagePaste)
 	}
 	return fields
 }

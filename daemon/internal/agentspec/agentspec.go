@@ -21,6 +21,7 @@ package agentspec
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 )
 
@@ -137,8 +138,28 @@ type Agent struct {
 	// ListModels is the argv suffix that makes this CLI print the models it has,
 	// appended to Binary. Empty for a CLI that cannot answer.
 	ListModels []string `json:"listModels"`
+	// ImagePaste lists the image formats (ImagePNG, ImageJPEG) the agent takes as a
+	// native attachment when it is sent Ctrl+V. An image in any other format is
+	// handed over as its path. Empty for an agent that pastes none.
+	ImagePaste []string `json:"imagePaste"`
 	// Settings are this agent's launch knobs, in form order.
 	Settings []Setting `json:"settings"`
+}
+
+// The image formats an agent can list in ImagePaste, each the subtype of its
+// media type (image/png).
+const (
+	ImagePNG  = "png"
+	ImageJPEG = "jpeg"
+)
+
+// ImageFormats is every format ImagePaste may list.
+var ImageFormats = []string{ImagePNG, ImageJPEG}
+
+// PastesImage reports whether the agent pastes an image of mediaType natively.
+func (a Agent) PastesImage(mediaType string) bool {
+	format, ok := strings.CutPrefix(mediaType, "image/")
+	return ok && slices.Contains(a.ImagePaste, format)
 }
 
 // DetectionID is the manifest to evaluate, never the executable to launch.
