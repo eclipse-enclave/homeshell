@@ -17,6 +17,7 @@ import {
   GitBranch,
   GitFork,
   Moon,
+  Paperclip,
   Play,
   Plus,
   Settings,
@@ -55,6 +56,7 @@ export const FolderTreeIcon = /* @__PURE__ */ withDefaults(FolderTree);
 export const GitBranchIcon = /* @__PURE__ */ withDefaults(GitBranch);
 export const GitForkIcon = /* @__PURE__ */ withDefaults(GitFork);
 export const MoonIcon = /* @__PURE__ */ withDefaults(Moon);
+export const PaperclipIcon = /* @__PURE__ */ withDefaults(Paperclip);
 export const PlayIcon = /* @__PURE__ */ withDefaults(Play);
 export const PlusIcon = /* @__PURE__ */ withDefaults(Plus);
 export const SettingsIcon = /* @__PURE__ */ withDefaults(Settings);

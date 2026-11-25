@@ -1829,3 +1829,85 @@ describe('ProjectView focus handle', () => {
     expect(toggleOf('s1').getAttribute('aria-expanded')).toBe('false');
   });
 });
+
+describe('ProjectView attaching an image', () => {
+  const attachable = {
+    ...session('s1', 'idle'),
+    capabilities: { live: true, takeOver: false, attachImage: true },
+  };
+
+  /** Answers every image POST with `answer`; returns the requests made. */
+  function stubAttach(answer: { status: number; body?: unknown }) {
+    const posts: { url: string; init: RequestInit }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const json = (body: unknown, status = 200) => ({
+          ok: status < 400,
+          status,
+          json: async () => body,
+        });
+        if (url.endsWith('/image')) {
+          posts.push({ url, init: init ?? {} });
+          return json(
+            answer.body ?? { path: '/mnt/host-images/a.png' },
+            answer.status,
+          );
+        }
+        if (url === '/api/providers') {
+          return json([{ id: 'fake', capabilities: { oneOffPrompt: true } }]);
+        }
+        return json({});
+      }),
+    );
+    return posts;
+  }
+
+  async function attach(file: File) {
+    await renderLive(withCards(card('w1', 'x', [attachable])));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Toggle session details' }),
+    );
+    await screen.findByRole('button', { name: 'Attach image' });
+    fireEvent.change(
+      document.querySelector<HTMLInputElement>('input[type="file"]')!,
+      { target: { files: [file] } },
+    );
+  }
+
+  it('posts the image bytes with its type to the session', async () => {
+    const posts = stubAttach({ status: 200 });
+    const image = new File(['png'], 'a.png', { type: 'image/png' });
+
+    await attach(image);
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0].url).toBe(
+      '/api/projects/p1/workstreams/w1/sessions/s1/image',
+    );
+    expect(posts[0].init.method).toBe('POST');
+    expect(posts[0].init.headers).toEqual({ 'Content-Type': 'image/png' });
+    expect(posts[0].init.body).toBe(image);
+  });
+
+  it("shows the daemon's refusal in the page's error line", async () => {
+    stubAttach({ status: 413, body: { error: 'image is larger than 10 MiB' } });
+
+    await attach(new File(['png'], 'a.png', { type: 'image/png' }));
+
+    expect((await screen.findByRole('alert')).textContent).toMatch(
+      /image is larger than 10 MiB/i,
+    );
+  });
+
+  it('shows a dropped non-image in the page error line', async () => {
+    const posts = stubAttach({ status: 200 });
+
+    await attach(new File(['gif'], 'a.gif', { type: 'image/gif' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'Only PNG or JPEG images can be attached',
+    );
+    expect(posts).toHaveLength(0);
+  });
+});

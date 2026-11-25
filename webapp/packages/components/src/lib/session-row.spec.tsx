@@ -14,6 +14,7 @@ import { createRef } from 'react';
 import { useMnemonics } from './mnemonic';
 import {
   ANSWER_FOCUS_MS,
+  ATTACH_STATUS_MS,
   SessionRow,
   type SessionRowHandle,
 } from './session-row';
@@ -1848,5 +1849,224 @@ describe('SessionRow running in a terminal', () => {
     openMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: /Delete/ }));
     expect(within(screen.getByRole('dialog')).queryByText(warning)).toBeNull();
+  });
+});
+
+describe('SessionRow: attaching images', () => {
+  const ONLY_IMAGES = 'Only PNG or JPEG images can be attached';
+  const attachable = (state: Session['state'] = 'idle'): Session => ({
+    ...session(state),
+    capabilities: { live: true, takeOver: false, attachImage: true },
+  });
+  const png = (name: string) => new File(['png'], name, { type: 'image/png' });
+  const jpeg = (name: string) =>
+    new File(['jpeg'], name, { type: 'image/jpeg' });
+
+  /** Renders the row expanded, so its send box and attach button exist. */
+  const renderAttachable = (
+    props: Partial<Parameters<typeof SessionRow>[0]> = {},
+  ) => {
+    const utils = renderRow({
+      session: attachable(),
+      onPrompt: vi.fn(),
+      onAttachImage: vi.fn(async () => null),
+      onAttachError: vi.fn(),
+      ...props,
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Toggle session details' }),
+    );
+    return utils;
+  };
+
+  const fileInput = () =>
+    document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  const attachButton = () =>
+    screen.getByRole('button', { name: 'Attach image' });
+  const pick = (...files: File[]) => {
+    const input = fileInput();
+    fireEvent.change(input, { target: { files } });
+  };
+
+  it('offers Attach image beside Send when the session can take images', () => {
+    renderAttachable();
+    const form = screen.getByRole('button', { name: 'Send' }).closest('form')!;
+    expect(within(form).getByRole('button', { name: 'Attach image' })).toBe(
+      attachButton(),
+    );
+  });
+
+  it('offers no Attach image when the session cannot take images', () => {
+    renderAttachable({ session: session('idle') });
+    expect(screen.queryByRole('button', { name: 'Attach image' })).toBeNull();
+  });
+
+  it('offers no Attach image without a handler', () => {
+    renderAttachable({ onAttachImage: undefined });
+    expect(screen.queryByRole('button', { name: 'Attach image' })).toBeNull();
+  });
+
+  it('picks only PNG and JPEG files, several at once', () => {
+    renderAttachable();
+    const input = fileInput();
+    expect(input.accept).toBe('image/png,image/jpeg');
+    expect(input.multiple).toBe(true);
+  });
+
+  it('opens the file picker on click', () => {
+    renderAttachable();
+    const input = fileInput();
+    const click = vi.spyOn(input, 'click');
+    fireEvent.click(attachButton());
+    expect(click).toHaveBeenCalledOnce();
+  });
+
+  it.each(['idle', 'running'] as const)('is enabled while %s', (state) => {
+    renderAttachable({ session: attachable(state) });
+    expect(attachButton().getAttribute('aria-disabled')).not.toBe('true');
+  });
+
+  it('is disabled while waiting, saying why, and opens no picker', () => {
+    renderAttachable({ session: attachable('waiting') });
+    const button = attachButton();
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(button.title).toMatch(/idle or running/);
+    const input = fileInput();
+    const click = vi.spyOn(input, 'click');
+    fireEvent.click(button);
+    expect(click).not.toHaveBeenCalled();
+  });
+
+  it('is disabled with the row while the daemon is unreachable', () => {
+    renderAttachable({ disabledReason: 'Daemon offline' });
+    const button = attachButton();
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(button.title).toBe('Daemon offline');
+  });
+
+  it('uploads several images one after another, in order', async () => {
+    const order: string[] = [];
+    let release: () => void = () => undefined;
+    const onAttachImage = vi.fn(
+      (file: File) =>
+        new Promise<null>((resolve) => {
+          order.push(`start ${file.name}`);
+          release = () => {
+            order.push(`end ${file.name}`);
+            resolve(null);
+          };
+        }),
+    );
+    renderAttachable({ onAttachImage });
+
+    pick(png('a.png'), jpeg('b.jpg'));
+    await waitFor(() => expect(order).toEqual(['start a.png']));
+    act(() => release());
+    await waitFor(() =>
+      expect(order).toEqual(['start a.png', 'end a.png', 'start b.jpg']),
+    );
+    act(() => release());
+
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toMatch(
+        /Image attached.*b\.jpg/,
+      ),
+    );
+  });
+
+  it('stops at the first failure and reports it', async () => {
+    const onAttachError = vi.fn();
+    const onAttachImage = vi.fn(async (file: File) =>
+      file.name === 'b.png' ? 'image is larger than 10 MiB' : null,
+    );
+    renderAttachable({ onAttachImage, onAttachError });
+
+    pick(png('a.png'), png('b.png'), png('c.png'));
+
+    await waitFor(() =>
+      expect(onAttachError).toHaveBeenCalledWith('image is larger than 10 MiB'),
+    );
+    expect(onAttachImage.mock.calls.map(([file]) => file.name)).toEqual([
+      'a.png',
+      'b.png',
+    ]);
+  });
+
+  it('drops files that are not PNG or JPEG, saying so, and attaches the rest', async () => {
+    const onAttachError = vi.fn();
+    const onAttachImage = vi.fn(async (_file: File) => null);
+    renderAttachable({ onAttachImage, onAttachError });
+
+    pick(
+      new File(['gif'], 'c.gif', { type: 'image/gif' }),
+      png('a.png'),
+      new File(['txt'], 'notes.txt', { type: 'text/plain' }),
+    );
+
+    expect(onAttachError).toHaveBeenCalledWith(ONLY_IMAGES);
+    await waitFor(() => expect(onAttachImage).toHaveBeenCalledOnce());
+    expect(onAttachImage.mock.calls[0][0].name).toBe('a.png');
+  });
+
+  it('uploads nothing when no file is an image', () => {
+    const onAttachError = vi.fn();
+    const onAttachImage = vi.fn(async () => null);
+    renderAttachable({ onAttachImage, onAttachError });
+
+    pick(new File(['gif'], 'c.gif', { type: 'image/gif' }));
+
+    expect(onAttachError).toHaveBeenCalledWith(ONLY_IMAGES);
+    expect(onAttachImage).not.toHaveBeenCalled();
+  });
+
+  it('names the attached image in a brief status that clears itself', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderAttachable();
+
+      pick(png('screenshot.png'));
+
+      await waitFor(() =>
+        expect(screen.getByRole('status').textContent).toBe(
+          'Image attached: screenshot.png',
+        ),
+      );
+      act(() => vi.advanceTimersByTime(ATTACH_STATUS_MS));
+      expect(screen.getByRole('status').textContent).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('is disabled while a batch is still uploading', async () => {
+    let release: () => void = () => undefined;
+    const onAttachImage = vi.fn(
+      () => new Promise<null>((resolve) => (release = () => resolve(null))),
+    );
+    renderAttachable({ onAttachImage });
+
+    pick(png('a.png'));
+    await waitFor(() =>
+      expect(attachButton().getAttribute('aria-disabled')).toBe('true'),
+    );
+    expect(attachButton().title).toBe('Attaching images…');
+    act(() => release());
+
+    await waitFor(() =>
+      expect(attachButton().getAttribute('aria-disabled')).toBe('false'),
+    );
+  });
+
+  it('shows no status when the attach fails', async () => {
+    const onAttachError = vi.fn();
+    renderAttachable({
+      onAttachImage: vi.fn(async () => 'Enclave said no'),
+      onAttachError,
+    });
+
+    pick(png('a.png'));
+
+    await waitFor(() => expect(onAttachError).toHaveBeenCalled());
+    expect(screen.getByRole('status').textContent).toBe('');
   });
 });

@@ -23,7 +23,7 @@ import {
 import { ActionConfirm } from './action-confirm';
 import { Button } from './button';
 import { useReturnFocus } from './focus-return';
-import { PlayIcon, SquareIcon, TerminalIcon } from './icons';
+import { PaperclipIcon, PlayIcon, SquareIcon, TerminalIcon } from './icons';
 import { type ItemAction, runAction, useActionsMenu } from './item-actions';
 import { isDeleteKey, isModified } from './keys';
 import { controlTabIndexFor, listItemKeyShortcuts } from './list-navigation';
@@ -82,6 +82,15 @@ function EndedAgo({ endedAt }: { endedAt: string }) {
 
 /** How long the handle's expand waits for a send box to put focus in. */
 export const ANSWER_FOCUS_MS = 10_000;
+
+/** How long "Image attached" stays in the row before it clears. */
+export const ATTACH_STATUS_MS = 5_000;
+
+/** The image types a session takes (`POST {s}/image`); the file picker shows only these. */
+const ATTACHABLE_TYPES = ['image/png', 'image/jpeg'];
+
+/** What the row reports when some of the files it was given are not images it can attach. */
+const ONLY_IMAGES = 'Only PNG or JPEG images can be attached';
 
 export interface SessionRowProps {
   session: Session;
@@ -167,6 +176,21 @@ export interface SessionRowProps {
    */
   onSendKey?: (key: string) => void;
   /**
+   * Attaches one image to the session, resolving to null once it is attached or
+   * to why it was not. Offered, as an Attach image button beside Send, only
+   * when set and the session declares `attachImage`. The row owns the rules:
+   * it drops files that are not PNG or JPEG, and sends several one after
+   * another, in order, stopping at the first that fails.
+   */
+  onAttachImage?: (file: File) => Promise<string | null>;
+  /**
+   * Shows why an attach failed: the refusal onAttachImage resolved to, or the
+   * row's own when it dropped files that are not images. Its home is the
+   * page-level error line every other session action uses, which the row does
+   * not own.
+   */
+  onAttachError?: (message: string) => void;
+  /**
    * How many trailing lines of a **live** session's terminal capture the expanded
    * panel makes available. The daemon streams up to its capture height (~24); this
    * caps how much of that screen is kept. Defaults to 20 when unset. The inline
@@ -241,6 +265,8 @@ export function SessionRow({
   onSeen,
   onPrompt,
   onSendKey,
+  onAttachImage,
+  onAttachError,
   previewLines = 20,
   disabledReason,
   tabIndex,
@@ -343,6 +369,7 @@ export function SessionRow({
     takeOver: canTakeOver,
     takeOverWarning,
     note,
+    attachImage,
   } = sessionCapabilities(session);
   const takeOverable = onTakeOver && canTakeOver && session.restartable;
   // The warning is about ending a running session; an ended one has nothing to end.
@@ -350,6 +377,15 @@ export function SessionRow({
     ? undefined
     : stopWarning;
   const promptable = live && onPrompt && hasRuntime;
+  // Whether the session takes images at all. Whether it takes one now is its
+  // state's call, idle or running only (docs/API.md, POST {s}/image); outside
+  // those the button stays, disabled, so it does not flicker as the agent works.
+  const attachable = Boolean(onAttachImage && attachImage);
+  const attachDisabledReason =
+    disabledReason ??
+    (session.state === 'idle' || session.state === 'running'
+      ? undefined
+      : 'Images can be attached while the session is idle or running');
   const startable = ended && onStart;
   // Removal is offered in every state, the two placeholder ones included: the
   // daemon recognizes its own bookkeeping rows and never routes them to a
@@ -497,6 +533,40 @@ export function SessionRow({
     if (!text || !onPrompt || blocked) return;
     onPrompt(text);
     setDraft('');
+  };
+
+  const attachInputRef = useRef<HTMLInputElement>(null);
+  // Whether a batch is still uploading, so a second pick cannot interleave with it.
+  const [attaching, setAttaching] = useState(false);
+  // The last image attached, named in the row until ATTACH_STATUS_MS passes.
+  const [attached, setAttached] = useState<string | null>(null);
+  useEffect(() => {
+    if (!attached) return;
+    const timer = setTimeout(() => setAttached(null), ATTACH_STATUS_MS);
+    return () => clearTimeout(timer);
+  }, [attached]);
+
+  const attachFiles = async (files: File[]) => {
+    if (!onAttachImage) return;
+    const images = files.filter((file) => ATTACHABLE_TYPES.includes(file.type));
+    if (images.length < files.length) onAttachError?.(ONLY_IMAGES);
+    if (images.length === 0) return;
+    setAttaching(true);
+    setAttached(null);
+    try {
+      // One at a time, in the order given: the agent receives them in the
+      // order the user meant, and a failure leaves no later image delivered.
+      for (const image of images) {
+        const refusal = await onAttachImage(image);
+        if (refusal) {
+          onAttachError?.(refusal);
+          return;
+        }
+        setAttached(image.name);
+      }
+    } finally {
+      setAttaching(false);
+    }
   };
 
   // When the box is empty it acts as a navigation surface: arrow keys, Enter
@@ -1061,7 +1131,42 @@ export function SessionRow({
                 >
                   Send
                 </Button>
+                {attachable && (
+                  <>
+                    <Button
+                      icon={<PaperclipIcon size={13} />}
+                      aria-label="Attach image"
+                      aria-disabled={Boolean(attachDisabledReason) || attaching}
+                      tabIndex={controlTabIndex}
+                      title={
+                        attachDisabledReason ??
+                        (attaching ? 'Attaching images…' : 'Attach image')
+                      }
+                      onClick={() => attachInputRef.current?.click()}
+                    />
+                    {/* The picker the button opens; it is the button the user sees. */}
+                    <input
+                      ref={attachInputRef}
+                      type="file"
+                      accept={ATTACHABLE_TYPES.join(',')}
+                      multiple
+                      hidden
+                      tabIndex={-1}
+                      onChange={(event) => {
+                        const files = Array.from(event.target.files ?? []);
+                        // Cleared, so picking the same file again still changes it.
+                        event.target.value = '';
+                        void attachFiles(files);
+                      }}
+                    />
+                  </>
+                )}
               </form>
+              {attachable && (
+                <p className={styles.attachStatus} role="status">
+                  {attached && `Image attached: ${attached}`}
+                </p>
+              )}
               {/* The hint promises key navigation, which is off while blocked. */}
               {onSendKey && !blocked && (
                 <p className={styles.promptHint}>

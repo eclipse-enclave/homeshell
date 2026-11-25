@@ -535,6 +535,31 @@ export async function promptSession(
   }
 }
 
+/**
+ * Attaches one image to a session (`POST {s}/image`), its bytes as the body and
+ * its type as the Content-Type. Resolves to null once attached, or to why not.
+ */
+export async function attachSessionImage(
+  projectId: string,
+  workstreamId: string,
+  sessionId: string,
+  image: File,
+): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `${sessionsBase(projectId, workstreamId)}/${encodeURIComponent(sessionId)}/image`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': image.type },
+        body: image,
+      },
+    );
+    return res.ok ? null : await errorFrom(res, 'Attach failed.');
+  } catch {
+    return 'Could not reach the daemon.';
+  }
+}
+
 export async function sendSessionKey(
   projectId: string,
   workstreamId: string,

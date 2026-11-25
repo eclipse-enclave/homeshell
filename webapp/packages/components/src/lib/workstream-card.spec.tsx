@@ -798,6 +798,41 @@ describe('WorkstreamCard', () => {
     expect(onPromptSession).toHaveBeenCalledWith('s1', 'go');
   });
 
+  it('wires onAttachImageSession and onAttachError per session', async () => {
+    const onAttachImageSession = vi.fn(async () => 'too large');
+    const onAttachError = vi.fn();
+    render(
+      <Card
+        workstream={workstream('running', [
+          {
+            id: 's1',
+            title: 'Work',
+            agent: 'Claude Code',
+            state: 'idle',
+            preview: 'hello',
+            capabilities: { live: true, takeOver: false, attachImage: true },
+          },
+        ])}
+        onPromptSession={vi.fn()}
+        onAttachImageSession={onAttachImageSession}
+        onAttachError={onAttachError}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: /toggle session details/i }),
+    );
+    const image = new File(['png'], 'a.png', { type: 'image/png' });
+    fireEvent.change(
+      document.querySelector<HTMLInputElement>('input[type="file"]')!,
+      { target: { files: [image] } },
+    );
+
+    await waitFor(() =>
+      expect(onAttachError).toHaveBeenCalledWith('too large'),
+    );
+    expect(onAttachImageSession).toHaveBeenCalledWith('s1', image);
+  });
+
   it('shows a delete action only when onDelete is provided', () => {
     const { rerender } = render(<Card />);
     expect(

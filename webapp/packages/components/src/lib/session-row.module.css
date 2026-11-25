@@ -244,6 +244,17 @@ button.info:focus-visible {
   gap: 0.35rem;
 }
 
+/* "Image attached: <name>", briefly, under the send box. Empty, it takes no room. */
+.attachStatus {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+.attachStatus:empty {
+  display: none;
+}
+
 /* Discoverability caption for the empty-box key navigation. */
 .promptHint {
   margin: 0;
