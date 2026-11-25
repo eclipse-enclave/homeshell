@@ -499,6 +499,9 @@ flowchart TD
   `setUpZoom`): an injected script turns zoom input into calls to a bound Go function, which sets
   the webview's native zoom and saves it. Why: a bare system webview has no zoom shortcuts; native
   zoom scales like a browser's and keeps pointer coordinates right.
+- Pasting an image doesn't attach it on Linux (WebKitGTK); dropping it on the session row and the
+  Attach image button do. Why: WebKitGTK reports a pasted image as type `Files` but hands the page
+  no file, and has no `navigator.clipboard.read()` to fetch it instead.
 - It is a separate Go module (`desktop/go.mod`). Why: the webview needs CGO, and the daemon stays
   CGO-free so it cross-compiles and self-updates as one static binary.
 
