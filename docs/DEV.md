@@ -48,6 +48,7 @@ make setup   # Go modules, pnpm workspace, Playwright's Chromium
 | `make archive` | `dist/homeshell-<os>-<arch>.tar.gz`, the standalone daemon |
 | `make deb`, `make rpm` | The Linux package in `dist/` (`deb-quick` skips the Build-Depends check) |
 | `make dmg` | `dist/HomeShell-<version>-<arch>.dmg` (macOS only) |
+| `make app-macos` | `bin/HomeShell.app`, both binaries in a bundle (macOS only) |
 | `make clean` | Removes `bin/`, `dist/`, the web build and the embedded copy |
 
 - `VERSION` comes from `scripts/version.sh`: the release tag on a tagged commit, otherwise
@@ -73,6 +74,9 @@ make setup   # Go modules, pnpm workspace, Playwright's Chromium
   `libwebkit2gtk-4.1`. Why: the Go build cache ignores `PKG_CONFIG_PATH`, so a cached object can
   silently link the other version. The fix it suggests is `go clean -cache`.
 - macOS (WKWebView) needs no extra dev package.
+- On macOS, run the shell from `bin/HomeShell.app`, not the bare binary. Why: Finder opens a
+  binary outside a bundle in Terminal, and the menu bar, Dock and `Info.plist` settings come
+  from the bundle.
 
 ## Run
 
@@ -84,7 +88,7 @@ make setup   # Go modules, pnpm workspace, Playwright's Chromium
 | `make dev-local` | Same, with data in `db/<branch>` |
 | `make dev-demo` | Same, with `serve -demo` (fake provider, seeded workstreams) |
 | `make dev-daemon`, `make dev-webapp` | One half of `make dev` |
-| `make run-desktop` | Builds everything and opens the desktop window |
+| `make run-desktop` | Builds everything and opens the desktop window (`bin/HomeShell.app` on macOS) |
 | `make run-desktop-local` | Same, attached to the `make run-local` daemon |
 | `make dev-update` | The self-update flow against a fake release server |
 
@@ -92,7 +96,8 @@ make setup   # Go modules, pnpm workspace, Playwright's Chromium
   Flags are in [CONFIGURATION.md](CONFIGURATION.md#command-line-flags).
 - `make run-desktop` alone uses the platform data directory on `:8420`, so next to a
   `make run-local` daemon it collides rather than attaches. Use `make run-desktop-local`.
-- The desktop targets pass `HOMESHELL_HOME_DIR` and `HOMESHELL_ADDR` to the shell.
+- The desktop targets pass `HOMESHELL_HOME_DIR` and `HOMESHELL_ADDR` to the shell. On macOS
+  they go through `open --env`, and `make` returns when the app quits.
 - `make dev-webapp` runs Vite directly, not `nx dev`. Why: Nx puts the shared terminal in raw
   mode, so Ctrl-C stops reaching the `make -j2` group, and it leaks the detached Vite process.
 
@@ -153,7 +158,8 @@ What to test and at which level is in [AGENTS.md](../AGENTS.md#testing-requireme
 2. `check-dev-targets`: see [Dev-target gate](#dev-target-gate).
 3. `go test -tags=dev ./...` in `daemon`. The bridge integration test (`sbridge/bridgecli`) runs
    the real `bridge serve`, with the test binary itself as the bridge.
-4. `go test ./internal/...` in `desktop`, which needs no webview.
+4. `go test ./internal/...` in `desktop`, which needs no webview. On macOS the `appmenu` tests
+   build a real menu bar, so they need a logged-in GUI session.
 5. `pnpm nx run-many -t test` in `webapp`: vitest for every project.
 
 Single tests:
@@ -351,17 +357,19 @@ pull request cancels its running checks.
 | Docs lint and release scripts | `docs-lint` and its tests, `scripts/release.test.sh` |
 | Daemon | `go mod tidy` check, `go vet`, `go test -tags=dev`, cross-compile |
 | Desktop shell | `go mod tidy` check, vet and test `./internal/...`, `make build-desktop` |
+| Desktop shell on macOS | Vet and test `./internal/...`, `make build-desktop` |
 | Webapp | `nx run-many -t lint typecheck test`, production build |
 | Binary build & e2e | `make build`, `make test-e2e`; lists failed and flaky tests, uploads Playwright output |
 
 - CI calls the steps directly rather than `make test` or `make lint`. A step added to one of
   those targets must be added to `ci.yml` too.
-- The daemon job cross-compiles for macOS. Why: every CI job runs on Ubuntu while releases also
-  build on macOS, so a Linux-only syscall would break only in the release build.
+- The daemon job cross-compiles for macOS. Why: it runs on Ubuntu while releases also build the
+  daemon on macOS, so a Linux-only syscall would break only in the release build.
+- The desktop jobs build the CGO binary. The macOS job also compiles and tests the Objective-C
+  menu bar code, which Linux skips.
 - `release-assets-smoke.yml` builds every release artifact for a pull request that touches
-  packaging (`Makefile`, `debian/`, `packaging/`, the asset workflow, `go.mod`) or the desktop
-  app's cgo code (`desktop/cmd/`). It publishes nothing. Why `desktop/cmd/`: the CI desktop job
-  builds on Linux only, so this is the only PR build of the macOS code.
+  packaging (`Makefile`, `debian/`, `packaging/`, the asset workflow, `go.mod`). It publishes
+  nothing.
 - Workflows pin every action to a full commit SHA, with its release tag in a comment. Why: a tag
   can be moved to other code, and the release jobs hold a token that can write releases.
 
@@ -423,9 +431,11 @@ A release contains:
   install these under `/usr/share/doc/homeshell`; macOS apps use `Contents/Resources`.
 - macOS artifacts are unsigned, so Gatekeeper blocks the first open (`TODO(signing)` in
   `packaging/macos/build-app.sh`).
-- The macOS app targets macOS 12 (`MACOSX_DEPLOYMENT_TARGET` on the `dmg` target), the oldest
-  release Go supports, and `build-app.sh` fails if a binary targets another. Why: without it cgo
-  links for the runner's SDK, and the app refuses older systems.
+- `packaging/macos/build-app.sh` assembles `HomeShell.app` for both `make dmg` and
+  `make app-macos`; `make dmg` then wraps it in a disk image with an `/Applications` link.
+- The macOS app targets macOS 12 (`MACOS_MIN` in the `Makefile`), the oldest release Go
+  supports, and `build-app.sh` fails if a binary targets another. Why: without it cgo links for
+  the runner's SDK, and the app refuses older systems.
 - Publishing uses the `SCP_USERNAME`, `SCP_KEY` and `SCP_PASSPHRASE` organization secrets for
   `projects-storage.eclipse.org` (Otterdog). Forks build but never publish.
 

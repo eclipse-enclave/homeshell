@@ -72,13 +72,33 @@ jobs:
       # ./internal/... is pure Go, so it vets and tests without a system webview.
       - run: go vet ./internal/...
       - run: go test ./internal/...
-      # cmd/homeshell-desktop needs CGO and WebKitGTK, and otherwise only
-      # compiles in the release builds.
+      # cmd/homeshell-desktop needs CGO and WebKitGTK.
       - name: Install the webview toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev
       - name: Build the shell, asserting its webkit linkage
+        working-directory: .
+        run: make build-desktop
+
+  desktop-macos:
+    name: Desktop shell on macOS (vet, test, build)
+    # The macOS menu bar is Objective-C behind cgo, which the Linux job above
+    # never compiles or tests.
+    runs-on: macos-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+      - run: go vet ./internal/...
+      - run: go test ./internal/...
+      - name: Build the shell
         working-directory: .
         run: make build-desktop
 

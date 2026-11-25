@@ -502,6 +502,18 @@ flowchart TD
 - It is a separate Go module (`desktop/go.mod`). Why: the webview needs CGO, and the daemon stays
   CGO-free so it cross-compiles and self-updates as one static binary.
 
+### macOS menu bar
+
+`desktop/internal/appmenu` `Install` gives the shell the app, Edit, View and Window menus with
+their standard shortcuts. Why: the webview library creates no menu, and AppKit dispatches
+shortcuts such as Cmd+Q and Cmd+C only through menu items.
+
+- Quit ends the webview's run loop rather than calling `exit()`, so the shell shuts down the same
+  way as when its window closes. That holds for the menu item and for the quit Apple event, which
+  the Dock menu, logout and AppleScript send.
+- The menu bar and Dock take their name and icon from `HomeShell.app`
+  ([Releases](DEV.md#releases)), so a bare `homeshell-desktop` shows neither.
+
 ## Self-update
 
 A standalone release build replaces its own binary with the newest build of the
