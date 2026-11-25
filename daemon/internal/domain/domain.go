@@ -310,6 +310,9 @@ type SessionCapabilities struct {
 	// Note is what the session's row says about where it runs, such as why
 	// HomeShell neither shows nor types into it.
 	Note string `json:"note,omitempty"`
+	// AttachImage is whether the session can take an image (POST {s}/image).
+	// It says what the session can do, not what its state allows right now.
+	AttachImage bool `json:"attachImage,omitempty"`
 }
 
 // LaunchConfig is what a session was last (re)started with: its provider, the

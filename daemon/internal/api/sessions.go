@@ -3,7 +3,9 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 
@@ -38,6 +40,9 @@ func init() {
 	})
 	register("POST /api/projects/{projectId}/workstreams/{workstreamId}/sessions/{sessionId}/key", func(d Deps) http.HandlerFunc {
 		return keyHandler(d)
+	})
+	register("POST /api/projects/{projectId}/workstreams/{workstreamId}/sessions/{sessionId}/image", func(d Deps) http.HandlerFunc {
+		return imageHandler(d)
 	})
 	register("PATCH /api/projects/{projectId}/workstreams/{workstreamId}/sessions/{sessionId}", func(d Deps) http.HandlerFunc {
 		return renameSessionHandler(d)
@@ -292,6 +297,42 @@ func keyHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// imageHandler attaches the image in the request body, its media type the
+// Content-Type, to a session via its provider, and answers with the image's
+// path as the session's agent sees it.
+func imageHandler(d Deps) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		if d.Providers == nil {
+			jsonError(writer, "no providers are available", http.StatusServiceUnavailable)
+			return
+		}
+		// One byte past the limit, like promptHandler, to tell an image that
+		// exactly fills it from one that does not fit.
+		data, err := io.ReadAll(io.LimitReader(request.Body, provider.MaxImageBytes+1))
+		if err != nil {
+			jsonError(writer, "could not read request body", http.StatusBadRequest)
+			return
+		}
+		if len(data) > provider.MaxImageBytes {
+			jsonError(writer, fmt.Sprintf("image is larger than %d MiB", provider.MaxImageBytes>>20), http.StatusRequestEntityTooLarge)
+			return
+		}
+		mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+		if err != nil {
+			jsonError(writer, provider.ErrInvalidImage.Error(), http.StatusBadRequest)
+			return
+		}
+		path, err := d.Providers.AttachImage(request.Context(), sessionRef(request), provider.Image{MediaType: mediaType, Data: data})
+		if err != nil {
+			writeProviderError(writer, err)
+			return
+		}
+		writeJSON(writer, http.StatusOK, struct {
+			Path string `json:"path"`
+		}{Path: path})
 	}
 }
 

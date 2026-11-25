@@ -142,6 +142,8 @@ export interface SessionCapabilities {
   takeOverWarning?: string;
   /** What the row says about where the session runs, e.g. why it is not live. */
   note?: string;
+  /** Whether the session can take an image (`POST {s}/image`), whatever its state now. */
+  attachImage?: boolean;
 }
 
 /** A session's capabilities with the defaults filled in: live, no take-over, no warning. */

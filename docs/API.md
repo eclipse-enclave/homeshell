@@ -312,6 +312,7 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
 | `GET {s}/launch-config` | | `{providerId, optionId, config, schema, continueRefusal?}` |
 | `POST {s}/prompt` | `{text}` | |
 | `POST {s}/key` | `{key}` | |
+| `POST {s}/image` | Raw PNG or JPEG bytes | `{path}` |
 | `POST {s}/open` | `{mode?}` | Open result |
 | `PATCH {s}` | `{title}` | |
 | `DELETE {s}/title` | | |
@@ -345,13 +346,28 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
   turns terminal, kept while it stays terminal, dropped when it runs again. A session first seen
   already terminal has it only if its provider reports when it ended. A daemon restart keeps it
   ([Persistence](ARCHITECTURE.md#persistence)).
-- **Capabilities** (`capabilities: {live, takeOver, stopWarning?, takeOverWarning?, note?}`) are
-  what a client may do with one session. Absent means the session is live (HomeShell sees and
-  types into it), offers no take-over and needs no warning. The provider authors the text: the
-  warnings a client shows before a stop or delete and before a take-over, and the `note` it shows
-  on the session's row. Derived, never persisted. Providers' own capabilities are in
-  [PROVIDERS.md](PROVIDERS.md#capabilities).
+- **Capabilities** (`capabilities: {live, takeOver, stopWarning?, takeOverWarning?, note?,
+  attachImage?}`) are what a client may do with one session. Absent means the session is live
+  (HomeShell sees and types into it), offers no take-over, needs no warning and takes no images.
+  The provider authors the text: the warnings a client shows before a stop or delete and before a
+  take-over, and the `note` it shows on the session's row. `attachImage` says the session can take
+  an image at all, not that its state allows one now. Derived, never persisted. Providers' own
+  capabilities are in [PROVIDERS.md](PROVIDERS.md#capabilities).
 - **Prompt** sends one line of text; body at most 64 KiB (`413`).
+- **Image** attaches an image to the session's agent without submitting its input, and answers
+  with the image's path as the agent sees it. The body is the image itself, its type the
+  `Content-Type`; covered by the same token and origin guard as every endpoint.
+
+  | Status | When |
+  |---|---|
+  | `413` | Body over 10 MiB, a limit of this endpoint only |
+  | `400` | `Content-Type` not `image/png` or `image/jpeg`, or the bytes are not that type |
+  | `501` | The session doesn't declare `attachImage` |
+  | `409` | The session is stopped, or not `idle` or `running` |
+  | `500` | The provider's attach failed; its message is the `error` |
+
+  Why only `idle` and `running`: an image typed into a permission menu can pick an option, and a
+  starting agent may drop it.
 - **Key** sends one of `up`, `down`, `left`, `right`, `enter`, `escape`, `tab`, for navigating
   an agent's menu (`provider.SessionKeys`); another key is `400`.
 - **Open** `mode` defaults to `terminal`.

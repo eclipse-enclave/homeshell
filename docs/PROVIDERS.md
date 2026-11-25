@@ -58,6 +58,7 @@ Capabilities are what clients gate on. Two kinds:
 | Interface | Role | Adds |
 |---|---|---|
 | `Prompter` | Session | `Prompt` and `SendKey`; served as `oneOffPrompt` |
+| `ImageAttacher` | Session | Attaches an image; its sessions that can take one declare `attachImage` |
 | `SessionStartStopper` | Session | Stop and start; `sessionStartStop`. Start may be a restart (`ErrStartIsRestart`) |
 | `SessionRestarter` | Session | Restart with new settings (`PrepareRestart`); served as `sessionRestart` |
 | `ContinueRefuser` | Session | Refuses to continue a conversation another session in the directory makes ambiguous |
@@ -158,6 +159,7 @@ Session-provider capabilities:
 | Max concurrent sessions | unlimited | unlimited | 3 in the demo |
 | Detects waiting | ✓ | | |
 | Prompt and keys | ✓ | ✓ | ✓ |
+| Attach images | | | ✓ |
 | Stop and start | ✓ | ✓ (start is a restart) | ✓ |
 | Restart with new settings | | ✓ | ✓ |
 | Watcher | ✓ | ✓ | ✓ |
@@ -266,6 +268,8 @@ container is Enclave's to manage.
 
 An in-memory provider for `serve -demo` and the e2e suites. It owns the seeded demo sessions,
 cycles one through states, and implements most optional interfaces so each UI path has data.
+Every one of its sessions declares `attachImage`: an attach makes up a `/mnt/host-images/` path
+and echoes `[image: <path>]` into the session's preview, as a prompt echoes its text.
 
 ## Add a session provider
 

@@ -204,7 +204,7 @@ func writeProviderError(w http.ResponseWriter, err error) {
 		jsonError(w, err.Error(), http.StatusNotFound)
 	case errors.Is(err, provider.ErrProviderNotFound), errors.Is(err, provider.ErrCannotCreate),
 		errors.Is(err, provider.ErrInvalidKey), errors.Is(err, provider.ErrUnknownOpenMode),
-		errors.Is(err, provider.ErrEmptySessionTitle):
+		errors.Is(err, provider.ErrEmptySessionTitle), errors.Is(err, provider.ErrInvalidImage):
 		jsonError(w, err.Error(), http.StatusBadRequest)
 	// A name already in use is a conflict with the project's current contents,
 	// like the concurrency limit below: nothing about the request is malformed,
@@ -224,7 +224,7 @@ func writeProviderError(w http.ResponseWriter, err error) {
 		errors.Is(err, provider.ErrNotUntrackedWorktree):
 		jsonError(w, err.Error(), http.StatusConflict)
 	case errors.Is(err, provider.ErrConcurrencyLimit), errors.Is(err, provider.ErrSessionStopped),
-		errors.Is(err, provider.ErrSessionGone),
+		errors.Is(err, provider.ErrSessionGone), errors.Is(err, provider.ErrSessionNotAttachable),
 		errors.Is(err, provider.ErrNoWorkingDir), errors.Is(err, provider.ErrNoLink),
 		errors.Is(err, provider.ErrNoShellEnvironment),
 		errors.Is(err, provider.ErrOpenWithFailed), errors.Is(err, provider.ErrHandoffFailed),

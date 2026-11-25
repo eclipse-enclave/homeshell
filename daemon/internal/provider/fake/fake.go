@@ -203,7 +203,9 @@ type Provider struct {
 	mu      sync.Mutex
 	buckets []*bucket
 	counter int
-	sim     Config
+	// imagesAttached numbers the images attached, for their made-up paths.
+	imagesAttached int
+	sim            Config
 	// sink is captured when Watch starts so mutations outside the demo cycle
 	// (e.g. Prompt) can broadcast a change to clients. Guarded by mu.
 	sink provider.Sink
@@ -220,6 +222,7 @@ var (
 	_ provider.ContinueRefuser        = (*Provider)(nil)
 	_ provider.Watcher                = (*Provider)(nil)
 	_ provider.Prompter               = (*Provider)(nil)
+	_ provider.ImageAttacher          = (*Provider)(nil)
 	_ provider.ShellOpener            = (*Provider)(nil)
 	_ provider.LinkOpener             = (*Provider)(nil)
 )
@@ -333,7 +336,7 @@ func (p *Provider) CreateSession(_ context.Context, req provider.CreateSessionRe
 	}
 	b := p.ensureBucketLocked(req.Workstream.ProjectID, req.WorkingDir)
 	b.sessions = append(b.sessions, session)
-	return session, nil
+	return withCapabilities(session), nil
 }
 
 func (p *Provider) RemoveSession(_ context.Context, ref provider.SessionRef) error {
@@ -349,7 +352,7 @@ func (p *Provider) SessionState(_ context.Context, ref provider.SessionRef) (dom
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if session := p.sessionLocked(ref.SessionID); session != nil {
-		return *session, nil
+		return withCapabilities(*session), nil
 	}
 	return domain.Session{}, fmt.Errorf("session %q not found", ref.SessionID)
 }
@@ -416,7 +419,7 @@ func (p *Provider) DiscoverSessions(_ context.Context, project provider.ProjectR
 			continue
 		}
 		for _, sess := range sessionBucket.sessions {
-			out = append(out, provider.DiscoveredSession{WorkingDir: sessionBucket.workingDir, Session: sess})
+			out = append(out, provider.DiscoveredSession{WorkingDir: sessionBucket.workingDir, Session: withCapabilities(sess)})
 		}
 	}
 	return out, nil
@@ -590,6 +593,34 @@ func (p *Provider) Prompt(_ context.Context, ref provider.SessionRef, text strin
 // observable way Prompt does.
 func (p *Provider) SendKey(_ context.Context, ref provider.SessionRef, key string) error {
 	return p.echoIntoPreview(ref, "[key: "+key+"]")
+}
+
+// AttachImage stands in for importing an image into an image inbox: it makes
+// up the path the image would have there and echoes it into the session's
+// preview, the observable way Prompt does.
+func (p *Provider) AttachImage(_ context.Context, ref provider.SessionRef, image provider.Image) (string, error) {
+	extension := ".png"
+	if image.MediaType == "image/jpeg" {
+		extension = ".jpg"
+	}
+	p.mu.Lock()
+	p.imagesAttached++
+	path := fmt.Sprintf("/mnt/host-images/homeshell-%d%s", p.imagesAttached, extension)
+	p.mu.Unlock()
+	if err := p.echoIntoPreview(ref, "[image: "+path+"]"); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// sessionCapabilities are every fake session's: all are live, and all can take
+// an image. Shared and never mutated.
+var sessionCapabilities = domain.SessionCapabilities{Live: true, AttachImage: true}
+
+// withCapabilities returns session with the fake's session capabilities.
+func withCapabilities(session domain.Session) domain.Session {
+	session.Capabilities = &sessionCapabilities
+	return session
 }
 
 // echoIntoPreview appends a line to a session's preview and broadcasts, so the
