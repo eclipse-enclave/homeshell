@@ -141,20 +141,32 @@ func Send(ctx context.Context, sock string, input []byte) error {
 	defer cancel()
 	return exchange(ctx, "send", sock, func(conn net.Conn) error {
 		if err := proto.WriteHandshake(conn, proto.Handshake{Kind: proto.KindSend}); err != nil {
-			return err
+			return responseOr(conn, err)
 		}
 		if _, err := conn.Write(input); err != nil {
-			return err
+			return responseOr(conn, err)
 		}
 		// EOF tells the bridge the input is complete; the ack comes back on the
 		// still-open read side.
 		if uc, ok := conn.(*net.UnixConn); ok {
 			if err := uc.CloseWrite(); err != nil {
-				return err
+				return responseOr(conn, err)
 			}
 		}
 		return proto.ReadResponse(conn)
 	})
+}
+
+// responseOr returns the bridge's error response if it sent one, and
+// writeErr otherwise. A bridge that refuses a request answers and hangs up
+// without reading the rest of it, so a failed write can have the reason
+// waiting to be read.
+func responseOr(conn net.Conn, writeErr error) error {
+	var refused *proto.ResponseError
+	if errors.As(proto.ReadResponse(conn), &refused) {
+		return refused
+	}
+	return writeErr
 }
 
 // Stop shuts the bridge down: the agent gets SIGTERM, and its process group

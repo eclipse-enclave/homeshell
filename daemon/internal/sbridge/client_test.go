@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eclipsesource/homeshell/daemon/internal/sbridge/proto"
 	"github.com/eclipsesource/homeshell/daemon/internal/sbridge/sbridgetest"
 )
 
@@ -215,6 +216,42 @@ func TestSendSurfacesTheBridgesError(t *testing.T) {
 	sbridgetest.Listen(t, sock, func(conn net.Conn) { _, _ = io.WriteString(conn, "err send failed\n") })
 	if err := Send(context.Background(), sock, []byte("x")); err == nil || !strings.Contains(err.Error(), "send failed") || errors.Is(err, ErrNotServing) {
 		t.Fatalf("Send = %v, want the bridge's error", err)
+	}
+}
+
+// The bridge reads the request line and hangs up without reading the input.
+// The input is bigger than the socket buffer, so the client is always still
+// writing it when that happens.
+func TestSendToABridgeThatHangsUpBeforeReadingTheInput(t *testing.T) {
+	tests := []struct {
+		name     string
+		response string // what the bridge answers before it hangs up
+	}{
+		{"the bridge's error when it answers", "err send failed\n"},
+		{"the failed write when it says nothing", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sock := filepath.Join(sbridgetest.TempDir(t), "bridge.sock")
+			sbridgetest.Listen(t, sock, func(conn net.Conn) {
+				if _, err := proto.ReadHandshake(conn); err != nil {
+					t.Errorf("request line: %v", err)
+				}
+				_, _ = io.WriteString(conn, tt.response)
+			})
+			err := Send(context.Background(), sock, []byte(strings.Repeat("x", 4<<20)))
+			if tt.response != "" {
+				var refused *proto.ResponseError
+				if !errors.As(err, &refused) || refused.Msg != "send failed" {
+					t.Fatalf("Send = %v, want the bridge's error", err)
+				}
+				return
+			}
+			var failed *net.OpError
+			if !errors.As(err, &failed) || failed.Op != "write" {
+				t.Fatalf("Send = %v, want the write error", err)
+			}
+		})
 	}
 }
 

@@ -2,6 +2,7 @@ package proto
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -64,6 +65,13 @@ func TestResponseLines(t *testing.T) {
 	err := ReadResponse(&buf)
 	if err == nil || !strings.Contains(err.Error(), "send failed again") {
 		t.Fatalf("err response: %v", err)
+	}
+	var refused *ResponseError
+	if !errors.As(err, &refused) {
+		t.Errorf("err response = %T, want a *ResponseError", err)
+	}
+	if err := ReadResponse(strings.NewReader("")); errors.As(err, &refused) {
+		t.Errorf("no response = %v, want a read error, not a *ResponseError", err)
 	}
 }
 
