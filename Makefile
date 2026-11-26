@@ -23,9 +23,10 @@ BINARY    := $(BIN_DIR)/homeshell
 DESKTOP_DIR := desktop
 DESKTOP_BIN := $(BIN_DIR)/homeshell-desktop
 WEB_DIST  := webapp/apps/web/dist
+FAVICON   := webapp/apps/web/public/favicon.svg
 EMBED_DIR := daemon/internal/webui/dist
 
-.PHONY: all help setup check-tools build build-webapp embed build-daemon build-desktop check-webview check-desktop-linkage archive deb deb-quick rpm dmg icon run run-local run-desktop run-desktop-local dev dev-local dev-demo dev-daemon dev-update dev-update-build dev-update-server dev-update-daemon dev-webapp test test-docs-lint test-release-scripts test-e2e check-dev-targets print-dev-token lint docs-lint fmt clean
+.PHONY: all help setup check-tools build build-webapp embed build-daemon build-desktop check-webview check-desktop-linkage archive deb deb-quick rpm dmg icon check-icon test-icon run run-local run-desktop run-desktop-local dev dev-local dev-demo dev-daemon dev-update dev-update-build dev-update-server dev-update-daemon dev-webapp test test-docs-lint test-release-scripts test-e2e check-dev-targets print-dev-token lint docs-lint fmt clean
 
 all: build
 
@@ -140,9 +141,23 @@ run-local: build
 HOMESHELL_HOME_DIR ?=
 HOMESHELL_ADDR     ?=
 
-## icon         render packaging/homeshell.svg to packaging/linux/homeshell.png (needs rsvg-convert)
+## icon         render packaging/homeshell.svg to the Linux PNG (needs rsvg-convert) and the web
+##              favicon
 icon:
 	rsvg-convert -w 512 -h 512 packaging/homeshell.svg -o packaging/linux/homeshell.png
+	mkdir -p $(dir $(FAVICON))
+	bash packaging/favicon.sh packaging/homeshell.svg > $(FAVICON).tmp
+	mv $(FAVICON).tmp $(FAVICON)
+
+# The favicon is derived text, so unlike the PNG it can be compared without a renderer.
+check-icon:
+	@bash packaging/favicon.sh packaging/homeshell.svg | diff -u $(FAVICON) - || { \
+		printf '%s is out of date with packaging/homeshell.svg: run "make icon".\n' '$(FAVICON)'; \
+		exit 1; \
+	}
+
+test-icon:
+	bash packaging/favicon.test.sh
 
 ## archive      build the standalone dist/homeshell-<os>-<arch>.tar.gz (web UI embedded)
 ##              Usage: make archive [GOOS=linux GOARCH=arm64] [BUILD_CHANNEL=rolling]
@@ -327,7 +342,7 @@ dev-webapp:
 	cd webapp/apps/web && $(PNPM) exec vite dev
 
 ## test         run daemon and webapp unit tests (+ docs-lint, release-script and dev-target gates)
-test: test-docs-lint test-release-scripts check-dev-targets
+test: test-docs-lint test-release-scripts test-icon check-dev-targets
 	cd daemon && $(GO) test -tags=dev ./...
 	cd $(DESKTOP_DIR) && $(GO) test ./internal/...
 	cd webapp && $(PNPM) nx run-many -t test
@@ -394,7 +409,7 @@ docs-lint:
 	bash scripts/docs-lint/lint.sh
 
 ## lint         static checks for both projects, plus the docs lint
-lint: docs-lint
+lint: docs-lint check-icon
 	@unformatted=$$(gofmt -l daemon/ $(DESKTOP_DIR)/); \
 	if [ -n "$$unformatted" ]; then \
 		printf 'Go files not formatted (run "make fmt" to fix):\n'; \
