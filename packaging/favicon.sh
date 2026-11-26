@@ -15,18 +15,40 @@ set -euo pipefail
 svg="$1"
 icon=$(<"$svg")
 
-replace() {
-  local from="$1" to="$2" count
-  count=$(grep -cF -- "$from" <<<"$icon" || true)
+# expect_once <text>: fail unless exactly one line of the icon contains text.
+expect_once() {
+  local count
+  count=$(grep -cF -- "$1" <<<"$icon" || true)
   if [ "$count" != 1 ]; then
-    printf 'favicon.sh: expected one line with %s in %s, found %s\n' "$from" "$svg" "$count" >&2
+    printf 'favicon.sh: expected one line with %s in %s, found %s\n' "$1" "$svg" "$count" >&2
     exit 1
   fi
-  icon=${icon/"$from"/"$to"}
+}
+
+replace() {
+  expect_once "$1"
+  icon=${icon/"$1"/"$2"}
+}
+
+# remove_block <start> <end>: drop the lines from the one containing start through the next one
+# containing end.
+remove_block() {
+  local start="$1" end="$2" out
+  expect_once "$start"
+  if ! out=$(awk -v start="$start" -v end="$end" '
+      index($0, start) { skipping = 1 }
+      !skipping { print }
+      skipping && index($0, end) { skipping = 0 }
+      END { exit skipping }' <<<"$icon"); then
+    printf 'favicon.sh: no %s after %s in %s\n' "$end" "$start" "$svg" >&2
+    exit 1
+  fi
+  icon=$out
 }
 
 replace '<svg xmlns="http://www.w3.org/2000/svg"' \
   $'<!-- Generated from packaging/homeshell.svg by `make icon`. -->\n<svg xmlns="http://www.w3.org/2000/svg"'
 replace ' viewBox="0 0 1024 1024" width="1024" height="1024"' ' viewBox="100 100 824 824"'
 replace ' filter="url(#shadow)"' ''
+remove_block '<filter id="shadow"' '</filter>'
 printf '%s\n' "$icon"

@@ -52,6 +52,12 @@ else
   bad "drops the tile's shadow"
 fi
 
+if [[ "$favicon" != *'<filter'* && "$favicon" != *'feDropShadow'* ]]; then
+  ok "drops the unused shadow filter"
+else
+  bad "drops the unused shadow filter" "$(grep -n -A2 '<filter' <<<"$favicon")"
+fi
+
 if [[ "$favicon" == *'<title>HomeShell</title>'* && "$favicon" == *'stroke-linejoin="round"'* ]]; then
   ok "keeps the artwork"
 else
@@ -70,8 +76,14 @@ expect_fail "fails when the canvas changes" 'viewBox="0 0 1024 1024"' "$tmp/resi
 sed 's/ filter="url(#shadow)"//' "$icon" >"$tmp/flat.svg"
 expect_fail "fails when the tile has no shadow" 'filter="url(#shadow)"' "$tmp/flat.svg"
 
+sed '/<filter id="shadow"/,/<\/filter>/d' "$icon" >"$tmp/no-filter.svg"
+expect_fail "fails when the shadow filter is missing" '<filter id="shadow"' "$tmp/no-filter.svg"
+
 sed 's/<rect x="640"/<rect filter="url(#shadow)" x="640"/' "$icon" >"$tmp/two-shadows.svg"
 expect_fail "fails when two shapes have a shadow" "found 2" "$tmp/two-shadows.svg"
+
+sed 's|^  </defs>|    <filter id="shadow"></filter>\n  </defs>|' "$icon" >"$tmp/two-filters.svg"
+expect_fail "fails when the shadow filter occurs twice" "found 2" "$tmp/two-filters.svg"
 
 echo
 echo "passed: $pass, failed: $fail"
