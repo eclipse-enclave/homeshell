@@ -382,18 +382,31 @@ func writeStubEnclave(t *testing.T, script string) *realCLI {
 }
 
 // The command inside the container is agent-controlled, so its output is capped
-// rather than buffered until the deadline.
+// rather than buffered until the deadline. Repeated, as the command killed at
+// the cap may or may not leave output unread in its pty.
 func TestExecOutputStopsAtTheCap(t *testing.T) {
 	cli := writeStubEnclave(t, "exec yes model/endless\n")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	start := time.Now()
-	out, err := cli.ExecOutput(ctx, t.TempDir(), "hs-1", "opencode", []string{"models"})
-	if err == nil || !strings.Contains(err.Error(), "output over") {
-		t.Fatalf("ExecOutput on endless output = %d bytes, %v; want an output-over-the-cap error", len(out), err)
-	}
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Errorf("ExecOutput took %s, want it to stop at the cap rather than at the deadline", elapsed)
+	for range 20 {
+		type result struct {
+			out []byte
+			err error
+		}
+		done := make(chan result, 1)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			out, err := cli.ExecOutput(ctx, t.TempDir(), "hs-1", "opencode", []string{"models"})
+			done <- result{out, err}
+		}()
+		select {
+		case got := <-done:
+			if got.err == nil || !strings.Contains(got.err.Error(), "output over") {
+				t.Fatalf("ExecOutput on endless output = %d bytes, %v; want an output-over-the-cap error",
+					len(got.out), got.err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("ExecOutput did not return; want it to stop at the cap rather than at the deadline")
+		}
 	}
 }
 

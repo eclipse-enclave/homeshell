@@ -760,6 +760,9 @@ func (c *realCLI) ExecOutput(ctx context.Context, projectDir, sessionName, tool 
 	out, _ := io.ReadAll(io.LimitReader(ptmx, maxExecOutput+1))
 	if len(out) > maxExecOutput {
 		cancel() // kills the group, so Wait returns
+		// A process exiting with unread pty output waits in the tty close for it
+		// to drain (macOS); closing the master lets it finish exiting.
+		_ = ptmx.Close()
 		_ = cmd.Wait()
 		return nil, fmt.Errorf("%s exec %v: output over %d bytes", binaryName, argv, maxExecOutput)
 	}
