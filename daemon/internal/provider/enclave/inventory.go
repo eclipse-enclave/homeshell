@@ -67,6 +67,7 @@ func (p *Provider) listInventory(ctx context.Context) inventory {
 		listed.generations[name] = guard.generation
 	}
 	p.bridges.mu.Unlock()
+	p.folders.forget()
 	listed.projects = p.storeProjects()
 	for _, project := range listed.projects {
 		listing := projectListing{project: project}

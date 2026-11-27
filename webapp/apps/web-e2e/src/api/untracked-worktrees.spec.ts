@@ -1,5 +1,7 @@
-import { access } from 'node:fs/promises';
+import { access, symlink } from 'node:fs/promises';
+import { basename, dirname, join, relative } from 'node:path';
 import type { APIRequestContext } from '@playwright/test';
+import { daemonDir } from '../e2e-env';
 import { expect, test, tempProjectDir } from '../fixtures';
 import { addWorktree, git, gitProject, tempGitRepo } from '../git-repo';
 import { addProjectWithDefault } from '../projects';
@@ -181,6 +183,23 @@ test.describe('untracked worktrees API', () => {
     expect(added).toMatchObject({ name: 'taken-2', branch: 'taken' });
   });
 
+  test('added by a path through a symlink, it works in the folder git lists', async ({
+    request,
+  }) => {
+    const { projectId, path } = await suggestedWorktree(request, {
+      branch: 'linked',
+    });
+    const link = join(await tempProjectDir('hs-untracked-link-'), 'link');
+    await symlink(dirname(path), link);
+
+    const added = await addedWorktree(
+      request,
+      projectId,
+      join(link, basename(path)),
+    );
+    expect(added).toMatchObject({ name: 'linked', workingDir: path });
+  });
+
   test('adding a path that is not an untracked worktree is refused', async ({
     request,
   }) => {
@@ -192,6 +211,11 @@ test.describe('untracked worktrees API', () => {
     const elsewhere = await tempProjectDir('hs-untracked-elsewhere-');
     expect(
       (await addUntrackedWorktree(request, projectId, elsewhere)).status(),
+    ).toBe(409);
+    // Relative to the folder the daemon runs in, it names the worktree.
+    const fromDaemon = relative(daemonDir, path);
+    expect(
+      (await addUntrackedWorktree(request, projectId, fromDaemon)).status(),
     ).toBe(409);
 
     expect(

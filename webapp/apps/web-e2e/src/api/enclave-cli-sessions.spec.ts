@@ -5,6 +5,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -255,47 +256,55 @@ test.describe('Enclave sessions started with the CLI', () => {
     }
   });
 
-  test('a CLI session in an untracked worktree is counted on its suggestion and shows once it is added', async () => {
-    test.setTimeout(60_000);
-    const daemon = await isolatedDaemon({ inventoryMs: 200 });
-    try {
-      const repo = join(daemon.root, 'repo');
-      mkdirSync(repo);
-      await git(repo, 'init', '-q', '-b', 'main');
-      await git(repo, 'commit', '-q', '--allow-empty', '-m', 'initial');
-      const worktree = join(daemon.root, 'wt');
-      await git(repo, 'worktree', 'add', '-q', '-b', 'wt', worktree);
-      const projectId = await addEmptyProject(daemon.api, repo);
-      const path = realpathSync(worktree);
-      cliContainer(daemon.fixture, {
-        name: background,
-        session: 'bg',
-        dir: path,
-        projectDir: realpathSync(repo),
-        background: true,
-      });
+  // Enclave reports a container's folders by their real paths, whatever path the project was added by.
+  for (const via of ['by its path', 'through a symlink']) {
+    test(`a CLI session in an untracked worktree is counted on its suggestion and shows once it is added, the project added ${via}`, async () => {
+      test.setTimeout(60_000);
+      const daemon = await isolatedDaemon({ inventoryMs: 200 });
+      try {
+        const repo = join(daemon.root, 'repo');
+        mkdirSync(repo);
+        await git(repo, 'init', '-q', '-b', 'main');
+        await git(repo, 'commit', '-q', '--allow-empty', '-m', 'initial');
+        const worktree = join(daemon.root, 'wt');
+        await git(repo, 'worktree', 'add', '-q', '-b', 'wt', worktree);
+        let projectPath = repo;
+        if (via === 'through a symlink') {
+          projectPath = join(daemon.root, 'repo-link');
+          symlinkSync(repo, projectPath);
+        }
+        const projectId = await addEmptyProject(daemon.api, projectPath);
+        const path = realpathSync(worktree);
+        cliContainer(daemon.fixture, {
+          name: background,
+          session: 'bg',
+          dir: path,
+          projectDir: realpathSync(repo),
+          background: true,
+        });
 
-      await pollFor('the session to be counted', async () =>
-        (await untrackedOf(daemon.api, projectId)).find(
-          (w) => w.path === path && w.sessionCount === 1,
-        ),
-      );
-      const added = await addUntrackedWorktree(daemon.api, projectId, path);
-      expect(added.status(), await added.text()).toBe(201);
-      const workstreamId = (await added.json()).id;
-      const shown = await pollFor('the session to show', async () =>
-        (await sessionsOf(daemon.api, projectId, workstreamId)).find(
-          (s) => s.id === background,
-        ),
-      );
-      expect(shown.provider).toBe('enclave');
-      expect(attaches(daemon.fixture)).toHaveLength(1);
+        await pollFor('the session to be counted', async () =>
+          (await untrackedOf(daemon.api, projectId)).find(
+            (w) => w.path === path && w.sessionCount === 1,
+          ),
+        );
+        const added = await addUntrackedWorktree(daemon.api, projectId, path);
+        expect(added.status(), await added.text()).toBe(201);
+        const workstreamId = (await added.json()).id;
+        const shown = await pollFor('the session to show', async () =>
+          (await sessionsOf(daemon.api, projectId, workstreamId)).find(
+            (s) => s.id === background,
+          ),
+        );
+        expect(shown.provider).toBe('enclave');
+        expect(attaches(daemon.fixture)).toHaveLength(1);
 
-      const base = `/api/projects/${projectId}/workstreams/${workstreamId}/sessions`;
-      await daemon.api.delete(`${base}/${background}`);
-      await daemon.api.delete(`/api/projects/${projectId}`);
-    } finally {
-      await daemon.stop();
-    }
-  });
+        const base = `/api/projects/${projectId}/workstreams/${workstreamId}/sessions`;
+        await daemon.api.delete(`${base}/${background}`);
+        await daemon.api.delete(`/api/projects/${projectId}`);
+      } finally {
+        await daemon.stop();
+      }
+    });
+  }
 });

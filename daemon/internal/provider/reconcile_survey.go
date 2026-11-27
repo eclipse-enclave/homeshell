@@ -298,31 +298,32 @@ func claimedFolders(projects []domain.Project) []string {
 
 // hideSessions gives each suggestion in untracked the sessions hidden in its
 // folder: those stored hidden there, those of a workstream adopted there
-// before it was listed, and those discovered there now. Matched by cleaned
-// folder, as workstreams are, so a session counted there is one that attaches
-// once the folder is added. It returns the suggested folders, and the
-// sessions stored hidden on folders suggested no more, for a workstream
-// working there to take.
-func (r *Reconciler) hideSessions(untracked []domain.UntrackedWorktree, stored domain.Project,
-	found discovery) (suggested map[string]bool, unhidden map[string][]domain.Session) {
+// before it was listed, and those discovered there now. Matched by folder key,
+// as workstreams are, so a session counted there is one that attaches once the
+// folder is added. It returns the keys of the suggested folders, and by key
+// the sessions left for the owner of a folder (owners) to take: those stored
+// hidden on a folder suggested no more, and those of an adopted workstream
+// that yields the folder to its owner.
+func (r *Reconciler) hideSessions(untracked []domain.UntrackedWorktree, stored domain.Project, found discovery,
+	owners map[string]string) (suggested map[string]bool, unhidden map[string][]domain.Session) {
 	suggested = map[string]bool{}
 	for _, folder := range untracked {
-		suggested[cleanDir(folder.Path)] = true
+		suggested[found.folders.key(folder.Path)] = true
 	}
 	unhidden = map[string][]domain.Session{}
 	for _, folder := range stored.UntrackedWorktrees {
-		dir := cleanDir(folder.Path)
-		unhidden[dir] = append(unhidden[dir], folder.Sessions...)
+		key := found.folders.key(folder.Path)
+		unhidden[key] = append(unhidden[key], folder.Sessions...)
 	}
 	for _, workstream := range stored.Workstreams {
-		if dir := cleanDir(workstream.WorkingDir); isAdopted(workstream) && suggested[dir] {
-			unhidden[dir] = append(unhidden[dir], workstream.Sessions...)
+		if key := found.folders.key(workstream.WorkingDir); yieldsFolder(workstream, key, suggested, owners) {
+			unhidden[key] = append(unhidden[key], workstream.Sessions...)
 		}
 	}
 	for i := range untracked {
-		dir := cleanDir(untracked[i].Path)
-		untracked[i].Sessions = append(r.retainedSessions(unhidden[dir], found), found.sessions[dir]...)
-		delete(unhidden, dir)
+		key := found.folders.key(untracked[i].Path)
+		untracked[i].Sessions = append(r.retainedSessions(unhidden[key], found), found.sessions[key]...)
+		delete(unhidden, key)
 	}
 	return suggested, unhidden
 }

@@ -231,7 +231,9 @@ stateDiagram-v2
 - **Adopt.** The reconciler makes up a workstream (`disc-…` ID) for sessions a provider reports
   in a directory no workstream claims (`provider/reconcile.go` `adoptedWorkstream`). A directory
   that is an untracked worktree is suggested instead, not adopted: its sessions are hidden on the
-  suggestion and counted there, and a workstream adopted there earlier is dropped.
+  suggestion and counted there, and a workstream adopted there earlier is dropped. One adopted
+  in a directory that a workstream then works in is dropped too, and that workstream takes its
+  sessions.
 - **Remove.** `provider.Service.Remove` refuses while a session is busy unless forced, removes
   each session through its provider, then lets the workstream provider discard the directory.
   The workstream stays listed, holding its sessions, until its record is dropped at the end.
@@ -301,8 +303,9 @@ flowchart TB
 - **Refresh.** Each pass asks a workstream provider that is a `Refresher` for each of its
   workstreams as it is now (the branch checked out in its folder); a name it gives that another
   workstream in the project has is not taken.
-- **Matching.** Sessions group by cleaned working directory: existing workstreams take theirs,
-  untracked worktrees hide theirs, other unclaimed directories get an adopted workstream. A
+- **Matching.** Sessions group by working directory, symlinks resolved, so two paths to one
+  directory match: existing workstreams take theirs, untracked worktrees hide theirs, other
+  unclaimed directories get an adopted workstream, working in the directory as first reported. A
   session ID reported again supersedes the stored one wherever it was.
 - **Untracked worktrees.** For a git project, each pass has every workstream provider that is a
   `FolderSurveyor` survey its folder listing: listed folders that no project and no workstream of
@@ -445,6 +448,11 @@ the agent's PTY and serves screen snapshots on a unix socket; the wire format is
   allow all network: unrestricted mode has no allowlist for it to change.
 - **Sandbox settings** come from Enclave's config and features, cached briefly
   (`provider/enclave/sandbox.go`); HomeShell passes them through.
+- **Ownership.** A container belongs to the project that owns its folder, the project's or a
+  workstream's; only when no project does, to the project Enclave resolved it to
+  (`provider/enclave/enclave.go` `ownsContainerIn`). Folders match with symlinks resolved, each
+  resolution remembered until the next check. Why: Enclave and git report a folder by its real
+  path, and a project may be added by another.
 - **CLI sessions.** The same check adopts sessions started with the `enclave` CLI
   (`provider/enclave/adopt.go` `adoptListed`); the flowchart below shows which:
   - a background one gets a bridge around `enclave attach` and is HomeShell's own from then on;

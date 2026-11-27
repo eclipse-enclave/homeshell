@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -547,9 +548,11 @@ func (s *Service) addDefaultWorkstream(ctx context.Context, projectID string, pr
 
 // AddUntrackedWorktree makes a workstream of the project's untracked worktree
 // at path, creating nothing on disk: named like its suggestion, numbered when
-// that name is taken. The sessions hidden there attach to it. A folder that is
-// not suggested now, checked against a fresh listing, is refused with
-// ErrNotUntrackedWorktree; outside git nothing is suggested.
+// that name is taken. The sessions hidden there attach to it. The path may
+// reach the folder through symlinks; the workstream takes the suggestion's. A
+// folder that is not suggested now, checked against a fresh listing, is
+// refused with ErrNotUntrackedWorktree, as is a relative path; outside git
+// nothing is suggested.
 func (s *Service) AddUntrackedWorktree(ctx context.Context, projectID, path string) (domain.Workstream, error) {
 	added, err := s.addUntrackedWorktree(ctx, projectID, path)
 	if err != nil {
@@ -571,12 +574,16 @@ func (s *Service) addUntrackedWorktree(ctx context.Context, projectID, path stri
 	if err != nil {
 		return domain.Workstream{}, ErrProjectNotFound
 	}
+	if !filepath.IsAbs(path) {
+		return domain.Workstream{}, ErrNotUntrackedWorktree
+	}
 	suggestions, err := s.reconciler.untracked(ctx, project)
 	if err != nil {
 		return domain.Workstream{}, err
 	}
+	requested := newFolderSet([]string{path})
 	index := slices.IndexFunc(suggestions, func(suggestion untrackedSuggestion) bool {
-		return domain.SameFolder(suggestion.folder.Path, path)
+		return requested.has(suggestion.folder.Path)
 	})
 	if index < 0 {
 		return domain.Workstream{}, ErrNotUntrackedWorktree

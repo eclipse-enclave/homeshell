@@ -386,7 +386,7 @@ func TestCreatedWorkstreamAppearsOnEventStream(t *testing.T) {
 }
 
 // worktreeHandler builds a handler over a git project proj-git with one linked
-// worktree on branch wt-a, and returns the worktree's path.
+// worktree on branch wt-a, and returns the worktree's path as git lists it.
 func worktreeHandler(t *testing.T) (http.Handler, string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -405,6 +405,11 @@ func worktreeHandler(t *testing.T) (http.Handler, string) {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
+	}
+	// git lists the worktree, and so the daemon suggests it, at its real path.
+	dir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
 	projectStore := store.NewTestStore(t, []domain.Project{{
 		ID: "proj-git", Name: "git", Path: repo, GitBacked: true, Workstreams: []domain.Workstream{},

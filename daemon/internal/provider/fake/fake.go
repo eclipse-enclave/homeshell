@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/eclipsesource/homeshell/daemon/internal/domain"
+	"github.com/eclipsesource/homeshell/daemon/internal/git"
 	"github.com/eclipsesource/homeshell/daemon/internal/pathutil"
 	"github.com/eclipsesource/homeshell/daemon/internal/provider"
 	"github.com/eclipsesource/homeshell/daemon/internal/provider/enclave/sandboxschema"
@@ -404,22 +405,39 @@ func (p *Provider) LinkURL(_ context.Context, ref provider.SessionRef, linkID st
 }
 
 // DiscoverSessions reports the sessions of a project: those in its directory or
-// below it, and those it put elsewhere. A project removed and added again at the
-// same path finds the sessions it left running in the workstream directories the
-// fake created there.
+// below it, by their paths or with symlinks resolved, and those it put
+// elsewhere. A project removed and added again finds the sessions it left
+// running in the workstream directories the fake created there.
 func (p *Provider) DiscoverSessions(_ context.Context, project provider.ProjectRef) ([]provider.DiscoveredSession, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	projectRealDir := sync.OnceValue(func() string { return realDir(project.Path) })
 	var out []provider.DiscoveredSession
-	for _, sessionBucket := range p.buckets {
-		if sessionBucket.projectID != project.ID && !within(project.Path, sessionBucket.workingDir) {
+	// Symlinks are resolved on a copy, the lock released.
+	for _, sessionBucket := range p.bucketsCopy() {
+		workingDir := sessionBucket.workingDir
+		if sessionBucket.projectID != project.ID && !within(project.Path, workingDir) &&
+			!within(projectRealDir(), realDir(workingDir)) {
 			continue
 		}
 		for _, sess := range sessionBucket.sessions {
-			out = append(out, provider.DiscoveredSession{WorkingDir: sessionBucket.workingDir, Session: sess})
+			out = append(out, provider.DiscoveredSession{WorkingDir: workingDir, Session: sess})
 		}
 	}
 	return out, nil
+}
+
+// bucketsCopy is the buckets as they are now, each with its own session list.
+func (p *Provider) bucketsCopy() []bucket {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	buckets := make([]bucket, 0, len(p.buckets))
+	for _, sessionBucket := range p.buckets {
+		buckets = append(buckets, bucket{
+			projectID:  sessionBucket.projectID,
+			workingDir: sessionBucket.workingDir,
+			sessions:   slices.Clone(sessionBucket.sessions),
+		})
+	}
+	return buckets
 }
 
 func (p *Provider) StartSession(_ context.Context, ref provider.SessionRef) error {
@@ -689,12 +707,22 @@ func (p *Provider) removeSessionLocked(sessionID string) bool {
 	return false
 }
 
-// within reports whether dir is projectDir or below it.
+// within reports whether dir is projectDir or below it. No directory is within
+// or holds an unnamed one.
 func within(projectDir, dir string) bool {
-	if projectDir == "" {
+	if projectDir == "" || dir == "" {
 		return false
 	}
 	return pathutil.Within(dir, projectDir)
+}
+
+// realDir is dir with symlinks resolved, or empty for a relative one, which
+// names no one directory.
+func realDir(dir string) string {
+	if !filepath.IsAbs(dir) {
+		return ""
+	}
+	return git.RealPath(dir)
 }
 
 // demoPreview builds a canned terminal tail for a demo session, embedding the

@@ -139,7 +139,7 @@ func pastStartup(p *Provider, id string) {
 
 func discoverBridge(t *testing.T, p *Provider, project provider.ProjectRef) domain.Session {
 	t.Helper()
-	p.sampleBridges(context.Background(), p.detectionAgents(), func(container Container) bool { return ownsContainerIn(p.storeProjects(), project, container) }, true)
+	p.sampleBridges(context.Background(), p.detectionAgents(), func(container Container) bool { return p.ownsContainerIn(p.storeProjects(), project, container) }, true)
 	p.waitForBridgeSamples()
 	out, err := p.DiscoverWatchedSessions(context.Background(), project)
 	if err != nil {
@@ -812,9 +812,97 @@ func TestContainerOwnershipByProjectOrFolder(t *testing.T) {
 		{"record without a project, another folder", projects, projectA, Container{Directory: "/repo-wt"}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := ownsContainerIn(test.projects, test.project, test.container); got != test.want {
+			if got := (&Provider{}).ownsContainerIn(test.projects, test.project, test.container); got != test.want {
 				t.Errorf("ownsContainerIn = %v, want %v", got, test.want)
 			}
 		})
+	}
+}
+
+// A project owns the containers in its folders by any path to them: Enclave and git
+// report a folder by its real path, and a project may be added through a symlink.
+func TestContainerOwnershipThroughASymlink(t *testing.T) {
+	repo, worktree, elsewhere := t.TempDir(), t.TempDir(), t.TempDir()
+	links := t.TempDir()
+	link := func(name, target string) string {
+		path := filepath.Join(links, name)
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	repoLink, worktreeLink := link("repo", repo), link("worktree", worktree)
+	for _, test := range []struct {
+		name      string
+		projects  []domain.Project
+		container Container
+		want      bool
+	}{
+		{"the project folder, the project added through a symlink",
+			[]domain.Project{{ID: "a", Path: repoLink}}, Container{Directory: repo, ProjectDir: repo}, true},
+		{"the project folder, reported through a symlink",
+			[]domain.Project{{ID: "a", Path: repo}}, Container{Directory: repoLink}, true},
+		{"a workstream's folder, reported through a symlink",
+			[]domain.Project{{ID: "a", Path: repo, Workstreams: []domain.Workstream{{ID: "w", WorkingDir: worktree}}}},
+			Container{Directory: worktreeLink}, true},
+		{"an unclaimed worktree of the project Enclave resolved, the project added through a symlink",
+			[]domain.Project{{ID: "a", Path: repoLink}}, Container{Directory: worktree, ProjectDir: repo}, true},
+		{"a worktree another project is, by a symlink to it",
+			[]domain.Project{{ID: "a", Path: repo}, {ID: "b", Path: worktreeLink}},
+			Container{Directory: worktree, ProjectDir: repo}, false},
+		{"another folder",
+			[]domain.Project{{ID: "a", Path: repoLink}}, Container{Directory: elsewhere}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project := refOf(test.projects[0])
+			if got := (&Provider{}).ownsContainerIn(test.projects, project, test.container); got != test.want {
+				t.Errorf("ownsContainerIn = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+// A folder's resolution is remembered until forgotten, then found anew.
+func TestFolderPathsForgetASymlinkRetargeted(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(first, link); err != nil {
+		t.Fatal(err)
+	}
+	var folders folderPaths
+	if !folders.same(link, first) {
+		t.Fatalf("same(%s, %s) = false, want the link to name its target", link, first)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(second, link); err != nil {
+		t.Fatal(err)
+	}
+	if !folders.same(link, first) {
+		t.Errorf("same(%s, %s) = false before forget, want the remembered answer", link, first)
+	}
+	folders.forget()
+	if folders.same(link, first) || !folders.same(link, second) {
+		t.Errorf("after forget the link names %s still, want %s", first, second)
+	}
+}
+
+// Relative and empty paths never resolve: they name no one folder.
+func TestFolderPathsSame(t *testing.T) {
+	var folders folderPaths
+	for _, test := range []struct {
+		dir, other string
+		want       bool
+	}{
+		{"/repo", "/repo/", true},
+		{"", "", false},
+		{"/repo", "", false},
+		{"repo", "repo", true},
+		{"repo", "/repo", false},
+	} {
+		if got := folders.same(test.dir, test.other); got != test.want {
+			t.Errorf("same(%q, %q) = %v, want %v", test.dir, test.other, got, test.want)
+		}
 	}
 }
