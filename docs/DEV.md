@@ -210,6 +210,8 @@ flowchart LR
   native folder dialog off and slows fake session starts
   ([test variables](CONFIGURATION.md#for-tests)).
 - The token is `e2e-fixed-api-token` unless `HOMESHELL_API_TOKEN` is set.
+- `playwright.config.ts` clears `HOMESHELL_SETTINGS_FILE`, so every daemon of the run reads the
+  `settings.json` in its own home rather than one the shell names.
 - Some specs start a daemon of their own on an ephemeral port: `src/isolated-daemon.ts` for
   restarts, `src/enclave-helpers.ts` for Enclave sessions. The latter replaces the `enclave`
   CLI with a fixture script that keeps its state in the directory `HOMESHELL_ENCLAVE_FIXTURE`

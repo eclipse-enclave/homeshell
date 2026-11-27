@@ -66,8 +66,6 @@ export async function isolatedDaemon(options: { inventoryMs?: number } = {}) {
           ...process.env,
           PATH: `${binaries}:/usr/bin:/bin`,
           ...runtimeEnv(root),
-          // The seeded file, even when the runner's shell names another.
-          HOMESHELL_SETTINGS_FILE: settingsFile,
           HOMESHELL_ENCLAVE_FIXTURE: fixture,
           HOMESHELL_API_TOKEN: 'enclave-bridge-api',
           HOMESHELL_UPDATE_BASE_URL: 'http://127.0.0.1:9/',
