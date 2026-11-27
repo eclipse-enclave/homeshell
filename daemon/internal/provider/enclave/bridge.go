@@ -731,7 +731,7 @@ func (p *Provider) projectBridges(project provider.ProjectRef, projects []domain
 	for _, id := range slices.Sorted(maps.Keys(bridges.records)) {
 		record := bridges.records[id]
 		// A restart under a new name shows as the session it restarts until it ends.
-		if record.ReplacingFrom != "" || !ownsContainerIn(projects, project, record.Container) {
+		if record.ReplacingFrom != "" || !p.ownsContainerIn(projects, project, record.Container) {
 			continue
 		}
 		session, ok := bridges.observed[id]
@@ -742,7 +742,7 @@ func (p *Provider) projectBridges(project provider.ProjectRef, projects []domain
 	}
 	for name, restarting := range bridges.restarting {
 		restarted := Container{Directory: restarting.workingDir, ProjectDir: restarting.projectDir}
-		if !ownsContainerIn(projects, project, restarted) {
+		if !p.ownsContainerIn(projects, project, restarted) {
 			continue
 		}
 		out = slices.DeleteFunc(out, func(discovered provider.DiscoveredSession) bool { return discovered.Session.ID == name })
@@ -771,7 +771,7 @@ func (p *Provider) changeDetector() func(context.Context) bool {
 		}
 		// A directory owned by two projects is still one target to sample per tick.
 		p.sampleBridges(ctx, p.detectionAgents(), func(container Container) bool {
-			return slices.ContainsFunc(projects, func(project provider.ProjectRef) bool { return ownsContainerIn(snapshot, project, container) })
+			return slices.ContainsFunc(projects, func(project provider.ProjectRef) bool { return p.ownsContainerIn(snapshot, project, container) })
 		}, true)
 		for id := range previous {
 			if !slices.ContainsFunc(projects, func(project provider.ProjectRef) bool { return project.ID == id }) {

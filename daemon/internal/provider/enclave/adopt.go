@@ -72,7 +72,7 @@ func (p *Provider) adoptRunning(ctx context.Context, listed inventory) (attempte
 	for _, listing := range listed.listings {
 		project := refOf(listing.project)
 		for _, container := range listing.containers {
-			if seen[container.Name] || !ownsContainerIn(listed.projects, project, container) {
+			if seen[container.Name] || !p.ownsContainerIn(listed.projects, project, container) {
 				continue
 			}
 			seen[container.Name] = true
@@ -196,7 +196,7 @@ func (p *Provider) endForeground(listed inventory) bool {
 		}
 		listedWithout, listFailed := false, false
 		for _, listing := range listed.listings {
-			if !ownsContainerIn(listed.projects, refOf(listing.project), record.Container) {
+			if !p.ownsContainerIn(listed.projects, refOf(listing.project), record.Container) {
 				continue
 			}
 			if listing.err != nil {

@@ -448,6 +448,11 @@ the agent's PTY and serves screen snapshots on a unix socket; the wire format is
   allow all network: unrestricted mode has no allowlist for it to change.
 - **Sandbox settings** come from Enclave's config and features, cached briefly
   (`provider/enclave/sandbox.go`); HomeShell passes them through.
+- **Ownership.** A container belongs to the project that owns its folder, the project's or a
+  workstream's; only when no project does, to the project Enclave resolved it to
+  (`provider/enclave/enclave.go` `ownsContainerIn`). Folders match with symlinks resolved, each
+  resolution remembered until the next check. Why: Enclave and git report a folder by its real
+  path, and a project may be added by another.
 - **CLI sessions.** The same check adopts sessions started with the `enclave` CLI
   (`provider/enclave/adopt.go` `adoptListed`); the flowchart below shows which:
   - a background one gets a bridge around `enclave attach` and is HomeShell's own from then on;

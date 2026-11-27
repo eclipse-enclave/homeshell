@@ -13,6 +13,7 @@ import (
 	"github.com/eclipsesource/homeshell/daemon/internal/agentmodel"
 	"github.com/eclipsesource/homeshell/daemon/internal/agentspec"
 	"github.com/eclipsesource/homeshell/daemon/internal/domain"
+	"github.com/eclipsesource/homeshell/daemon/internal/git"
 	"github.com/eclipsesource/homeshell/daemon/internal/pathutil"
 	"github.com/eclipsesource/homeshell/daemon/internal/provider"
 	"github.com/eclipsesource/homeshell/daemon/internal/sbridge"
@@ -99,6 +100,10 @@ type Provider struct {
 
 	// inventoryEvery overrides driftCheckInterval when positive (inventory.go).
 	inventoryEvery time.Duration
+
+	// folders matches a container's folders to a project's with symlinks resolved
+	// (ownsContainerIn), each resolution remembered until the next inventory pass.
+	folders folderPaths
 }
 
 // restartProjection publishes the in-flight replacement of an owned session.
@@ -345,7 +350,7 @@ func (p *Provider) SessionState(ctx context.Context, ref provider.SessionRef) (d
 // checkProject rejects a ref whose project does not own the session's directory.
 func (p *Provider) checkProject(ref provider.SessionRef, record bridgeRecord) error {
 	path, owned := p.projectPath(ref.ProjectID)
-	if !owned || !ownsContainerIn(p.storeProjects(), provider.ProjectRef{ID: ref.ProjectID, Path: path}, record.Container) {
+	if !owned || !p.ownsContainerIn(p.storeProjects(), provider.ProjectRef{ID: ref.ProjectID, Path: path}, record.Container) {
 		return fmt.Errorf("unknown project %q", ref.ProjectID)
 	}
 	return nil
@@ -422,7 +427,7 @@ func (p *Provider) OpenShell(ctx context.Context, ref provider.SessionRef) (prov
 // with the directory it runs in so the daemon can match it to a workstream.
 func (p *Provider) DiscoverSessions(ctx context.Context, project provider.ProjectRef) ([]provider.DiscoveredSession, error) {
 	projects := p.storeProjects()
-	p.sampleBridges(ctx, p.detectionAgents(), func(container Container) bool { return ownsContainerIn(projects, project, container) }, false)
+	p.sampleBridges(ctx, p.detectionAgents(), func(container Container) bool { return p.ownsContainerIn(projects, project, container) }, false)
 	return p.projectBridges(project, projects), nil
 }
 
@@ -440,23 +445,24 @@ func refOf(project domain.Project) provider.ProjectRef {
 
 // ownsContainerIn reports whether the project owns a container, against a store snapshot: it runs in the project
 // folder or a workstream's working directory, or Enclave resolved it to the project. A container belongs to the
-// project that owns its directory; only when none does, to the project Enclave resolved it to.
-func ownsContainerIn(projects []domain.Project, project provider.ProjectRef, container Container) bool {
-	if ownsDirIn(projects, project, container.Directory) {
+// project that owns its directory; only when none does, to the project Enclave resolved it to. Folders match by
+// any path to them, as Enclave and git report a folder by its real path.
+func (p *Provider) ownsContainerIn(projects []domain.Project, project provider.ProjectRef, container Container) bool {
+	if p.ownsDirIn(projects, project, container.Directory) {
 		return true
 	}
-	if container.ProjectDir == "" || !domain.SameFolder(container.ProjectDir, project.Path) {
+	if !p.folders.same(container.ProjectDir, project.Path) {
 		return false
 	}
 	// A folder another project owns (a linked worktree added as its own project) is that project's session.
 	return !slices.ContainsFunc(projects, func(other domain.Project) bool {
-		return ownsDirIn(projects, refOf(other), container.Directory)
+		return p.ownsDirIn(projects, refOf(other), container.Directory)
 	})
 }
 
 // ownsDirIn reports whether a directory is the project's own or a workstream's working directory.
-func ownsDirIn(projects []domain.Project, project provider.ProjectRef, sessionDir string) bool {
-	if domain.SameFolder(sessionDir, project.Path) {
+func (p *Provider) ownsDirIn(projects []domain.Project, project provider.ProjectRef, sessionDir string) bool {
+	if p.folders.same(sessionDir, project.Path) {
 		return true
 	}
 	for _, candidate := range projects {
@@ -464,12 +470,56 @@ func ownsDirIn(projects []domain.Project, project provider.ProjectRef, sessionDi
 			continue
 		}
 		for _, workstream := range candidate.Workstreams {
-			if domain.SameFolder(workstream.WorkingDir, sessionDir) {
+			if p.folders.same(workstream.WorkingDir, sessionDir) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// folderPaths compares folder paths with their symlinks resolved, remembering each
+// resolution until forget. The zero value is ready to use.
+type folderPaths struct {
+	mu       sync.Mutex
+	resolved map[string]string
+}
+
+// same reports whether two paths name one folder: cleaned, or with symlinks
+// resolved. No folder is unnamed, and a relative path names no one folder, so it
+// is only cleaned.
+func (f *folderPaths) same(dir, other string) bool {
+	switch {
+	case dir == "" || other == "":
+		return false
+	case domain.SameFolder(dir, other):
+		return true
+	case !filepath.IsAbs(dir) || !filepath.IsAbs(other):
+		return false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.realPathLocked(dir) == f.realPathLocked(other)
+}
+
+// realPathLocked is dir with symlinks resolved (git.RealPath); called with f.mu held.
+func (f *folderPaths) realPathLocked(dir string) string {
+	resolved, ok := f.resolved[dir]
+	if !ok {
+		if f.resolved == nil {
+			f.resolved = map[string]string{}
+		}
+		resolved = git.RealPath(dir)
+		f.resolved[dir] = resolved
+	}
+	return resolved
+}
+
+// forget drops every remembered resolution, so a symlink changed since resolves anew.
+func (f *folderPaths) forget() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resolved = nil
 }
 
 // Prompt delivers a one-off line of text to the session's agent over the
