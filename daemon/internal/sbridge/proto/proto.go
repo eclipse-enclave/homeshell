@@ -18,7 +18,6 @@
 package proto
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -116,8 +115,15 @@ func WriteErr(w io.Writer, msg string) error {
 	return err
 }
 
-// ReadResponse consumes the server's response line and returns an error
-// carrying the server's message when it is not "ok".
+// ResponseError is the server's "err" response, carrying its message.
+type ResponseError struct {
+	Msg string
+}
+
+func (e *ResponseError) Error() string { return e.Msg }
+
+// ReadResponse consumes the server's response line and returns a
+// *ResponseError carrying the server's message when it is not "ok".
 func ReadResponse(r io.Reader) error {
 	line, err := readLine(r)
 	if err != nil {
@@ -127,7 +133,7 @@ func ReadResponse(r io.Reader) error {
 		return nil
 	}
 	if msg, found := strings.CutPrefix(line, "err "); found {
-		return errors.New(msg)
+		return &ResponseError{Msg: msg}
 	}
 	return fmt.Errorf("unexpected response %q", line)
 }

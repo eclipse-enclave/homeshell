@@ -61,6 +61,12 @@ arrive within 3 seconds.
 
 `stop` holds the connection open until the bridge exits.
 
+A bridge that refuses a request can answer `err` and close before it has read all of it, such as
+a `send` whose input stopped reaching the PTY. `sbridge.Send` still reads the response when its
+write fails, so it reports the bridge's reason rather than a broken pipe. Clients of the other
+requests need not: the bridge reads their whole request line before it answers, and once it has
+answered an `attach` with `ok` it never sends `err`.
+
 ## Snapshot
 
 The `dump` payload (`sbridge.Snapshot`):
