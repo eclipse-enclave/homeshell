@@ -1,0 +1,29 @@
+<!--
+  Copyright (C) 2026 EclipseSource GmbH and others.
+
+  This program and the accompanying materials are made available under the
+  terms of the MIT License, which is available in the project root.
+
+  SPDX-License-Identifier: MIT
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>HomeShell</title>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4C95E6"/>
+      <stop offset="1" stop-color="#1D57A6"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#0B2A55" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- Layer 1: the tile, on the macOS icon grid (an 824-unit body in a 1024 canvas). -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)" filter="url(#shadow)"/>
+
+  <!-- Layer 2: the house. The same-colored stroke rounds its corners. -->
+  <g fill="#FFFFFF" stroke="#FFFFFF" stroke-width="28" stroke-linejoin="round">
+    <rect x="640" y="300" width="62" height="130"/>
+    <path d="M 512 238 L 792 488 L 728 488 L 728 776 L 296 776 L 296 488 L 232 488 Z"/>
+  </g>
+</svg>
