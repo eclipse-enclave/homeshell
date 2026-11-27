@@ -1,5 +1,6 @@
 import type { Session, SessionState } from '@homeshell/model';
 import {
+  acceptsImageNow,
   dotStateLabel,
   endedAgo,
   hasSessionRuntime,
@@ -420,12 +421,12 @@ export function SessionRow({
     : stopWarning;
   const promptable = live && onPrompt && hasRuntime;
   // Whether the session takes images at all. Whether it takes one now is its
-  // state's call, idle or running only (docs/API.md, POST {s}/image); outside
-  // those the button stays, disabled, so it does not flicker as the agent works.
+  // state's call (acceptsImageNow); outside those states the button stays,
+  // disabled, so it does not flicker as the agent works.
   const attachable = Boolean(onAttachImage && attachImage);
   const attachDisabledReason =
     disabledReason ??
-    (session.state === 'idle' || session.state === 'running'
+    (acceptsImageNow(session.state)
       ? undefined
       : 'Images can be attached while the session is idle or running');
   const startable = ended && onStart;

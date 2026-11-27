@@ -1,4 +1,5 @@
 import {
+  acceptsImageNow,
   displaySessionState,
   hasSessionRuntime,
   isSessionActive,
@@ -49,6 +50,21 @@ describe('hasSessionRuntime', () => {
     ['error', false],
   ] as const)('%s: %s', (state, has) => {
     expect(hasSessionRuntime(state)).toBe(has);
+  });
+});
+
+describe('acceptsImageNow', () => {
+  it.each([
+    ['idle', true],
+    ['running', true],
+    ['waiting', false],
+    ['unknown', false],
+    ['starting', false],
+    ['stopped', false],
+    ['done', false],
+    ['error', false],
+  ] as const)('%s: %s', (state, accepts) => {
+    expect(acceptsImageNow(state)).toBe(accepts);
   });
 });
 
