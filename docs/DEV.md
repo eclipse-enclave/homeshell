@@ -210,10 +210,14 @@ flowchart LR
   native folder dialog off and slows fake session starts
   ([test variables](CONFIGURATION.md#for-tests)).
 - The token is `e2e-fixed-api-token` unless `HOMESHELL_API_TOKEN` is set.
+- `playwright.config.ts` clears `HOMESHELL_SETTINGS_FILE`, so every daemon of the run reads the
+  `settings.json` in its own home rather than one the shell names.
 - Some specs start a daemon of their own on an ephemeral port: `src/isolated-daemon.ts` for
   restarts, `src/enclave-helpers.ts` for Enclave sessions. The latter replaces the `enclave`
   CLI with a fixture script that keeps its state in the directory `HOMESHELL_ENCLAVE_FIXTURE`
-  names, so no Docker is needed. `isolatedDaemon({ inventoryMs })` sets the inventory check
+  names, so no Docker is needed. Its seeded `settings.json` names a second fixture script as the
+  custom terminal command; that one records its arguments in `terminal.json` in the fixture
+  directory and opens no window. `isolatedDaemon({ inventoryMs })` sets the inventory check
   interval ([test variables](CONFIGURATION.md#for-tests)), and `cliContainer` writes a container
   as a terminal `enclave` would leave it, for the specs on sessions started with the CLI.
 - `src/global-teardown.ts` stops the shared daemon's bridges, kills and reports any process

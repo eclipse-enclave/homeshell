@@ -42,18 +42,16 @@ test.describe('Enclave host bridge', () => {
       expect(countRuns()).toBe(1);
 
       // The terminal launcher is an external recorder; no real desktop window.
-      if (process.platform === 'linux') {
-        const opened = await daemon.api.post(`${path}/open`, {
-          data: { mode: 'terminal' },
-        });
-        expect(opened.status()).toBe(200);
-        const recorded = join(daemon.fixture, 'terminal.json');
-        await expect.poll(() => existsSync(recorded)).toBe(true);
-        const terminal = JSON.parse(readFileSync(recorded, 'utf8')) as string[];
-        expect(terminal.join(' ')).toMatch(
-          /['"]?bridge['"]?\s+['"]?attach['"]?\s+['"]?--sock/,
-        );
-      }
+      const opened = await daemon.api.post(`${path}/open`, {
+        data: { mode: 'terminal' },
+      });
+      expect(opened.status()).toBe(200);
+      const recorded = join(daemon.fixture, 'terminal.json');
+      await expect.poll(() => existsSync(recorded)).toBe(true);
+      const terminal = JSON.parse(readFileSync(recorded, 'utf8')) as string[];
+      expect(terminal.join(' ')).toMatch(
+        /['"]?bridge['"]?\s+['"]?attach['"]?\s+['"]?--sock/,
+      );
 
       const key = await daemon.api.post(`${path}/key`, {
         data: { key: 'up' },

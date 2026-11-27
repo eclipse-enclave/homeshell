@@ -30,6 +30,9 @@ const WEB_URL = webUrl;
 process.env.HOMESHELL_E2E_ROOT = e2eRoot;
 process.env.HOMESHELL_E2E_BIN = homeshellBin;
 process.env.HOMESHELL_E2E_RUN_START ||= String(Date.now());
+// It takes precedence over -home-dir, so every daemon the run starts would read and
+// write the file it names instead of the settings.json seeded in its home.
+delete process.env.HOMESHELL_SETTINGS_FILE;
 
 /** 4 locally (`PW_WORKERS` overrides; a number or a percentage), Playwright's default in CI. */
 const workers =

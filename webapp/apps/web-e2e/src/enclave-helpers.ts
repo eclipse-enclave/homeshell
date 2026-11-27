@@ -36,11 +36,19 @@ export async function isolatedDaemon(options: { inventoryMs?: number } = {}) {
   const root = isolatedHome('encl');
   const fixture = join(root, 'fixture');
   mkdirSync(fixture);
+  const settingsFile = join(root, 'settings.json');
   writeFileSync(
-    join(root, 'settings.json'),
+    settingsFile,
     JSON.stringify({
       schemaVersion: 2,
-      settings: { notifications: { style: 'none' } },
+      settings: {
+        notifications: { style: 'none' },
+        // The recording fixture, not a real window.
+        terminal: {
+          emulator: 'custom',
+          command: `${quote(join(binaries, 'fixture-terminal'))} {command}`,
+        },
+      },
       logLevel: 'warn',
     }),
   );
@@ -59,7 +67,6 @@ export async function isolatedDaemon(options: { inventoryMs?: number } = {}) {
           PATH: `${binaries}:/usr/bin:/bin`,
           ...runtimeEnv(root),
           HOMESHELL_ENCLAVE_FIXTURE: fixture,
-          TERMINAL: join(binaries, 'fixture-terminal'),
           HOMESHELL_API_TOKEN: 'enclave-bridge-api',
           HOMESHELL_UPDATE_BASE_URL: 'http://127.0.0.1:9/',
           ...(options.inventoryMs === undefined
@@ -272,10 +279,12 @@ export function attachPid(fixture: string, sessionId: string) {
   return Number(readFileSync(join(fixture, `attach-pid-${sessionId}`), 'utf8'));
 }
 
+/** `value` single-quoted for a POSIX shell. */
+const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
 function nodeExecutable(name: string, script: string) {
   // Use Playwright's own Node binary, even with the daemon's restricted PATH.
   // Shell quoting also supports installation paths containing spaces or quotes.
-  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
   writeFileSync(
     join(binaries, name),
     `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)} "$@"\n`,
