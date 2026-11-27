@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/eclipsesource/homeshell/daemon/internal/domain"
 	"github.com/eclipsesource/homeshell/daemon/internal/git"
@@ -69,6 +70,19 @@ func (set *folderSet) realPath(folder string) string {
 		set.resolved[folder] = resolvedPath
 	}
 	return resolvedPath
+}
+
+// key names folder in a map of folders: its path with symlinks resolved, so
+// two paths to one folder share a key. No folder has the empty key, and a
+// relative path, which names no one folder, is only cleaned.
+func (set *folderSet) key(folder string) string {
+	switch {
+	case folder == "":
+		return ""
+	case !filepath.IsAbs(folder):
+		return filepath.Clean(folder)
+	}
+	return set.realPath(folder)
 }
 
 // has reports whether folder is one of the set's.

@@ -15,7 +15,8 @@ import (
 )
 
 // addWorktree adds a linked worktree of the repository at repo in a fresh
-// folder, on a new branch or, given none, detached, and returns its path.
+// folder, on a new branch or, given none, detached, and returns its path as
+// git lists it, symlinks resolved.
 func addWorktree(t *testing.T, repo, branch string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "wt")
@@ -26,7 +27,11 @@ func addWorktree(t *testing.T, repo, branch string) string {
 	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
 		t.Fatalf("git worktree add: %v\n%s", err, out)
 	}
-	return dir
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }
 
 // surveyRepo surveys the repository at repo as the core sees it now.

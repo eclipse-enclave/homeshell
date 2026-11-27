@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/eclipsesource/homeshell/daemon/internal/domain"
@@ -46,6 +48,103 @@ func TestReconcileMatchesDiscoveredSessionsByWorkingDir(t *testing.T) {
 	}
 	if w.State != domain.SessionRunning {
 		t.Errorf("workstream state = %q, want running (recomputed)", w.State)
+	}
+}
+
+// realFolder is a folder that exists, by its path with symlinks resolved.
+func realFolder(t *testing.T) string {
+	t.Helper()
+	folder, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return folder
+}
+
+// A session attaches to the workstream working in its folder, whichever of
+// the two is named by a path through a symlink.
+func TestReconcileMatchesASessionAcrossASymlink(t *testing.T) {
+	tests := []struct {
+		name string
+		// dirs returns the workstream's and the session's paths to folder.
+		dirs func(t *testing.T, folder string) (workstreamDir, sessionDir string)
+	}{
+		{name: "the session reported through a symlink", dirs: func(t *testing.T, folder string) (string, string) {
+			return folder, throughSymlink(t, folder)
+		}},
+		{name: "the workstream working through a symlink", dirs: func(t *testing.T, folder string) (string, string) {
+			return throughSymlink(t, folder), folder
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workstreamDir, sessionDir := tt.dirs(t, realFolder(t))
+			projectStore := store.NewTestStore(t, []domain.Project{{ID: "p1", Name: "p1", Path: "/p1", Workstreams: []domain.Workstream{
+				{ID: "ws1", Name: "ws", Provider: "core", WorkingDir: workstreamDir, Sessions: []domain.Session{}},
+			}}})
+			registry := NewRegistry()
+			registry.RegisterSessionProvider(&stubSessionProvider{id: "prov", available: true, discovered: map[string][]DiscoveredSession{
+				"p1": {ds(sessionDir, "s1", domain.SessionRunning)},
+			}})
+			NewReconciler(projectStore, registry, 0).Reconcile(context.Background())
+
+			workstreams := projectStore.Projects()[0].Workstreams
+			if len(workstreams) != 1 || workstreams[0].ID != "ws1" || workstreams[0].WorkingDir != workstreamDir {
+				t.Fatalf("workstreams = %+v, want ws1 alone, still in %s", workstreams, workstreamDir)
+			}
+			if ids := sessionIDs(workstreams[0].Sessions); !slices.Equal(ids, []string{"s1"}) {
+				t.Errorf("sessions = %q, want [s1] attached", ids)
+			}
+		})
+	}
+}
+
+// Sessions reported in one folder by two paths get one adopted workstream,
+// working in the folder as first reported.
+func TestReconcileAdoptsOneWorkstreamForAFolderReportedByTwoPaths(t *testing.T) {
+	folder := realFolder(t)
+	link := throughSymlink(t, folder)
+	projectStore := store.NewTestStore(t, []domain.Project{{ID: "p1", Path: "/p1", Workstreams: []domain.Workstream{}}})
+	registry := NewRegistry()
+	registry.RegisterSessionProvider(&stubSessionProvider{id: "prov", available: true, discovered: map[string][]DiscoveredSession{
+		"p1": {ds(link, "s1", domain.SessionRunning), ds(folder, "s2", domain.SessionRunning)},
+	}})
+	NewReconciler(projectStore, registry, 0).Reconcile(context.Background())
+
+	workstreams := projectStore.Projects()[0].Workstreams
+	if len(workstreams) != 1 || workstreams[0].WorkingDir != link {
+		t.Fatalf("workstreams = %+v, want one adopted in %s", workstreams, link)
+	}
+	if ids := sessionIDs(workstreams[0].Sessions); !slices.Equal(ids, []string{"s1", "s2"}) {
+		t.Errorf("sessions = %q, want [s1 s2]", ids)
+	}
+}
+
+// An adopted workstream yields its folder, and its sessions, to a workstream
+// working there by another path, even one whose provider is not asked.
+func TestReconcileDropsAnAdoptedWorkstreamInAFolderAnotherWorksIn(t *testing.T) {
+	folder := realFolder(t)
+	link := throughSymlink(t, folder)
+	projectStore := store.NewTestStore(t, []domain.Project{{ID: "p1", Name: "p1", Path: "/p1", Workstreams: []domain.Workstream{
+		{ID: adoptedWorkstreamID(folder), Name: "adopted", Provider: "prov", WorkingDir: folder, Sessions: []domain.Session{
+			{ID: "s1", Provider: "prov", State: domain.SessionRunning},
+			{ID: "s2", Provider: "other", State: domain.SessionRunning},
+		}},
+		{ID: "ws1", Name: "ws", Provider: "core", WorkingDir: link, Sessions: []domain.Session{}},
+	}}})
+	registry := NewRegistry()
+	registry.RegisterSessionProvider(&stubSessionProvider{id: "prov", available: true, discovered: map[string][]DiscoveredSession{
+		"p1": {ds(folder, "s1", domain.SessionRunning)},
+	}})
+	registry.RegisterSessionProvider(&stubSessionProvider{id: "other", available: true})
+	NewReconciler(projectStore, registry, 0).reconcileOnly(context.Background(), dirtySet{ids: map[string]bool{"prov": true}})
+
+	workstreams := projectStore.Projects()[0].Workstreams
+	if len(workstreams) != 1 || workstreams[0].ID != "ws1" {
+		t.Fatalf("workstreams = %+v, want ws1 alone", workstreams)
+	}
+	if ids := sessionIDs(workstreams[0].Sessions); !slices.Equal(ids, []string{"s2", "s1"}) {
+		t.Errorf("sessions = %q, want [s2 s1]: the one kept, then the one found", ids)
 	}
 }
 

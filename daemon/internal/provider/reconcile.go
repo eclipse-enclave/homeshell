@@ -205,8 +205,12 @@ func (r *Reconciler) reconcileProjectOnly(ctx context.Context, project ProjectRe
 
 // discovery is what the session providers reported in one pass.
 type discovery struct {
-	// sessions are the sessions reported, by the cleaned folder they run in.
+	// folders keys the folders of the pass (folderSet.key), each resolved once.
+	folders *folderSet
+	// sessions are the sessions reported, by the key of the folder they run in.
 	sessions map[string][]domain.Session
+	// reportedDirs are those folders, by key, each as first reported.
+	reportedDirs map[string]string
 	// refreshed are the providers that reported, so one that hit a transient
 	// error does not flush its sessions from the store.
 	refreshed map[string]bool
@@ -222,9 +226,11 @@ type discovery struct {
 // observes in the project.
 func (r *Reconciler) discover(ctx context.Context, project ProjectRef, only dirtySet) discovery {
 	found := discovery{
-		sessions:   map[string][]domain.Session{},
-		refreshed:  map[string]bool{},
-		superseded: map[string]bool{},
+		folders:      newFolderSet(),
+		sessions:     map[string][]domain.Session{},
+		reportedDirs: map[string]string{},
+		refreshed:    map[string]bool{},
+		superseded:   map[string]bool{},
 	}
 	for _, sessionProvider := range r.registry.SessionProviders() {
 		if !only.has(sessionProvider.ID()) {
@@ -255,10 +261,13 @@ func (r *Reconciler) discover(ctx context.Context, project ProjectRef, only dirt
 		for _, discovered := range sessions {
 			session := discovered.Session
 			session.Provider = sessionProvider.ID()
-			dir := cleanDir(discovered.WorkingDir)
-			found.sessions[dir] = append(found.sessions[dir], session)
-			if dir != "" {
+			key := found.folders.key(discovered.WorkingDir)
+			found.sessions[key] = append(found.sessions[key], session)
+			if key != "" {
 				found.superseded[session.ID] = true
+				if _, reported := found.reportedDirs[key]; !reported {
+					found.reportedDirs[key] = filepath.Clean(discovered.WorkingDir)
+				}
 			}
 		}
 	}
@@ -303,30 +312,39 @@ func (r *Reconciler) projectPass(ctx context.Context, project ProjectRef, only d
 	if survey.stale {
 		r.cachedListings.forget(project.ID)
 	}
-	suggested, unhidden := r.hideSessions(survey.untracked, stored, found)
+	owners := folderOwners(stored.Workstreams, found.folders)
+	suggested, unhidden := r.hideSessions(survey.untracked, stored, found, owners)
 
 	result := []domain.Workstream{}
 	var vanished []string
 	matchedDirs := maps.Clone(suggested)
 
 	// Pass 1: existing workstreams keep their identity; re-attach sessions by
-	// matching working directory. One working in a folder suggested until now
-	// takes the sessions hidden there; one adopted in a folder suggested now
-	// gave its sessions to the suggestion. One whose folder vanished stays,
-	// marked, and holds its folder's sessions until it is removed.
+	// matching working directory, symlinks resolved. The owner of a folder
+	// takes its sessions, and those hidden there while it was suggested. An
+	// adopted workstream gave its sessions to the suggestion for its folder,
+	// or to the owner. One whose folder vanished stays, marked, and holds its
+	// folder's sessions until it is removed.
 	for _, workstream := range stored.Workstreams {
 		if isPlaceholder(workstream) {
 			result = append(result, workstream)
 			continue
 		}
-		dir := cleanDir(workstream.WorkingDir)
-		if isAdopted(workstream) && suggested[dir] {
+		key := found.folders.key(workstream.WorkingDir)
+		if yieldsFolder(workstream, key, suggested, owners) {
 			continue
 		}
-		sessions := r.retainedSessions(slices.Concat(workstream.Sessions, unhidden[dir]), found)
-		if dir != "" {
-			sessions = append(sessions, found.sessions[dir]...)
-			matchedDirs[dir] = true
+		owns := key != "" && owners[key] == workstream.ID
+		kept := workstream.Sessions
+		if owns {
+			kept = slices.Concat(kept, unhidden[key])
+		}
+		sessions := r.retainedSessions(kept, found)
+		if owns {
+			sessions = append(sessions, found.sessions[key]...)
+		}
+		if key != "" {
+			matchedDirs[key] = true
 		}
 		workstream.Sessions = sessions
 		// A failed listing proves nothing either way: the mark stays, and
@@ -342,11 +360,11 @@ func (r *Reconciler) projectPass(ctx context.Context, project ProjectRef, only d
 
 	// Pass 2: discovered sessions whose directory matches no known workstream
 	// or suggestion get a workstream adopted for them.
-	for dir, sessions := range found.sessions {
-		if dir == "" || matchedDirs[dir] {
+	for key, sessions := range found.sessions {
+		if key == "" || matchedDirs[key] {
 			continue
 		}
-		result = append(result, adoptedWorkstream(dir, sessions))
+		result = append(result, adoptedWorkstream(found.reportedDirs[key], sessions))
 	}
 
 	r.refresh(ctx, project, result)
@@ -360,6 +378,33 @@ func (r *Reconciler) projectPass(ctx context.Context, project ProjectRef, only d
 		slog.Warn("projecting workstreams failed", "project", project.ID, "error", err)
 	}
 	return vanished
+}
+
+// folderOwners names, by folder key, the workstream that takes the sessions
+// found in each folder: the first that is no adopted one, else the first
+// adopted. Placeholders own none.
+func folderOwners(workstreams []domain.Workstream, folders *folderSet) map[string]string {
+	owners := map[string]string{}
+	adoptedOwns := map[string]bool{}
+	for _, workstream := range workstreams {
+		key := folders.key(workstream.WorkingDir)
+		if key == "" || isPlaceholder(workstream) {
+			continue
+		}
+		_, owned := owners[key]
+		if !owned || adoptedOwns[key] && !isAdopted(workstream) {
+			owners[key] = workstream.ID
+			adoptedOwns[key] = isAdopted(workstream)
+		}
+	}
+	return owners
+}
+
+// yieldsFolder reports whether an adopted workstream, working in the folder
+// key names, is dropped: the folder is suggested now, or another workstream
+// owns it.
+func yieldsFolder(workstream domain.Workstream, key string, suggested map[string]bool, owners map[string]string) bool {
+	return isAdopted(workstream) && key != "" && (suggested[key] || owners[key] != workstream.ID)
 }
 
 // retainedSessions are the stored sessions a pass keeps: only while a
@@ -465,13 +510,6 @@ func adoptedWorkstream(dir string, sessions []domain.Session) domain.Workstream 
 func adoptedWorkstreamID(dir string) string {
 	sum := sha1.Sum([]byte(dir))
 	return fmt.Sprintf("%s%x", adoptedIDPrefix, sum[:8])
-}
-
-func cleanDir(dir string) string {
-	if dir == "" {
-		return ""
-	}
-	return filepath.Clean(dir)
 }
 
 // Run does an initial reconcile, starts any Watcher providers, and then keeps

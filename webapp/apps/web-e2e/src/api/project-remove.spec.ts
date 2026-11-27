@@ -1,11 +1,15 @@
+import { symlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { APIRequestContext } from '@playwright/test';
 import { expect, test, tempProjectDir } from '../fixtures';
 import { isPlaceholderSession } from '../placeholders';
-import { addEmptyProject } from '../projects';
+import { addEmptyProject, addProjectWithDefault } from '../projects';
 import {
   createProject,
+  createSession,
   createWorkstream,
   pollFor,
+  projectOf,
   sessionsOf,
   type ListedSession,
 } from './workstream-helpers';
@@ -109,5 +113,40 @@ test.describe('project removal API', () => {
       },
     );
     expect(found.map((session) => session.id)).toEqual([kept.id]);
+  });
+
+  test('a project added back through a symlink finds the session left in its folder on its default workstream', async ({
+    request,
+  }) => {
+    const path = await tempProjectDir('hs-project-remove-e2e-');
+    const first = await addProjectWithDefault(request, path);
+    const session = await createSession(
+      request,
+      first.projectId,
+      first.workstream.id,
+    );
+    expect(
+      (await request.delete(`/api/projects/${first.projectId}`)).status(),
+    ).toBe(204);
+
+    const link = join(await tempProjectDir('hs-project-remove-e2e-'), 'link');
+    await symlink(path, link);
+    const again = await addProjectWithDefault(request, link);
+    const sessions = `/api/projects/${again.projectId}/workstreams/${again.workstream.id}/sessions`;
+    try {
+      await pollFor('the session on the default workstream', async () =>
+        (await sessionsOf(request, again.projectId, again.workstream.id)).find(
+          (found) => found.id === session.id,
+        ),
+      );
+      const project = await projectOf(request, again.projectId);
+      expect(project?.workstreams?.map((ws) => ws.id)).toEqual([
+        again.workstream.id,
+      ]);
+    } finally {
+      // The fixture finds a project by its folder's name, and this one's is the link's.
+      await request.delete(`${sessions}/${session.id}`);
+      await request.delete(`/api/projects/${again.projectId}`);
+    }
   });
 });

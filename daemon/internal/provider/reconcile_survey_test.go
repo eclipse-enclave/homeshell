@@ -134,6 +134,24 @@ func TestReconcileHidesSessionsInAnUntrackedWorktree(t *testing.T) {
 	}
 }
 
+// A session reported by a path through a symlink is hidden in the suggestion
+// for its folder, which git lists by its real path.
+func TestReconcileHidesASessionReportedThroughASymlink(t *testing.T) {
+	folder := realFolder(t)
+	reconciler, projectStore, surveyor, _ := surveyedReconciler(t, []domain.Project{surveyedProject()},
+		map[string][]DiscoveredSession{"p1": {ds(throughSymlink(t, folder), "s1", domain.SessionRunning)}})
+	surveyor.folders["p1"] = []Folder{{Path: folder, Branch: "a"}}
+	reconciler.Reconcile(context.Background())
+
+	if workstreams := projectStore.Projects()[0].Workstreams; len(workstreams) != 0 {
+		t.Errorf("workstreams = %+v, want none adopted", workstreams)
+	}
+	suggestion := suggestionAt(t, projectStore, folder)
+	if ids := sessionIDs(suggestion.Sessions); !slices.Equal(ids, []string{"s1"}) || suggestion.SessionCount != 1 {
+		t.Errorf("suggestion sessions = %q, count %d; want [s1], 1", ids, suggestion.SessionCount)
+	}
+}
+
 func TestReconcileStillAdoptsOtherFolders(t *testing.T) {
 	reconciler, st, _, _ := surveyedReconciler(t, []domain.Project{surveyedProject()}, map[string][]DiscoveredSession{
 		"p1": {ds("/elsewhere", "s1", domain.SessionRunning)},

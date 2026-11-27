@@ -1,7 +1,12 @@
 import { expect, test } from '@playwright/test';
 
 import { withSettingsLock } from '../settings-lock';
-import { awaitRealWorkstream, createProject } from './workstream-helpers';
+import {
+  awaitRealWorkstream,
+  createProject,
+  pollFor,
+  workstreamOf,
+} from './workstream-helpers';
 
 /**
  * POST /api/projects/{id}/workstreams/{wsId}/note — the workstream note: the
@@ -64,7 +69,11 @@ test('a workstream with files on the host offers its notes, so labelled', async 
   );
   expect(res.status()).toBe(201);
   const workstream = await awaitRealWorkstream(request, projectId, 15_000);
-  expect(
-    workstream.actions?.find((action) => action.id === 'note')?.label,
-  ).toBe('Notes');
+  // The actions come with the reconcile pass that follows the create.
+  const note = await pollFor('the note action', async () =>
+    (await workstreamOf(request, projectId, workstream.id))?.actions?.find(
+      (action) => action.id === 'note',
+    ),
+  );
+  expect(note.label).toBe('Notes');
 });

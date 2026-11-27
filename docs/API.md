@@ -264,10 +264,12 @@ Paths are under `/api/projects/{projectId}`; `{ws}` stands for `/workstreams/{wo
 - **Default workstream** gives the project the workstream a new one comes with: core, in place,
   named like a blank create. It is created at once, with no placeholder. `409` while the project
   folder is taken.
-- **Add an untracked worktree** makes a workstream of the one at `path`, which must be one of the
-  project's `untrackedWorktrees` paths, else `409`; a blank `path` is `400`. It is a `worktree`
-  workstream named like the suggestion, numbered (`name-2`, …) when that name is taken, with the
-  sessions hidden there. Nothing is created on disk.
+- **Add an untracked worktree** makes a workstream of the one at `path`, which must name the folder
+  of one of the project's `untrackedWorktrees`, else `409`, as a relative `path` always is; a blank
+  `path` is `400`. `path` may reach that folder through symlinks, and the workstream's `workingDir`
+  is the suggestion's `path`.
+  It is a `worktree` workstream named like the suggestion, numbered (`name-2`, …) when that name is
+  taken, with the sessions hidden there. Nothing is created on disk.
 - **Strategies offered.** The core provider's `strategy` property has `enum` and a parallel
   `enumNames` of display names: `in-place` "In place", `worktree` "Worktree", `copy` "Folder: a
   copy of the project". While the project folder is taken, `in-place` and its name

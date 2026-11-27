@@ -36,6 +36,16 @@ func untrackedService(t *testing.T) (service *Service, projectStore *store.Store
 	return service, projectStore, repo, dir
 }
 
+// throughSymlink is a path to dir through a symlink to the folder it is in.
+func throughSymlink(t *testing.T, dir string) string {
+	t.Helper()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(filepath.Dir(dir), link); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(link, filepath.Base(dir))
+}
+
 func mustProject(t *testing.T, projectStore *store.Store, projectID string) domain.Project {
 	t.Helper()
 	project, err := projectStore.Project(projectID)
@@ -50,10 +60,13 @@ func TestServiceAddUntrackedWorktree(t *testing.T) {
 		name string
 		// takenName, when set, is held by another workstream beforehand.
 		takenName string
-		wantName  string
+		// throughSymlink asks for the worktree by a path through a symlink.
+		throughSymlink bool
+		wantName       string
 	}{
 		{name: "named like its suggestion", wantName: "wt-a"},
 		{name: "numbered when that name is taken", takenName: "wt-a", wantName: "wt-a-2"},
+		{name: "asked for through a symlink", throughSymlink: true, wantName: "wt-a"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -65,7 +78,12 @@ func TestServiceAddUntrackedWorktree(t *testing.T) {
 				}
 			}
 
-			added, err := service.AddUntrackedWorktree(context.Background(), "p1", dir)
+			path := dir
+			if tt.throughSymlink {
+				path = throughSymlink(t, dir)
+			}
+
+			added, err := service.AddUntrackedWorktree(context.Background(), "p1", path)
 			if err != nil {
 				t.Fatalf("AddUntrackedWorktree: %v", err)
 			}
@@ -110,6 +128,14 @@ func TestServiceAddUntrackedWorktreeRefuses(t *testing.T) {
 			}},
 		{name: "a project outside git", setup: func(_ *testing.T, _ *Service, _, dir string) (string, string) {
 			return "p2", dir
+		}},
+		{name: "a relative path to the worktree", setup: func(t *testing.T, _ *Service, _, dir string) (string, string) {
+			t.Chdir(filepath.Dir(dir))
+			return "p1", filepath.Base(dir)
+		}},
+		{name: "no path, from inside the worktree", setup: func(t *testing.T, _ *Service, _, dir string) (string, string) {
+			t.Chdir(dir)
+			return "p1", ""
 		}},
 	}
 	for _, tt := range tests {

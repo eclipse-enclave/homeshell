@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -248,6 +250,60 @@ func TestDiscoverSessionsOfAProjectAddedAgain(t *testing.T) {
 	}
 	if got := discoveredDirs(provider.ProjectRef{ID: "removed"}); len(got) != 4 {
 		t.Errorf("the project that put them there discovered sessions in %q; want all four", got)
+	}
+}
+
+// A project added again finds the sessions left running in its folder, whether
+// a symlink leads to that folder or out of it.
+func TestDiscoverSessionsOfAProjectAddedAgainThroughASymlink(t *testing.T) {
+	tests := []struct {
+		name string
+		// setup returns the folder a session runs in, the path the project
+		// is added again by, and the folder the session is then found in.
+		setup func(t *testing.T, projectDir, link string) (sessionDir, projectPath, wantDir string)
+	}{
+		{name: "a workstream folder, the project added through a symlink",
+			setup: func(_ *testing.T, projectDir, link string) (string, string, string) {
+				sessionDir := filepath.Join(projectDir, ".fake-ws-1")
+				return sessionDir, link, sessionDir
+			}},
+		{name: "the project folder, the project added through a symlink",
+			setup: func(_ *testing.T, projectDir, link string) (string, string, string) {
+				return projectDir, link, projectDir
+			}},
+		{name: "a folder a symlink in the project takes elsewhere",
+			setup: func(t *testing.T, projectDir, _ string) (string, string, string) {
+				worktrees := filepath.Join(projectDir, ".worktrees")
+				if err := os.Symlink(t.TempDir(), worktrees); err != nil {
+					t.Fatal(err)
+				}
+				sessionDir := filepath.Join(worktrees, "wt")
+				return sessionDir, projectDir, sessionDir
+			}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeProvider := newProvider()
+			projectDir := t.TempDir()
+			link := filepath.Join(t.TempDir(), "link")
+			if err := os.Symlink(projectDir, link); err != nil {
+				t.Fatal(err)
+			}
+			sessionDir, projectPath, wantDir := tt.setup(t, projectDir, link)
+			if _, err := fakeProvider.CreateSession(context.Background(), provider.CreateSessionRequest{
+				Workstream: provider.WorkstreamRef{ProjectID: "removed", WorkstreamID: "w1"}, WorkingDir: sessionDir, OptionID: "claude",
+			}); err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+
+			discovered, err := fakeProvider.DiscoverSessions(context.Background(), provider.ProjectRef{ID: "again", Path: projectPath})
+			if err != nil {
+				t.Fatalf("discover: %v", err)
+			}
+			if len(discovered) != 1 || discovered[0].WorkingDir != wantDir {
+				t.Errorf("discovered %+v; want the session in %s", discovered, wantDir)
+			}
+		})
 	}
 }
 
