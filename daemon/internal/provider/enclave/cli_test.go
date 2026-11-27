@@ -382,8 +382,10 @@ func writeStubEnclave(t *testing.T, script string) *realCLI {
 }
 
 // The command inside the container is agent-controlled, so its output is capped
-// rather than buffered until the deadline. Repeated, as the command killed at
-// the cap may or may not leave output unread in its pty.
+// rather than buffered until the deadline. The hang this guards against shows up
+// only on macOS, and only when the command killed at the cap leaves output unread
+// in its pty, so the test repeats and puts each run against a deadline. On Linux
+// it passes with or without the loop and the deadline; keep them.
 func TestExecOutputStopsAtTheCap(t *testing.T) {
 	cli := writeStubEnclave(t, "exec yes model/endless\n")
 	for range 20 {
