@@ -56,6 +56,7 @@ func Defaults() File {
 			{
 				ID: "claude", Binary: "claude", Display: "Claude Code",
 				SessionIDFlag: "--session-id", ResumeFlag: "--resume", Transcript: true,
+				ImagePaste: []string{agentspec.ImagePNG, agentspec.ImageJPEG},
 				Settings: []agentspec.Setting{
 					model("claude", "Which Claude model the session runs. Leave unset for the CLI's own choice."),
 					choice("claude", "effort", "effort", "Reasoning effort", "How much reasoning the model spends per turn.",
@@ -94,12 +95,14 @@ func Defaults() File {
 				// The interactive TUI is the default command and `opencode run` the
 				// non-interactive one, so there is no initial prompt to hand a session.
 				ID: "opencode", Binary: "opencode", Display: "OpenCode", ListModels: []string{"models"},
+				ImagePaste: []string{agentspec.ImagePNG},
 				Settings: []agentspec.Setting{
 					model("opencode", "Model as provider/model. The choices are the ones opencode itself reported; leave unset for its default."),
 				},
 			},
 			{
 				ID: "pi", Binary: "pi", Display: "Pi", ListModels: []string{"--list-models"},
+				ImagePaste: []string{agentspec.ImagePNG, agentspec.ImageJPEG},
 				Settings: []agentspec.Setting{
 					model("pi", "Model as provider/id, optionally :<thinking>. The choices are the ones pi itself reported; leave unset for its default."),
 					choice("pi", "thinking", "thinking", "Thinking level", "How much reasoning the model spends per turn.",

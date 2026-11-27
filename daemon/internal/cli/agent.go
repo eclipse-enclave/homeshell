@@ -169,8 +169,8 @@ func agentList() clientCommand {
 // cannot drift. Only the ones the caller actually passed are sent, which is what makes
 // `set` leave the rest alone.
 type agentFlags struct {
-	binary, display, sessionIDFlag, resumeFlag, listModels string
-	transcript                                             bool
+	binary, display, sessionIDFlag, resumeFlag, listModels, imagePaste string
+	transcript                                                         bool
 }
 
 func (f *agentFlags) register(fs *flag.FlagSet) {
@@ -179,6 +179,7 @@ func (f *agentFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.sessionIDFlag, "session-id-flag", "", "flag that hands the CLI a session id we generate")
 	fs.StringVar(&f.resumeFlag, "resume-flag", "", "flag that resumes that session id; empty means the agent cannot be resumed")
 	fs.StringVar(&f.listModels, "list-models", "", "argv suffix that makes the CLI print its models, e.g. --list-models")
+	fs.StringVar(&f.imagePaste, "image-paste", "", "image formats the agent pastes natively on Ctrl+V, e.g. \"png jpeg\"; empty for none")
 	fs.BoolVar(&f.transcript, "transcript", false, "the agent writes a Claude-format JSONL transcript, so a resume can tell whether it answered")
 }
 
@@ -197,6 +198,7 @@ func (f *agentFlags) body(fs *flag.FlagSet, id string) map[string]any {
 		"resume-flag":     func() { out["resumeFlag"] = f.resumeFlag },
 		"transcript":      func() { out["transcript"] = f.transcript },
 		"list-models":     func() { out["listModels"] = strings.Fields(f.listModels) },
+		"image-paste":     func() { out["imagePaste"] = strings.Fields(f.imagePaste) },
 	})
 	return out
 }

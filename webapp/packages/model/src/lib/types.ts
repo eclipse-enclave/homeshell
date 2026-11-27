@@ -65,6 +65,16 @@ export function hasSessionRuntime(state: SessionState): boolean {
 }
 
 /**
+ * Whether a session in this state takes an attached image right now: idle or
+ * running only. Mirrors the daemon's state rule in `CheckAttachable`
+ * (daemon/internal/provider/image.go); whether it takes images at all is its
+ * `attachImage` capability.
+ */
+export function acceptsImageNow(state: SessionState): boolean {
+  return state === 'idle' || state === 'running';
+}
+
+/**
  * Whether a session has reached a terminal state — deliberately stopped,
  * finished, or failed to start — and so has no live terminal to interact with.
  * Mirrors the daemon's `SessionState.Terminal()`. Used to gate the send-text
@@ -142,6 +152,8 @@ export interface SessionCapabilities {
   takeOverWarning?: string;
   /** What the row says about where the session runs, e.g. why it is not live. */
   note?: string;
+  /** Whether the session can take an image (`POST {s}/image`), whatever its state now. */
+  attachImage?: boolean;
 }
 
 /** A session's capabilities with the defaults filled in: live, no take-over, no warning. */

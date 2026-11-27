@@ -156,6 +156,9 @@ func TestProviderErrorStatuses(t *testing.T) {
 		{"gone session, wrapped", fmt.Errorf("session %q: %w", "sess-1", provider.ErrSessionGone), http.StatusConflict},
 		{"stopped session", provider.ErrSessionStopped, http.StatusConflict},
 		{"session not found", provider.ErrSessionNotFound, http.StatusNotFound},
+		{"invalid image", fmt.Errorf("%w: the data is not a png", provider.ErrInvalidImage), http.StatusBadRequest},
+		{"session not attachable now", provider.ErrSessionNotAttachable, http.StatusConflict},
+		{"capability unsupported", provider.ErrCapabilityUnsupported, http.StatusNotImplemented},
 		{"anything else", errors.New("boom"), http.StatusInternalServerError},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

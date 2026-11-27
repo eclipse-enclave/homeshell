@@ -232,6 +232,52 @@ test('allowing all network greys out the extra domains and keeps them', async ({
   });
 });
 
+test('the image inbox is a container checkbox that says who shares it, kept on restart', async ({
+  page,
+  request,
+}) => {
+  const { card, projectId, workstreamId } = await emptyCard(page, request);
+  const form = await openSandboxedForm(page, card);
+  await form.getByRole('button', { name: /^Container / }).click();
+  const inbox = form.getByRole('checkbox', { name: 'Image inbox' });
+  await expect(inbox).not.toBeChecked();
+  await expect(inbox).toHaveAccessibleDescription(
+    /shared by every session of this project.*Docker or Podman/,
+  );
+  await inbox.check();
+  await expect(form.getByTestId('group-summary')).toHaveText('Image inbox');
+  await form.getByRole('button', { name: 'Start session' }).click();
+  await expect(form).toHaveCount(0);
+  const { path, launched } = await launchConfigOf(
+    request,
+    projectId,
+    workstreamId,
+  );
+  expect(launched.config).toEqual({
+    model: 'sonnet',
+    enclave: { imageInbox: true },
+  });
+
+  const row = card.getByRole('listitem').first();
+  await expect(row.getByTestId('session-title')).toHaveText(OPTION, {
+    timeout: 20_000,
+  });
+  await restartWithSettings(page, row);
+  const dialog = page.getByRole('dialog', { name: `Restart ${OPTION}` });
+  const restartInbox = dialog.getByRole('checkbox', { name: 'Image inbox' });
+  await expect(restartInbox).toBeChecked();
+  await restartInbox.uncheck();
+  await dialog.getByRole('button', { name: 'Restart', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect
+    .poll(
+      async () =>
+        (await (await request.get(`${path}/launch-config`)).json()).config,
+      { timeout: 20_000 },
+    )
+    .toEqual({ model: 'sonnet', enclave: {} });
+});
+
 test('a session started on the defaults records an empty group', async ({
   page,
   request,

@@ -34,6 +34,8 @@ type testBridge struct {
 	dumps, stops int
 	input, key   string
 	inputTarget  string
+	// raw is what SendRaw typed, in order.
+	raw []string
 	// onStart runs inside every Start, before it is recorded.
 	onStart func()
 }
@@ -82,6 +84,12 @@ func (b *testBridge) SendKey(_ context.Context, _, key string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.key = key
+	return nil
+}
+func (b *testBridge) SendRaw(_ context.Context, _, input string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.raw = append(b.raw, input)
 	return nil
 }
 func (b *testBridge) AttachCommand(target string) []string {

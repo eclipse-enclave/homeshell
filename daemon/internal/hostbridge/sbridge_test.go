@@ -417,6 +417,19 @@ func TestBridgeRuntimeSendInput(t *testing.T) {
 	}
 }
 
+// SendRaw types its bytes as they are: no Enter, so nothing is submitted.
+func TestBridgeRuntimeSendRaw(t *testing.T) {
+	r := testBridgeRuntime(t)
+	bridge := sbridgetest.Bridge(t, r.sock("hs-abc"), func() string { return `{}` })
+	if err := r.SendRaw(context.Background(), "hs-abc", "/mnt/host-images/a.png "); err != nil {
+		t.Fatal(err)
+	}
+	got := bridge.Requests()
+	if len(got) != 1 || got[0].Input != "/mnt/host-images/a.png " {
+		t.Errorf("requests = %+v, want the path and its space, without Enter", got)
+	}
+}
+
 func TestBridgeRuntimeSendInputToADeadBridge(t *testing.T) {
 	r := testBridgeRuntime(t)
 	if err := r.SendInput(context.Background(), "hs-abc", "hello"); !errors.Is(err, sbridge.ErrNotServing) {

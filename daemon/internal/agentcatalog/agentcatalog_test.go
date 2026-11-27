@@ -189,6 +189,78 @@ func TestUpgradeAppendsOnlyTheNewDefaults(t *testing.T) {
 	}
 }
 
+// Schema 2 fills in which image formats the shipped agents paste natively, and
+// leaves every other agent, and a list the user already wrote, as they are.
+func TestUpgradeFillsInImagePaste(t *testing.T) {
+	old := Defaults()
+	old.SchemaVersion = 1
+	for i := range old.Agents {
+		old.Agents[i].ImagePaste = nil
+	}
+	old.Agents = append(old.Agents, agentspec.Agent{ID: "mine", Binary: "mine", Display: "Mine"})
+	pi := indexOfAgent(old, "pi")
+	old.Agents[pi].ImagePaste = []string{agentspec.ImagePNG}
+	old.Agents = slices.DeleteFunc(old.Agents, func(agent agentspec.Agent) bool { return agent.ID == "opencode" })
+
+	path := filepath.Join(t.TempDir(), FileName)
+	data, err := json.Marshal(recordFile(old))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{
+		"claude": {agentspec.ImagePNG, agentspec.ImageJPEG},
+		// The user's own list wins over the default.
+		"pi":    {agentspec.ImagePNG},
+		"codex": {},
+		"mine":  {},
+	}
+	for id, formats := range want {
+		agent, err := store.AgentByID(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(agent.ImagePaste, formats) {
+			t.Errorf("%s imagePaste = %v, want %v", id, agent.ImagePaste, formats)
+		}
+	}
+	if _, err := store.AgentByID("opencode"); err == nil {
+		t.Error("the upgrade brought back an agent the user deleted")
+	}
+	reloaded, err := decodeFileRecord(must(os.ReadFile(path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.SchemaVersion != schemaVersion {
+		t.Errorf("saved schema version = %d, want %d", reloaded.SchemaVersion, schemaVersion)
+	}
+}
+
+func must[T any](value T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return value
+}
+
+// Claude Code and Pi paste PNG and JPEG images natively, OpenCode PNG only; the
+// other agents take an image as its path.
+func TestDefaultImagePaste(t *testing.T) {
+	both := []string{agentspec.ImagePNG, agentspec.ImageJPEG}
+	want := map[string][]string{"claude": both, "pi": both, "opencode": {agentspec.ImagePNG}}
+	for _, agent := range Defaults().Agents {
+		if got := agent.ImagePaste; !slices.Equal(got, want[agent.ID]) {
+			t.Errorf("%s imagePaste = %v, want %v", agent.ID, got, want[agent.ID])
+		}
+	}
+}
+
 // A new default that collides with a user's row is skipped, so the upgrade
 // cannot produce a file the next Load would refuse.
 func TestUpgradeSkipsADefaultThatCollides(t *testing.T) {
@@ -260,7 +332,7 @@ func TestRecordsCarryEveryField(t *testing.T) {
 	}
 	full := File{SchemaVersion: schemaVersion, Agents: []agentspec.Agent{{
 		ID: "a", Binary: "b", RuleSetID: "r", EnclaveTool: "e", Display: "D", SessionIDFlag: "--id", ResumeFlag: "--resume",
-		Transcript: true, ListModels: []string{"models"}, Settings: []agentspec.Setting{{
+		Transcript: true, ListModels: []string{"models"}, ImagePaste: []string{agentspec.ImagePNG}, Settings: []agentspec.Setting{{
 			ID: "s", Agent: "a", Field: "f", Role: agentspec.RoleModel, Type: agentspec.TypeString, Title: "T", Description: "d",
 			Format: "textarea", Choices: []string{"x"}, Default: "x", Delivery: agentspec.Assign, DeliveryArg: "-c", DeliveryKey: "k",
 		}},
@@ -597,6 +669,7 @@ func TestInsertAgentRefusesADescriptionNothingCouldLaunch(t *testing.T) {
 		{"no binary", agentspec.Agent{ID: "x", Display: "X"}},
 		{"no display name", agentspec.Agent{ID: "x", Binary: "x"}},
 		{"a blank binary", agentspec.Agent{ID: "x", Binary: "   ", Display: "X"}},
+		{"an image format nothing can paste", agentspec.Agent{ID: "x", Binary: "x", Display: "X", ImagePaste: []string{"gif"}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if err := store.InsertAgent(tt.agent); !errors.Is(err, ErrInvalid) {

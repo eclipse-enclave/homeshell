@@ -242,6 +242,61 @@ func TestSchemaAllowAllNetwork(t *testing.T) {
 	}
 }
 
+func TestSchemaImageInbox(t *testing.T) {
+	tests := []struct {
+		name        string
+		supported   bool
+		config      map[string]ConfigOption
+		wantDefault bool
+		wantSource  string
+	}{
+		{name: "not offered by an Enclave without it"},
+		{name: "off by default", supported: true,
+			config:      map[string]ConfigOption{"image_inbox": option(`false`, "default")},
+			wantDefault: false, wantSource: "Enclave defaults"},
+		{name: "on in Enclave's global config", supported: true,
+			config:      map[string]ConfigOption{"image_inbox": option(`true`, "global")},
+			wantDefault: true, wantSource: "Enclave global config"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := testBase()
+			base.ImageInbox = tt.supported
+			for name, value := range tt.config {
+				base.Config[name] = value
+			}
+			names, props := schemaProps(t, Schema(base))
+			field, offered := props["imageInbox"]
+			if offered != tt.supported {
+				t.Fatalf("imageInbox offered = %v; want %v", offered, tt.supported)
+			}
+			if !offered {
+				return
+			}
+			if names[len(names)-1] != "imageInbox" {
+				t.Errorf("properties = %q; want the image inbox last", names)
+			}
+			if field["type"] != "boolean" || field["title"] != "Image inbox" {
+				t.Errorf("imageInbox = %v; want a checkbox titled Image inbox", field)
+			}
+			if field["default"] != tt.wantDefault || field["x-source"] != tt.wantSource {
+				t.Errorf("imageInbox default = %v from %v; want %v from %v",
+					field["default"], field["x-source"], tt.wantDefault, tt.wantSource)
+			}
+			description, _ := field["description"].(string)
+			for _, want := range []string{"every session of this project", "Docker or Podman"} {
+				if !strings.Contains(description, want) {
+					t.Errorf("imageInbox description = %q; want it to say %q", description, want)
+				}
+			}
+			schema := with(t, nil, Schema(base))
+			if err := provider.ValidateConfig(schema, json.RawMessage(`{"enclave":{"imageInbox":true}}`)); err != nil {
+				t.Errorf("an image inbox turned on was refused: %v", err)
+			}
+		})
+	}
+}
+
 // A slim image installs no features whatever `--features` says, so a slim config
 // offers none to choose.
 func TestSchemaOfASlimConfigOffersNoFeatures(t *testing.T) {

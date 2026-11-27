@@ -53,6 +53,7 @@ import { usePendingFocus } from './keyboard/use-pending-focus';
 import {
   addDefaultWorkstream,
   addUntrackedWorktree,
+  attachSessionImage,
   createSession,
   createWorkstream,
   deleteWorkstream,
@@ -663,6 +664,13 @@ export function ProjectView({
           sendSessionKey(project.id, workstream.id, sessionId, key),
         )
       }
+      // Not routed through runSessionAction: the row sends a batch one image
+      // at a time and must hear each refusal to stop; it reports through
+      // onAttachError.
+      onAttachImageSession={(sessionId, file) =>
+        attachSessionImage(project.id, workstream.id, sessionId, file)
+      }
+      onAttachError={setError}
       loadSessionOptions={() => fetchSessionSchemas(project.id, workstream.id)}
       onCreateSession={(data) => handleCreateSession(workstream.id, data)}
       onDelete={(opts) => handleDeleteWorkstream(workstream.id, opts)}

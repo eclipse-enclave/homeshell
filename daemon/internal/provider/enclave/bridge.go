@@ -35,6 +35,8 @@ type BridgeRuntime interface {
 	Stop(context.Context, string) error
 	SendInput(context.Context, string, string) error
 	SendKey(context.Context, string, string) error
+	// SendRaw types input as it is, without the Enter SendInput adds.
+	SendRaw(ctx context.Context, target, input string) error
 	AttachCommand(string) []string
 }
 
@@ -131,6 +133,8 @@ type hostBridges struct {
 	restarting map[string]restartProjection
 	// outdated is the latest drift result, refreshed separately from polling.
 	outdated map[string][]string
+	// imageInboxes is whether each session may have the image inbox, as the inventory last listed it (image.go).
+	imageInboxes map[string]bool
 }
 
 // guard is called with b.mu held. Retain guards after removal so an old poll
@@ -206,6 +210,7 @@ func NewWithBridge(cli CLI, runtime BridgeRuntime, path string) (*Provider, erro
 	bridges := &hostBridges{
 		runtime: runtime, path: path, records: map[string]bridgeRecord{}, observed: map[string]domain.Session{},
 		restarting: map[string]restartProjection{}, outdated: map[string][]string{},
+		imageInboxes: map[string]bool{},
 	}
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -725,6 +730,8 @@ func (p *Provider) sampleBridges(ctx context.Context, agents map[string]string, 
 // snapshot ownership is matched against.
 func (p *Provider) projectBridges(project provider.ProjectRef, projects []domain.Project) []provider.DiscoveredSession {
 	bridges := p.bridges
+	// Asked before taking bridges.mu: the CLI's own lock is held while it checks a new binary.
+	imageInbox := p.cli.ImageInbox()
 	bridges.mu.Lock()
 	defer bridges.mu.Unlock()
 	var out []provider.DiscoveredSession
@@ -738,7 +745,7 @@ func (p *Provider) projectBridges(project provider.ProjectRef, projects []domain
 		if !ok {
 			session = p.bridgeSession(record)
 		}
-		out = append(out, provider.DiscoveredSession{WorkingDir: record.Container.Directory, Session: bridges.withOutdated(session)})
+		out = append(out, provider.DiscoveredSession{WorkingDir: record.Container.Directory, Session: bridges.published(session, record, imageInbox)})
 	}
 	for name, restarting := range bridges.restarting {
 		restarted := Container{Directory: restarting.workingDir, ProjectDir: restarting.projectDir}

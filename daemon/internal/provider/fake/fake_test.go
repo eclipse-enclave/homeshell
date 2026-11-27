@@ -331,3 +331,61 @@ func TestRestartClearsOutdatedSettings(t *testing.T) {
 		t.Errorf("SessionState = %+v, %v; want nothing outdated", got, err)
 	}
 }
+
+// TestFakeAttachImageEchoesIntoPreview checks the fake attaches an image the
+// way its prompt echoes text: a made-up inbox path back, and the path in the
+// session's preview. Its sessions declare attachImage wherever they are seen.
+func TestFakeAttachImageEchoesIntoPreview(t *testing.T) {
+	fakeProvider := newProvider()
+	workstreamRef := provider.WorkstreamRef{ProjectID: "p1", WorkstreamID: "w1"}
+	created, err := fakeProvider.CreateSession(context.Background(), provider.CreateSessionRequest{
+		Workstream: workstreamRef, WorkingDir: "/p1/work", OptionID: "claude",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	ref := provider.SessionRef{ProjectID: "p1", WorkstreamID: "w1", SessionID: created.ID}
+
+	tests := []struct {
+		mediaType string
+		wantExt   string
+	}{
+		{mediaType: "image/png", wantExt: ".png"},
+		{mediaType: "image/jpeg", wantExt: ".jpg"},
+	}
+	for _, tt := range tests {
+		path, err := fakeProvider.AttachImage(context.Background(), ref, provider.Image{MediaType: tt.mediaType, Data: []byte("x")})
+		if err != nil {
+			t.Fatalf("AttachImage(%s): %v", tt.mediaType, err)
+		}
+		if !strings.HasPrefix(path, "/mnt/host-images/") || !strings.HasSuffix(path, tt.wantExt) {
+			t.Errorf("AttachImage(%s) path = %q, want a %s under /mnt/host-images/", tt.mediaType, path, tt.wantExt)
+		}
+		session, err := fakeProvider.SessionState(context.Background(), ref)
+		if err != nil {
+			t.Fatalf("SessionState: %v", err)
+		}
+		if !strings.Contains(session.Preview, "[image: "+path+"]") {
+			t.Errorf("preview = %q, want it to show [image: %s]", session.Preview, path)
+		}
+	}
+
+	discovered, err := fakeProvider.DiscoverSessions(context.Background(), provider.ProjectRef{ID: "p1", Path: "/p1"})
+	if err != nil {
+		t.Fatalf("DiscoverSessions: %v", err)
+	}
+	sessions := []domain.Session{created}
+	for _, found := range discovered {
+		sessions = append(sessions, found.Session)
+	}
+	for _, session := range sessions {
+		if session.Capabilities == nil || !session.Capabilities.Live || !session.Capabilities.AttachImage {
+			t.Errorf("session %s capabilities = %+v, want live with attachImage", session.ID, session.Capabilities)
+		}
+	}
+
+	unknown := provider.SessionRef{ProjectID: "p1", WorkstreamID: "w1", SessionID: "nope"}
+	if _, err := fakeProvider.AttachImage(context.Background(), unknown, provider.Image{MediaType: "image/png"}); err == nil {
+		t.Error("AttachImage on an unknown session = nil, want an error")
+	}
+}

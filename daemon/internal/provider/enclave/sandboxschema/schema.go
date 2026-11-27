@@ -1,6 +1,7 @@
 // Package sandboxschema builds the create-form group for an Enclave container's
-// sandbox settings — features, mounts, ports, network, domains, host config —
-// from what Enclave resolves for a tool, with Enclave's values as the defaults.
+// sandbox settings — features, mounts, ports, network, domains, host config,
+// image inbox — from what Enclave resolves for a tool, with Enclave's values as
+// the defaults.
 // It is free of the Enclave provider so the fake provider's demo offers the same
 // form.
 //
@@ -70,6 +71,9 @@ type Feature struct {
 type Base struct {
 	Config   EffectiveConfig
 	Features []Feature
+	// ImageInbox is whether the installed Enclave has the image inbox
+	// (`--image-inbox`); without it the setting is not offered.
+	ImageInbox bool
 }
 
 // Dir is one directory row: a path mounted into the container. Readonly left out
@@ -237,6 +241,10 @@ func Schema(base Base) json.RawMessage {
 		"x-source":    sourceLabel(config["host_config"].Source),
 	})
 
+	if base.ImageInbox {
+		props = props.add("imageInbox", imageInboxProp(config))
+	}
+
 	out, err := json.Marshal(map[string]any{
 		"type":                 "object",
 		"title":                "Container",
@@ -266,6 +274,21 @@ func allowAllNetworkProp(config EffectiveConfig) map[string]any {
 			"so the agent sees the real ones.",
 		"default":  config.Bool("allow_all_network"),
 		"x-source": sourceLabel(config["allow_all_network"].Source),
+	}
+}
+
+// imageInboxProp is the checkbox that mounts the project's image inbox into the
+// session (`--image-inbox`), defaulting to Enclave's `image_inbox`. A config that
+// turns it on can be overridden for one session (`--image-inbox=false`). Enclave
+// refuses it on the qemu backend; that error is the session's, not modelled here.
+func imageInboxProp(config EffectiveConfig) map[string]any {
+	return map[string]any{
+		"type":  "boolean",
+		"title": "Image inbox",
+		"description": "Mounts the project's image inbox read-only, so the agent can read images you attach. " +
+			"The inbox is shared by every session of this project that has it on. Needs the Docker or Podman backend.",
+		"default":  config.Bool("image_inbox"),
+		"x-source": sourceLabel(config["image_inbox"].Source),
 	}
 }
 

@@ -421,3 +421,22 @@ func TestOutdatedSettingsAskTheBaseOncePerCheck(t *testing.T) {
 		}
 	}
 }
+
+// The image inbox is an option like any other: one that a restart would turn on
+// or off is outdated, with no case of its own.
+func TestChangedOptionsImageInbox(t *testing.T) {
+	for _, tt := range []struct {
+		running, config string
+		want            []string
+	}{
+		{running: `false`, config: `true`, want: []string{"image_inbox"}},
+		{running: `true`, config: `false`, want: []string{"image_inbox"}},
+		{running: `true`, config: `true`},
+	} {
+		current := sandboxschema.EffectiveConfig{"image_inbox": option(tt.config, "global")}
+		running := map[string]json.RawMessage{"image_inbox": json.RawMessage(tt.running)}
+		if got := changedOptions(running, current); !slices.Equal(got, tt.want) {
+			t.Errorf("running %s, config %s: changedOptions = %q; want %q", tt.running, tt.config, got, tt.want)
+		}
+	}
+}

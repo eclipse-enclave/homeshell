@@ -1,5 +1,6 @@
 import type { Session, SessionState } from '@homeshell/model';
 import {
+  acceptsImageNow,
   dotStateLabel,
   endedAgo,
   hasSessionRuntime,
@@ -8,7 +9,10 @@ import {
   stateLabel,
 } from '@homeshell/model';
 import type {
+  ClipboardEvent,
+  DragEvent,
   FormEvent,
+  HTMLAttributes,
   KeyboardEvent,
   MouseEvent as ReactMouseEvent,
   Ref,
@@ -23,7 +27,7 @@ import {
 import { ActionConfirm } from './action-confirm';
 import { Button } from './button';
 import { useReturnFocus } from './focus-return';
-import { PlayIcon, SquareIcon, TerminalIcon } from './icons';
+import { PaperclipIcon, PlayIcon, SquareIcon, TerminalIcon } from './icons';
 import { type ItemAction, runAction, useActionsMenu } from './item-actions';
 import { isDeleteKey, isModified } from './keys';
 import { controlTabIndexFor, listItemKeyShortcuts } from './list-navigation';
@@ -82,6 +86,52 @@ function EndedAgo({ endedAt }: { endedAt: string }) {
 
 /** How long the handle's expand waits for a send box to put focus in. */
 export const ANSWER_FOCUS_MS = 10_000;
+
+/** How long "Image attached" stays in the row before it clears. */
+export const ATTACH_STATUS_MS = 5_000;
+
+/** The image types a session takes (`POST {s}/image`); the file picker shows only these. */
+const ATTACHABLE_TYPES = ['image/png', 'image/jpeg'];
+
+/** What the row reports when some of the files it was given are not images it can attach. */
+const ONLY_IMAGES = 'Only PNG or JPEG images can be attached';
+
+/** Why the row takes no image while it is still sending an earlier batch. */
+const STILL_ATTACHING = 'Still attaching the previous images';
+
+/**
+ * What the row tells a user whose paste listed files but handed none over.
+ * WebKitGTK, the Linux desktop app's webview, does this with every image.
+ */
+const PASTE_UNREADABLE =
+  "Pasting images doesn't work here: drop the image on the row or use Attach image";
+
+/**
+ * What a paste into the send box attaches: all its files when one is an image
+ * and the clipboard holds no plain text, otherwise none, and the paste stays
+ * ordinary text. Why: copying from a web page often puts an image beside the
+ * text, and pasting that text must never upload something unexpectedly.
+ * 'unreadable' when, with no text, it lists files but hands none over.
+ */
+function pastedImages(data: DataTransfer | null): File[] | 'unreadable' {
+  if (!data || data.getData('text/plain') !== '') return [];
+  let files = Array.from(data.files ?? []);
+  // Some webviews list a pasted image only among the clipboard's items.
+  if (files.length === 0) {
+    files = Array.from(data.items ?? [])
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+  }
+  if (files.length === 0 && Array.from(data.types).includes('Files')) {
+    return 'unreadable';
+  }
+  return files.some((file) => file.type.startsWith('image/')) ? files : [];
+}
+
+/** Whether a drag carries files, rather than text or a link. */
+const carriesFiles = (event: DragEvent) =>
+  Array.from(event.dataTransfer.types).includes('Files');
 
 export interface SessionRowProps {
   session: Session;
@@ -167,6 +217,23 @@ export interface SessionRowProps {
    */
   onSendKey?: (key: string) => void;
   /**
+   * Attaches one image to the session, resolving to null once it is attached or
+   * to why it was not. Offered only when set and the session declares
+   * `attachImage`: as an Attach image button beside Send, as a paste of an
+   * image (with no text) into the send box, and as a drop of files on the
+   * row. The row owns the rules:
+   * it drops files that are not PNG or JPEG, and sends several one after
+   * another, in order, stopping at the first that fails.
+   */
+  onAttachImage?: (file: File) => Promise<string | null>;
+  /**
+   * Shows why an attach failed: the refusal onAttachImage resolved to, or the
+   * row's own when it dropped files that are not images. Its home is the
+   * page-level error line every other session action uses, which the row does
+   * not own.
+   */
+  onAttachError?: (message: string) => void;
+  /**
    * How many trailing lines of a **live** session's terminal capture the expanded
    * panel makes available. The daemon streams up to its capture height (~24); this
    * caps how much of that screen is kept. Defaults to 20 when unset. The inline
@@ -241,6 +308,8 @@ export function SessionRow({
   onSeen,
   onPrompt,
   onSendKey,
+  onAttachImage,
+  onAttachError,
   previewLines = 20,
   disabledReason,
   tabIndex,
@@ -343,6 +412,7 @@ export function SessionRow({
     takeOver: canTakeOver,
     takeOverWarning,
     note,
+    attachImage,
   } = sessionCapabilities(session);
   const takeOverable = onTakeOver && canTakeOver && session.restartable;
   // The warning is about ending a running session; an ended one has nothing to end.
@@ -350,6 +420,15 @@ export function SessionRow({
     ? undefined
     : stopWarning;
   const promptable = live && onPrompt && hasRuntime;
+  // Whether the session takes images at all. Whether it takes one now is its
+  // state's call (acceptsImageNow); outside those states the button stays,
+  // disabled, so it does not flicker as the agent works.
+  const attachable = Boolean(onAttachImage && attachImage);
+  const attachDisabledReason =
+    disabledReason ??
+    (acceptsImageNow(session.state)
+      ? undefined
+      : 'Images can be attached while the session is idle or running');
   const startable = ended && onStart;
   // Removal is offered in every state, the two placeholder ones included: the
   // daemon recognizes its own bookkeeping rows and never routes them to a
@@ -498,6 +577,133 @@ export function SessionRow({
     onPrompt(text);
     setDraft('');
   };
+
+  const attachInputRef = useRef<HTMLInputElement>(null);
+  // Whether a batch is still uploading, so a second pick cannot interleave with it.
+  const [attaching, setAttaching] = useState(false);
+  // The same, read synchronously: two drops or pastes can arrive before the
+  // row re-renders with `attaching` set.
+  const attachingRef = useRef(false);
+  // The last image attached, named in the row until ATTACH_STATUS_MS passes.
+  const [attached, setAttached] = useState<string | null>(null);
+  useEffect(() => {
+    if (!attached) return;
+    const timer = setTimeout(() => setAttached(null), ATTACH_STATUS_MS);
+    return () => clearTimeout(timer);
+  }, [attached]);
+
+  // Why the row takes no image right now, if it doesn't: the button's
+  // disabled reason, or an earlier batch still on its way.
+  const attachBlocked =
+    attachDisabledReason ?? (attaching ? STILL_ATTACHING : undefined);
+
+  const attachFiles = async (files: File[]) => {
+    if (!onAttachImage) return;
+    const images = files.filter((file) => ATTACHABLE_TYPES.includes(file.type));
+    if (images.length < files.length) onAttachError?.(ONLY_IMAGES);
+    if (images.length === 0) return;
+    if (attachingRef.current) {
+      onAttachError?.(STILL_ATTACHING);
+      return;
+    }
+    attachingRef.current = true;
+    setAttaching(true);
+    setAttached(null);
+    try {
+      // One at a time, in the order given: the agent receives them in the
+      // order the user meant, and a failure leaves no later image delivered.
+      for (const image of images) {
+        const refusal = await onAttachImage(image);
+        if (refusal) {
+          onAttachError?.(refusal);
+          return;
+        }
+        setAttached(image.name);
+      }
+    } finally {
+      attachingRef.current = false;
+      setAttaching(false);
+    }
+  };
+
+  const handlePromptPaste = (event: ClipboardEvent) => {
+    if (!attachable) return;
+    const pasted = pastedImages(event.clipboardData);
+    if (pasted === 'unreadable') {
+      event.preventDefault();
+      onAttachError?.(PASTE_UNREADABLE);
+      return;
+    }
+    if (pasted.length === 0) return;
+    event.preventDefault();
+    if (attachBlocked) {
+      onAttachError?.(attachBlocked);
+      return;
+    }
+    void attachFiles(pasted);
+  };
+
+  // Files dragged over the row: 'ready' to attach them, 'refused' when the
+  // session takes no image right now. Enter and leave fire for every child the
+  // drag crosses, so a depth count tells when it really left the row.
+  const [filesOver, setFilesOver] = useState(false);
+  const dragDepth = useRef(0);
+  const endDrag = useCallback(() => {
+    dragDepth.current = 0;
+    setFilesOver(false);
+  }, []);
+  // A refused drag never drops, and some engines miss a leave, which would
+  // leave the count, and the highlight, behind. The drag moving on anywhere
+  // else in the page, or ending, clears it.
+  useEffect(() => {
+    if (!filesOver) return;
+    const onPageDragOver = (event: Event) => {
+      const row = rowRef.current;
+      if (row && !row.contains(event.target as Node)) endDrag();
+    };
+    window.addEventListener('dragover', onPageDragOver);
+    window.addEventListener('drop', endDrag);
+    window.addEventListener('dragend', endDrag);
+    return () => {
+      window.removeEventListener('dragover', onPageDragOver);
+      window.removeEventListener('drop', endDrag);
+      window.removeEventListener('dragend', endDrag);
+    };
+  }, [filesOver, endDrag]);
+  const dropState =
+    !attachable || !filesOver ? undefined : attachBlocked ? 'refused' : 'ready';
+  const dropHandlers: HTMLAttributes<HTMLLIElement> = attachable
+    ? {
+        onDragEnter: (event) => {
+          if (!carriesFiles(event)) return;
+          event.preventDefault();
+          dragDepth.current += 1;
+          setFilesOver(true);
+        },
+        onDragOver: (event) => {
+          if (!carriesFiles(event)) return;
+          // Taken either way, so the browser does not open a refused file in
+          // place of the app; 'none' shows the user it will not land.
+          event.preventDefault();
+          event.dataTransfer.dropEffect = attachBlocked ? 'none' : 'copy';
+        },
+        onDragLeave: (event) => {
+          if (!carriesFiles(event)) return;
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setFilesOver(false);
+        },
+        onDrop: (event) => {
+          if (!carriesFiles(event)) return;
+          event.preventDefault();
+          endDrag();
+          if (attachBlocked) {
+            onAttachError?.(attachBlocked);
+            return;
+          }
+          void attachFiles(Array.from(event.dataTransfer.files));
+        },
+      }
+    : {};
 
   // When the box is empty it acts as a navigation surface: arrow keys, Enter
   // and Escape are forwarded to the session as key events (for driving an
@@ -769,6 +975,23 @@ export function SessionRow({
       toggleExpanded();
     }
   };
+  // Under the send box when it shows; on the row otherwise, so an image
+  // dropped on a collapsed row is still confirmed. While a drag the row refuses
+  // is over it, it says why: a tooltip does not show during a drag.
+  const attachStatus = (onRow: boolean) => (
+    <p
+      className={
+        onRow
+          ? `${styles.attachStatus} ${styles.attachStatusOnRow}`
+          : styles.attachStatus
+      }
+      role="status"
+    >
+      {dropState === 'refused'
+        ? attachBlocked
+        : attached && `Image attached: ${attached}`}
+    </p>
+  );
   return (
     <li
       ref={rowRef}
@@ -776,6 +999,7 @@ export function SessionRow({
       tabIndex={tabIndex}
       data-nav-id={session.id}
       data-ended={ended || undefined}
+      data-drop={dropState}
       {...mnemonicScope('item')}
       onContextMenu={(event) =>
         actionsMenu.openOnContextMenu(event, lineRef.current)
@@ -786,6 +1010,7 @@ export function SessionRow({
       }
       onKeyDown={handleRowKeyDown}
       {...focusHandlers}
+      {...dropHandlers}
     >
       <div
         ref={setLine}
@@ -991,6 +1216,7 @@ export function SessionRow({
           {onRestartWithSettings && ' Restart it with settings to apply them.'}
         </p>
       ) : null}
+      {attachable && !(expanded && promptable) && attachStatus(true)}
       {/* An ended session's last words are history, kept for its details. */}
       {preview && !expanded && !ended && (
         <div
@@ -1047,6 +1273,7 @@ export function SessionRow({
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
                   onKeyDown={handlePromptKeyDown}
+                  onPaste={handlePromptPaste}
                   tabIndex={controlTabIndex}
                   readOnly={blocked}
                   aria-disabled={blocked}
@@ -1061,7 +1288,38 @@ export function SessionRow({
                 >
                   Send
                 </Button>
+                {attachable && (
+                  <>
+                    <Button
+                      icon={<PaperclipIcon size={13} />}
+                      aria-label="Attach image"
+                      aria-disabled={Boolean(attachDisabledReason) || attaching}
+                      tabIndex={controlTabIndex}
+                      title={
+                        attachDisabledReason ??
+                        (attaching ? 'Attaching images…' : 'Attach image')
+                      }
+                      onClick={() => attachInputRef.current?.click()}
+                    />
+                    {/* The picker the button opens; it is the button the user sees. */}
+                    <input
+                      ref={attachInputRef}
+                      type="file"
+                      accept={ATTACHABLE_TYPES.join(',')}
+                      multiple
+                      hidden
+                      tabIndex={-1}
+                      onChange={(event) => {
+                        const files = Array.from(event.target.files ?? []);
+                        // Cleared, so picking the same file again still changes it.
+                        event.target.value = '';
+                        void attachFiles(files);
+                      }}
+                    />
+                  </>
+                )}
               </form>
+              {attachable && attachStatus(false)}
               {/* The hint promises key navigation, which is off while blocked. */}
               {onSendKey && !blocked && (
                 <p className={styles.promptHint}>

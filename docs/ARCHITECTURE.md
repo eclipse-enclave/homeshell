@@ -425,7 +425,11 @@ the agent's PTY and serves screen snapshots on a unix socket; the wire format is
   around `enclave attach <container>`. State, input and open all go through that bridge.
 - The `enclave` CLI's JSON output is versioned; the provider refuses an Enclave too old for its
   contract (`provider/enclave/cli.go` `checkContract`), including one where `--pass-env +NAME`
-  does not add to the configured list.
+  does not add to the configured list. The same `config --json` answer tells whether it has the
+  image inbox (`image_inbox` reported), kept per binary like the verdict.
+- An attached image goes in through `enclave img import`, and its path is typed through the bridge
+  as raw input, without the Enter a prompt adds (`BridgeRuntime.SendRaw`); see
+  [PROVIDERS.md](PROVIDERS.md#eclipse-enclave).
 - A session's environment variables go in as `--pass-env +NAME`, never as a list. Why: a list
   replaces the user's configured `pass_env`, and Enclave's `no_api_key` and ephemeral gates apply
   only to configured entries.
@@ -499,6 +503,9 @@ flowchart TD
   `setUpZoom`): an injected script turns zoom input into calls to a bound Go function, which sets
   the webview's native zoom and saves it. Why: a bare system webview has no zoom shortcuts; native
   zoom scales like a browser's and keeps pointer coordinates right.
+- Pasting an image doesn't attach it on Linux (WebKitGTK); the row says so and points to dropping it
+  on the row or the Attach image button, which work. Why: WebKitGTK reports a pasted image as type
+  `Files` but hands the page no file, and has no `navigator.clipboard.read()` to fetch it instead.
 - It is a separate Go module (`desktop/go.mod`). Why: the webview needs CGO, and the daemon stays
   CGO-free so it cross-compiles and self-updates as one static binary.
 

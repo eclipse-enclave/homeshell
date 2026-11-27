@@ -14,6 +14,19 @@
   background: var(--hs-recess-hover, #232e3c);
 }
 
+/* Files dragged over a row that takes images: it is where they will land.
+   Refused, while the session takes no image now, it only outlines, muted. */
+.item[data-drop='ready'] {
+  outline: 2px dashed var(--hs-accent, #2dd4bf);
+  outline-offset: -2px;
+  background: var(--hs-accent-soft, rgba(45, 212, 191, 0.12));
+}
+
+.item[data-drop='refused'] {
+  outline: 2px dashed var(--hs-border, #27313d);
+  outline-offset: -2px;
+}
+
 .item[data-ended='true'] .title {
   color: var(--hs-text-muted, #8494a7);
 }
@@ -242,6 +255,22 @@ button.info:focus-visible {
 .promptForm {
   display: flex;
   gap: 0.35rem;
+}
+
+/* "Image attached: <name>", briefly, under the send box. Empty, it takes no room. */
+.attachStatus {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--hs-text-muted, #8494a7);
+}
+
+/* On the row itself, inset like the row's notes and the preview under it. */
+.attachStatusOnRow {
+  padding: 0 0.75rem 0.5rem 2.1rem;
+}
+
+.attachStatus:empty {
+  display: none;
 }
 
 /* Discoverability caption for the empty-box key navigation. */

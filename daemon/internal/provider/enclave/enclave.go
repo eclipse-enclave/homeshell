@@ -99,6 +99,9 @@ type Provider struct {
 
 	// inventoryEvery overrides driftCheckInterval when positive (inventory.go).
 	inventoryEvery time.Duration
+
+	// imageLocks serializes image attaches per project (image.go).
+	imageLocks projectLocks
 }
 
 // restartProjection publishes the in-flight replacement of an owned session.
@@ -236,6 +239,7 @@ func (p *Provider) CreateSession(ctx context.Context, req provider.CreateSession
 	}
 
 	container := Container{Name: containerName, Tool: tool, Directory: req.WorkingDir, Status: "running", Background: true}
+	p.rememberLaunchedImageInbox(ctx, containerName, req.WorkingDir, opts)
 	if err := p.registerBridge(ctx, bridgeRecord{Container: container}); err != nil {
 		return domain.Session{}, err
 	}
@@ -329,6 +333,7 @@ func (p *Provider) SessionState(ctx context.Context, ref provider.SessionRef) (d
 		return domain.Session{}, err
 	}
 	p.sampleBridge(ctx, ref.SessionID, p.detectionAgents(), false)
+	imageInbox := p.cli.ImageInbox()
 	bridges := p.bridges
 	bridges.mu.Lock()
 	defer bridges.mu.Unlock()
@@ -337,9 +342,9 @@ func (p *Provider) SessionState(ctx context.Context, ref provider.SessionRef) (d
 		return domain.Session{}, fmt.Errorf("enclave session %q not found", ref.SessionID)
 	}
 	if session, ok := bridges.observed[ref.SessionID]; ok {
-		return bridges.withOutdated(session), nil
+		return bridges.published(session, record, imageInbox), nil
 	}
-	return bridges.withOutdated(p.bridgeSession(record)), nil
+	return bridges.published(p.bridgeSession(record), record, imageInbox), nil
 }
 
 // checkProject rejects a ref whose project does not own the session's directory.

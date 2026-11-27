@@ -359,6 +359,13 @@ func (r Runtime) SendKey(ctx context.Context, target, key string) error {
 	return r.send(ctx, target, seq)
 }
 
+// SendRaw types input into the target's terminal as it is, without the Enter
+// SendInput adds, so the agent's input is not submitted. Internal: the API's
+// key endpoint offers named keys only.
+func (r Runtime) SendRaw(ctx context.Context, target, input string) error {
+	return r.send(ctx, target, input)
+}
+
 func (r Runtime) send(ctx context.Context, target, input string) error {
 	ctx, cancel := context.WithTimeout(ctx, sbridgeTimeout)
 	defer cancel()

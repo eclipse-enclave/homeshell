@@ -51,6 +51,7 @@ interface Agent {
   resumeFlag: string;
   transcript: boolean;
   listModels: string[] | null;
+  imagePaste: string[] | null;
   settings: Setting[];
 }
 
@@ -240,6 +241,20 @@ test.describe('the agent descriptions', () => {
 
     expect(agents.find((a) => a.id === 'claude')?.listModels).toBeFalsy();
 
+    // The agents that paste an attached image natively on Ctrl+V, and in which
+    // formats; every other seeded agent takes the image's path.
+    expect(
+      Object.fromEntries(
+        agents
+          .filter((a) => seeded.includes(a.id) && a.imagePaste?.length)
+          .map((a) => [a.id, a.imagePaste]),
+      ),
+    ).toEqual({
+      claude: ['png', 'jpeg'],
+      opencode: ['png'],
+      pi: ['png', 'jpeg'],
+    });
+
     // Codex's reasoning effort is the one seeded setting the CLI takes as a config
     // override rather than as a flag of its own.
     const codexEffort = agents
@@ -281,6 +296,19 @@ test.describe('the agent descriptions', () => {
     expect(stored?.resumeFlag).toBe('--continue');
     expect(stored?.binary).toBe(id);
     expect(stored?.listModels).toEqual(['--models']);
+
+    // Which image formats it pastes natively is the user's to set; a format
+    // nothing can paste is refused.
+    const paste = await request.patch(`/api/agents/${id}`, {
+      data: { imagePaste: ['png'] },
+    });
+    expect(paste.status()).toBe(200);
+    expect((await findAgent(request, id))?.imagePaste).toEqual(['png']);
+    const gif = await request.patch(`/api/agents/${id}`, {
+      data: { imagePaste: ['gif'] },
+    });
+    expect(gif.status()).toBe(400);
+    expect((await findAgent(request, id))?.imagePaste).toEqual(['png']);
 
     expect((await request.delete(`/api/agents/${id}`)).status()).toBe(204);
     stored = await findAgent(request, id);

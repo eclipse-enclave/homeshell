@@ -58,6 +58,7 @@ Capabilities are what clients gate on. Two kinds:
 | Interface | Role | Adds |
 |---|---|---|
 | `Prompter` | Session | `Prompt` and `SendKey`; served as `oneOffPrompt` |
+| `ImageAttacher` | Session | Attaches an image; its sessions that can take one declare `attachImage` |
 | `SessionStartStopper` | Session | Stop and start; `sessionStartStop`. Start may be a restart (`ErrStartIsRestart`) |
 | `SessionRestarter` | Session | Restart with new settings (`PrepareRestart`); served as `sessionRestart` |
 | `ContinueRefuser` | Session | Refuses to continue a conversation another session in the directory makes ambiguous |
@@ -158,6 +159,7 @@ Session-provider capabilities:
 | Max concurrent sessions | unlimited | unlimited | 3 in the demo |
 | Detects waiting | ✓ | | |
 | Prompt and keys | ✓ | ✓ | ✓ |
+| Attach images | | ✓ (with the image inbox) | ✓ |
 | Stop and start | ✓ | ✓ (start is a restart) | ✓ |
 | Restart with new settings | | ✓ | ✓ |
 | Watcher | ✓ | ✓ | ✓ |
@@ -250,12 +252,40 @@ container is Enclave's to manage.
   and not passed. HomeShell does not yet ask `enclave network print --json` for the network policy
   mode (`enclave network set-mode`), so a session under an `unrestricted` mode runs unrestricted
   whatever the checkbox says; the flag cannot override that mode.
+- **Image inbox** in the Container settings passes `--image-inbox`, or `--image-inbox=false` to turn
+  it off for a session whose Enclave config turns it on. It defaults to the config's `image_inbox`.
+  It is offered only when the installed `enclave` has the inbox, as the
+  [contract check](ARCHITECTURE.md#enclave-sessions) tells. The qemu backend is not modelled: Enclave
+  refuses the flag there, and its error shows on the failed session.
+- **Attach images:** a session declares `attachImage` when all of these hold:
+  - the installed `enclave` has the image inbox (the contract check above);
+  - HomeShell runs a bridge to it and it is live, so not a foreground CLI session;
+  - its recorded image inbox is on or unknown: `options.image_inbox` true in `enclave ps --json`,
+    or no `options` at all. `options` without `image_inbox`, or with it false, means no inbox. Why
+    unknown counts: Enclave omits `options` when it cannot read a session's provenance, yet finds
+    its inbox by a container label. Until an inventory check lists it, a session HomeShell starts
+    or restarts has what its run resolved: the flag passed, else Enclave's config.
+- **Attach delivery:** HomeShell runs `enclave img import --session <container> --json -` in the
+  session's working directory with the image on stdin, reads the path from the envelope's `.path`
+  (`kind: "image-import"`, checked like the other JSON contracts), then hands the image to the
+  agent without Enter:
+  - **Native paste** when the agent's [`imagePaste`](CONFIGURATION.md#sessions--agents) lists the
+    image's format: HomeShell sends `Ctrl+V` (`\x16`) right after the import, and the agent pastes
+    the inbox's newest image as an attachment.
+  - **Path** otherwise, and for a tool no catalog agent describes: the path and one space are
+    typed into the agent's input. For example, a JPEG to OpenCode, or any image to Codex.
+
+  A failed import's `error:` line on stderr is the `500` message, as Enclave words it.
+- **One attach per project at a time,** import and delivery together (`provider/enclave/image.go`).
+  Why: the inbox is shared by the project's sessions, and a native paste takes its newest image.
+  An `enclave img import` run in a terminal at the same moment is not covered; its image can land
+  between HomeShell's import and delivery.
 - **CLI session settings:** a CLI session has no recorded launch config (a session HomeShell started
   that is started again in a terminal under its name drops its own), so its restart or Continue
   starts with the options Enclave recorded for the container, as far as the create form models
-  them (features, directories, ports, bridge ports, all network, domains, host config). They
-  become its launch config, so [drift](ARCHITECTURE.md#enclave-sessions) and the settings editor
-  apply from then on.
+  them (features, directories, ports, bridge ports, all network, domains, host config, image
+  inbox). They become its launch config, so [drift](ARCHITECTURE.md#enclave-sessions) and the
+  settings editor apply from then on.
   Other options and the tool's arguments restart as Enclave resolves them now (GAP 11).
 - **CLI gaps** that limit it are in `provider/enclave/gaps.go`: no container event stream, `stop`
   also removes, no `start`, no published-port URL (so no web-IDE link), no `logs`, no shell
@@ -266,6 +296,8 @@ container is Enclave's to manage.
 
 An in-memory provider for `serve -demo` and the e2e suites. It owns the seeded demo sessions,
 cycles one through states, and implements most optional interfaces so each UI path has data.
+Every one of its sessions declares `attachImage`: an attach makes up a `/mnt/host-images/` path
+and echoes `[image: <path>]` into the session's preview, as a prompt echoes its text.
 
 ## Add a session provider
 

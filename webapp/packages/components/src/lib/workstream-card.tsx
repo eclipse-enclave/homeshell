@@ -79,6 +79,16 @@ export interface WorkstreamCardProps {
   onPromptSession?: (sessionId: string, text: string) => void;
   /** Sends a single named key to a session (menu navigation). Rides the same capability as onPromptSession. */
   onSendKeySession?: (sessionId: string, key: string) => void;
+  /**
+   * Attaches one image to a session, resolving to null once attached or to why
+   * not; see SessionRow.onAttachImage. Offered on sessions declaring `attachImage`.
+   */
+  onAttachImageSession?: (
+    sessionId: string,
+    file: File,
+  ) => Promise<string | null>;
+  /** Shows why an attach to one of the card's sessions failed (SessionRow.onAttachError). */
+  onAttachError?: (message: string) => void;
   /** Whether a session's own provider supports prompts and keys; defaults to true. */
   canPromptSession?: (session: Session) => boolean;
   /** Marks a session seen (clears its `done` overlay) when its row is clicked. */
@@ -179,6 +189,8 @@ export function WorkstreamCard({
   onSeenSession,
   onPromptSession,
   onSendKeySession,
+  onAttachImageSession,
+  onAttachError,
   canPromptSession,
   onDelete,
   onRename,
@@ -540,6 +552,12 @@ export function WorkstreamCard({
             ? (key) => onSendKeySession(session.id, key)
             : undefined
         }
+        onAttachImage={
+          onAttachImageSession
+            ? (file) => onAttachImageSession(session.id, file)
+            : undefined
+        }
+        onAttachError={onAttachError}
         previewLines={previewLines}
         disabledReason={disabledReason}
         tabIndex={tabIndexFor(session.id)}
