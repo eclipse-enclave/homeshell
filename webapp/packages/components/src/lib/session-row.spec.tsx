@@ -2031,7 +2031,9 @@ describe('SessionRow: attaching images', () => {
           'Image attached: screenshot.png',
         ),
       );
-      act(() => vi.advanceTimersByTime(ATTACH_STATUS_MS));
+      // Async: the upload resolves outside act, so the effect that starts the
+      // clear timer is still pending when the status text first shows.
+      await act(() => vi.advanceTimersByTimeAsync(ATTACH_STATUS_MS));
       expect(screen.getByRole('status').textContent).toBe('');
     } finally {
       vi.useRealTimers();
