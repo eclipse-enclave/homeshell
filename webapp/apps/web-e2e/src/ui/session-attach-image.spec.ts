@@ -242,3 +242,47 @@ test('a stopped session refuses dragged images, saying why, like its disabled bu
   await expect(card.getByText(/Image attached/)).toHaveCount(0);
   await expect(card.getByText(/\[image:/)).toHaveCount(0);
 });
+
+/** Where the element's content starts: its box's left edge plus its left padding. */
+async function contentLeft(locator: Locator): Promise<number> {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error('element has no box');
+  const padding = await locator.evaluate((element) =>
+    parseFloat(
+      (
+        globalThis as unknown as {
+          getComputedStyle: (e: unknown) => { paddingLeft: string };
+        }
+      ).getComputedStyle(element).paddingLeft,
+    ),
+  );
+  return box.x + padding;
+}
+
+test('on a collapsed row the status lines up with the output preview under it', async ({
+  page,
+  request,
+}) => {
+  const dir = await tempProjectDir('hs-ui-attach-');
+  const projectId = await addEmptyProject(request, dir);
+  const workstreamId = await createWorkstream(request, projectId, 'ui-attach');
+  await createSession(request, projectId, workstreamId);
+  await page.goto('/');
+  await selectProject(page, basename(dir));
+  const card = page.getByRole('region', { name: 'Workstream ui-attach' });
+  const row = sessionRows(card).first();
+
+  const drag = await dropFiles(page, row, [png('collapsed.png')]);
+  await drag.drop();
+  const status = row.getByRole('status');
+  await expect(status).toHaveText('Image attached: collapsed.png');
+  // The demo agent echoes the image's path, which is the preview's first line.
+  const preview = row.getByTestId('session-preview');
+  await expect(preview).toContainText('[image:');
+
+  const [statusLeft, previewLeft] = await Promise.all([
+    contentLeft(status),
+    preview.boundingBox().then((box) => box?.x ?? NaN),
+  ]);
+  expect(Math.abs(statusLeft - previewLeft)).toBeLessThan(1);
+});

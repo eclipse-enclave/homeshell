@@ -978,8 +978,15 @@ export function SessionRow({
   // Under the send box when it shows; on the row otherwise, so an image
   // dropped on a collapsed row is still confirmed. While a drag the row refuses
   // is over it, it says why: a tooltip does not show during a drag.
-  const attachStatus = (
-    <p className={styles.attachStatus} role="status">
+  const attachStatus = (onRow: boolean) => (
+    <p
+      className={
+        onRow
+          ? `${styles.attachStatus} ${styles.attachStatusOnRow}`
+          : styles.attachStatus
+      }
+      role="status"
+    >
       {dropState === 'refused'
         ? attachBlocked
         : attached && `Image attached: ${attached}`}
@@ -1209,7 +1216,7 @@ export function SessionRow({
           {onRestartWithSettings && ' Restart it with settings to apply them.'}
         </p>
       ) : null}
-      {attachable && !(expanded && promptable) && attachStatus}
+      {attachable && !(expanded && promptable) && attachStatus(true)}
       {/* An ended session's last words are history, kept for its details. */}
       {preview && !expanded && !ended && (
         <div
@@ -1312,7 +1319,7 @@ export function SessionRow({
                   </>
                 )}
               </form>
-              {attachable && attachStatus}
+              {attachable && attachStatus(false)}
               {/* The hint promises key navigation, which is off while blocked. */}
               {onSendKey && !blocked && (
                 <p className={styles.promptHint}>
