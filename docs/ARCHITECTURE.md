@@ -49,7 +49,7 @@ session state, …) are defined in [CONTEXT.md](../CONTEXT.md) and used here wit
 | `webapp/packages/{model,components}` | UI presentation model and component library |
 | `webapp/apps/web-e2e` | Playwright suites: `src/api` (no browser) and `src/ui` |
 | `desktop/` | `homeshell-desktop`, a native webview window (separate Go module) |
-| `packaging/` | Linux `.desktop`, macOS app bundle |
+| `packaging/` | App icon, Linux `.desktop`, macOS app bundle |
 
 ## Process topology
 

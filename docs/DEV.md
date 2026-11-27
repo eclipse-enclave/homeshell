@@ -14,6 +14,7 @@ Every entry point is a Makefile target. `make help` lists them.
 | pnpm | 11+ | `engines` and `packageManager` in `webapp/package.json` |
 | WebKitGTK dev files | 4.1 (Linux, desktop shell only) | `make check-webview` |
 | debhelper, rpm | packaging only | `debian/control`, `packaging/rpm/homeshell.spec` |
+| rsvg-convert (librsvg) | `make icon` only | [App icon](#app-icon) |
 
 - Two Go modules: `daemon` and `desktop`. Each has its own `go.mod`; CI fails when
   `go mod tidy` would change either.
@@ -155,12 +156,14 @@ What to test and at which level is in [AGENTS.md](../AGENTS.md#testing-requireme
 `make test` runs, in order:
 
 1. `test-docs-lint`: the docs lint's own tests (`scripts/docs-lint/lint.test.sh`).
-2. `check-dev-targets`: see [Dev-target gate](#dev-target-gate).
-3. `go test -tags=dev ./...` in `daemon`. The bridge integration test (`sbridge/bridgecli`) runs
+2. `test-release-scripts`: `scripts/release.test.sh`.
+3. `test-icon`: the favicon script's tests (`packaging/favicon.test.sh`).
+4. `check-dev-targets`: see [Dev-target gate](#dev-target-gate).
+5. `go test -tags=dev ./...` in `daemon`. The bridge integration test (`sbridge/bridgecli`) runs
    the real `bridge serve`, with the test binary itself as the bridge.
-4. `go test ./internal/...` in `desktop`, which needs no webview. On macOS the `appmenu` tests
+6. `go test ./internal/...` in `desktop`, which needs no webview. On macOS the `appmenu` tests
    build a real menu bar, so they need a logged-in GUI session.
-5. `pnpm nx run-many -t test` in `webapp`: vitest for every project.
+7. `pnpm nx run-many -t test` in `webapp`: vitest for every project.
 
 Single tests:
 
@@ -300,9 +303,10 @@ Why: no other test runs these targets, and CI never does. A `.PHONY` target with
 1. `docs-lint` (`scripts/docs-lint/lint.sh`): Markdown lines over 120 characters, relative
    Markdown links to files that don't exist, and references to missing `docs/*.md` files in code
    comments. The script's header lists the exemptions.
-2. `gofmt -l` on `daemon/` and `desktop/`; `make fmt` fixes it.
-3. `go vet -tags=dev ./...` in `daemon`, `go vet ./internal/...` in `desktop`.
-4. `pnpm nx run-many -t lint typecheck` in `webapp`.
+2. `check-icon`: the favicon matches the app icon ([App icon](#app-icon)).
+3. `gofmt -l` on `daemon/` and `desktop/`; `make fmt` fixes it.
+4. `go vet -tags=dev ./...` in `daemon`, `go vet ./internal/...` in `desktop`.
+5. `pnpm nx run-many -t lint typecheck` in `webapp`.
 
 ## Docs
 
@@ -354,7 +358,7 @@ pull request cancels its running checks.
 
 | Job | Runs |
 |---|---|
-| Docs lint and release scripts | `docs-lint` and its tests, `scripts/release.test.sh` |
+| Docs lint and release scripts | `docs-lint` and its tests, `release.test.sh`, `favicon.test.sh`, `check-icon` |
 | Daemon | `go mod tidy` check, `go vet`, `go test -tags=dev`, cross-compile |
 | Desktop shell | `go mod tidy` check, vet and test `./internal/...`, `make build-desktop` |
 | Desktop shell on macOS | Vet and test `./internal/...`, `make build-desktop` |
@@ -487,6 +491,21 @@ pull requests never exercise them.
   the embedded web UI), not the working tree, and pass `VERSION` and `COMMIT` in.
 - `bash scripts/release.test.sh` (part of `make test`) checks version derivation, asset naming
   and the manifest check against throwaway repositories.
+
+### App icon
+
+`packaging/homeshell.svg` is the source of every icon. After changing it, run `make icon` and
+commit what it writes:
+
+- `packaging/linux/homeshell.png`, rendered at 512 px with `rsvg-convert` (Homebrew or distro
+  `librsvg`). The `.deb`/`.rpm` install it, and `packaging/macos/build-icns.sh` scales it to
+  every `.icns` size for `make dmg`. Why it is committed: the release builds need no SVG renderer.
+- `webapp/apps/web/public/favicon.svg`, the web UI's favicon. `packaging/favicon.sh` derives it
+  as text: the canvas cropped to the tile, without the tile's shadow.
+
+`make check-icon`, in `make lint` and CI, fails when the favicon no longer matches the SVG.
+`favicon.sh` fails when the edits it makes don't match exactly once, so an icon with a new layout
+needs the script updated too. The PNG isn't checked. Why: renderer versions differ in output.
 
 ### Shipping a new binary
 

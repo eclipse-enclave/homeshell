@@ -27,6 +27,15 @@ test('renders the shell and reports the daemon as connected', async ({
   ).toBeVisible();
 });
 
+test('uses the HomeShell app icon as its favicon', async ({ page }) => {
+  const href = await page.locator('link[rel="icon"]').getAttribute('href');
+  expect(href).toBeTruthy();
+  const icon = await page.request.get(new URL(href ?? '', page.url()).href);
+  expect(icon.status()).toBe(200);
+  expect(icon.headers()['content-type']).toContain('image/svg+xml');
+  expect(await icon.text()).toContain('<title>HomeShell</title>');
+});
+
 test('loads project state over the SSE stream (token auth via the vite proxy)', async ({
   page,
 }) => {

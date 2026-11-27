@@ -25,6 +25,10 @@ jobs:
         run: bash scripts/docs-lint/lint.test.sh
       - name: Release script tests
         run: bash scripts/release.test.sh
+      - name: Favicon script tests
+        run: bash packaging/favicon.test.sh
+      - name: Favicon matches the app icon
+        run: make check-icon
 
   daemon:
     name: Daemon (vet, test)
