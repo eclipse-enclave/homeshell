@@ -12,13 +12,16 @@ import (
 	"strings"
 )
 
+// AppName is the application's name in the window title and the macOS menu bar.
+const AppName = "HomeShell"
+
 // WindowTitle names the window, including the build version when one was
 // stamped in via -ldflags.
 func WindowTitle(version string) string {
 	if version == "" {
-		return "HomeShell"
+		return AppName
 	}
-	return "HomeShell " + version
+	return AppName + " " + version
 }
 
 // WebviewFailure turns a recovered webview.New panic into an error.

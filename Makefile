@@ -22,11 +22,19 @@ BIN_DIR   := bin
 BINARY    := $(BIN_DIR)/homeshell
 DESKTOP_DIR := desktop
 DESKTOP_BIN := $(BIN_DIR)/homeshell-desktop
+MAC_APP   := $(BIN_DIR)/HomeShell.app
+MAC_ICNS  := $(BIN_DIR)/homeshell.icns
+# The oldest macOS the app runs on: Go's own minimum. Without a deployment
+# target clang builds for the SDK's macOS. MACOS_CGO_CFLAGS repeats it because
+# the Go build cache ignores MACOSX_DEPLOYMENT_TARGET, and would otherwise link
+# cgo objects compiled for another macOS.
+MACOS_MIN := 12.0
+MACOS_CGO_CFLAGS := -O2 -g -mmacosx-version-min=$(MACOS_MIN)
 WEB_DIST  := webapp/apps/web/dist
 FAVICON   := webapp/apps/web/public/favicon.svg
 EMBED_DIR := daemon/internal/webui/dist
 
-.PHONY: all help setup check-tools build build-webapp embed build-daemon build-desktop check-webview check-desktop-linkage archive deb deb-quick rpm dmg icon check-icon test-icon run run-local run-desktop run-desktop-local dev dev-local dev-demo dev-daemon dev-update dev-update-build dev-update-server dev-update-daemon dev-webapp test test-docs-lint test-release-scripts test-e2e check-dev-targets print-dev-token lint docs-lint fmt clean
+.PHONY: all help setup check-tools build build-webapp embed build-daemon build-desktop check-webview check-desktop-linkage archive deb deb-quick rpm dmg app-macos icon check-icon test-icon run run-local run-desktop run-desktop-local dev dev-local dev-demo dev-daemon dev-update dev-update-build dev-update-server dev-update-daemon dev-webapp test test-docs-lint test-release-scripts test-e2e check-dev-targets print-dev-token lint docs-lint fmt clean
 
 all: build
 
@@ -108,6 +116,24 @@ ifneq ($(DESKTOP_PKG_CONFIG),)
 		printf 'PKG_CONFIG_PATH, so it reuses an object from a previous selection.\n'; \
 		exit 1; \
 	}
+endif
+
+## app-macos    assemble bin/HomeShell.app from the daemon and desktop shell (macOS only)
+#
+# The deployment target reaches the build prerequisites too, so the bundle's
+# binaries pass build-app.sh's check, as in a release.
+ifeq ($(shell uname -s),Darwin)
+app-macos: export MACOSX_DEPLOYMENT_TARGET := $(MACOS_MIN)
+app-macos: export CGO_CFLAGS := $(MACOS_CGO_CFLAGS)
+app-macos: build build-desktop $(MAC_ICNS)
+	packaging/macos/build-app.sh "$(VERSION)" $(BINARY) $(DESKTOP_BIN) $(MAC_ICNS) $(MAC_APP)
+
+$(MAC_ICNS): packaging/linux/homeshell.png packaging/macos/build-icns.sh
+	@mkdir -p $(@D)
+	packaging/macos/build-icns.sh $< $@
+else
+app-macos:
+	@printf 'app-macos needs macOS (sips, iconutil and the WebKit framework).\n'; exit 1
 endif
 
 # Name the package to install. Without this the failure is a wall of pkg-config
@@ -241,8 +267,8 @@ rpm: embed
 	@echo "Package built: $(DIST_DIR)/"
 
 # CGO cross-arch builds work on macOS: Xcode's clang targets arm64 and x86_64.
-# Without a deployment target clang builds for the SDK's macOS; 12 is Go's minimum.
-dmg: export MACOSX_DEPLOYMENT_TARGET := 12.0
+dmg: export MACOSX_DEPLOYMENT_TARGET := $(MACOS_MIN)
+dmg: export CGO_CFLAGS := $(MACOS_CGO_CFLAGS)
 dmg: embed
 	$(require_release_version)
 	@[ "$$(uname -s)" = Darwin ] || { echo "make dmg needs macOS (hdiutil, iconutil, the WebKit framework)"; exit 1; }
@@ -252,14 +278,23 @@ dmg: embed
 	(cd $(DESKTOP_DIR) && CGO_ENABLED=1 GOOS=darwin GOARCH=$(GOARCH) $(GO) build -trimpath \
 		-ldflags "-X main.version=$(VERSION)" -o "$$stage/homeshell-desktop" ./cmd/homeshell-desktop) && \
 	packaging/macos/build-icns.sh packaging/linux/homeshell.png "$$stage/homeshell.icns" && \
+	packaging/macos/build-app.sh "$(VERSION)" "$$stage/homeshell" "$$stage/homeshell-desktop" \
+		"$$stage/homeshell.icns" "$$stage/volume/HomeShell.app" && \
+	ln -s /Applications "$$stage/volume/Applications" && \
 	mkdir -p $(DIST_DIR) && \
-	packaging/macos/build-app.sh "$(VERSION)" "$(GOARCH)" "$$stage/homeshell" \
-		"$$stage/homeshell-desktop" "$$stage/homeshell.icns" $(DIST_DIR)
+	hdiutil create -volname HomeShell -srcfolder "$$stage/volume" -ov -format UDZO \
+		"$(DIST_DIR)/HomeShell-$(VERSION)-$(GOARCH).dmg"
 
 ## run-desktop   build daemon + web + desktop shell, then open the desktop window
-##               (HOMESHELL_HOME_DIR / HOMESHELL_ADDR pick the daemon to attach to)
+##               (HOMESHELL_HOME_DIR / HOMESHELL_ADDR pick the daemon to attach to;
+##               on macOS it runs bin/HomeShell.app)
+ifeq ($(shell uname -s),Darwin)
+run-desktop: app-macos
+	open -W -n $(MAC_APP) --env HOMESHELL_HOME_DIR="$(HOMESHELL_HOME_DIR)" --env HOMESHELL_ADDR="$(HOMESHELL_ADDR)"
+else
 run-desktop: build build-desktop
 	HOMESHELL_HOME_DIR="$(HOMESHELL_HOME_DIR)" HOMESHELL_ADDR="$(HOMESHELL_ADDR)" ./$(DESKTOP_BIN)
+endif
 
 ## run-desktop-local  like run-desktop against db/<branch>, so it attaches to a
 ##                    `make run-local` daemon instead of colliding with it

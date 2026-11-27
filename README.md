@@ -44,9 +44,10 @@ HomeShell runs the agents; it doesn't ship them. Install at least one agent CLI 
 
 - **Browser:** run `bin/homeshell serve` and open http://127.0.0.1:8420. `make run` builds and
   serves at the same address.
-- **Desktop app:** run `bin/homeshell-desktop`, or `make run-desktop` to build and open it. It
-  starts the daemon, or attaches to a running one, and opens the UI in a window. From a release
-  package, launch HomeShell from your app menu.
+- **Desktop app:** `make run-desktop` builds and opens it. It starts the daemon, or attaches to a
+  running one, and opens the UI in a window. On Linux the shell is `bin/homeshell-desktop`; on
+  macOS, `make app-macos` builds `bin/HomeShell.app` to open from Finder or the Dock. From a
+  release package, launch HomeShell from your app menu.
 
 `homeshell status` shows where a daemon runs and `homeshell stop` stops it. `homeshell update`
 installs a newer release, so it has nothing to fetch until the first one is published. Flags,

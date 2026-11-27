@@ -12,6 +12,7 @@ import (
 
 	webview "github.com/webview/webview_go"
 
+	"github.com/eclipsesource/homeshell/desktop/internal/appmenu"
 	"github.com/eclipsesource/homeshell/desktop/internal/launch"
 	"github.com/eclipsesource/homeshell/desktop/internal/shell"
 )
@@ -45,6 +46,7 @@ func run() (err error) {
 	}()
 
 	window := webview.New(false)
+	appmenu.Install(shell.AppName, window.Terminate)
 	window.SetTitle(shell.WindowTitle(version))
 	window.SetSize(1280, 800, webview.HintNone)
 	setUpZoom(window)
