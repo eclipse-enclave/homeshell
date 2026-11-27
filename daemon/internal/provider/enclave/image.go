@@ -63,8 +63,10 @@ func (b *hostBridges) published(session domain.Session, record bridgeRecord, sup
 
 // rememberLaunchedImageInbox remembers whether the session HomeShell starts, or restarts, as name with opts gets
 // the image inbox, until an inventory check lists it: the flag the run passes, else Enclave's config, which the run
-// resolves the same way (asked already for the run's flags, so remembered). When Enclave cannot say, what was
-// known of an earlier container under the name is dropped.
+// resolves the same way. A create or restart with a sandbox choice asked for that config already, so it is
+// remembered; one without asks Enclave here, after the run. Why not skip the ask: an unknown inbox counts as "may
+// have it", so the row would offer attaching to a session whose inbox is off until the next inventory check.
+// When Enclave cannot say, what was known of an earlier container under the name is dropped.
 func (p *Provider) rememberLaunchedImageInbox(ctx context.Context, name, dir string, opts RunOpts) {
 	if !p.cli.ImageInbox() {
 		return

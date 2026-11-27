@@ -40,7 +40,8 @@ func attachImageOf(t *testing.T, p *Provider, project provider.ProjectRef) bool 
 }
 
 // Until an inventory check lists it, a session HomeShell started or restarted has the image inbox its run resolved:
-// the flag passed, else Enclave's config.
+// the flag passed, else Enclave's config. The "configured" cases make no sandbox choice, so nothing is cached and
+// the config is asked for after the run.
 func TestAttachImageCapabilityOfALaunch(t *testing.T) {
 	tests := []struct {
 		name       string
